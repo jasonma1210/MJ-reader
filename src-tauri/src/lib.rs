@@ -894,12 +894,15 @@ fn mcp_server_token(app_data_dir: &std::path::Path) -> String {
     if let Some(parent) = token_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    if let Ok(file) = std::fs::File::create(&token_path) {
+    if let Ok(mut file) = std::fs::File::create(&token_path) {
+        // 仅 Unix 平台可设 0o600 权限位；Windows 无 from_mode，跳过权限设置。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+        }
         use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
-        let mut f = file;
-        let _ = writeln!(f, "{}", token);
+        let _ = writeln!(file, "{}", token);
     }
     token
 }
