@@ -51,6 +51,10 @@ jobs:
     runs-on: macos-14 # Apple Silicon runner
 
     env:
+      # whisper-rs-sys 的 C++（whisper.cpp / ggml-backend-reg.cpp）用了 std::filesystem，
+      # 该 API 自 macOS 10.15 起可用。不显式设置时 cc crate 会按更低的部署目标编译，
+      # 报一堆 `'path' is unavailable: introduced in macOS 10.15` 导致构建失败。
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
       # Tauri 2 内建签名 / 公证；Secrets 缺失时为空串，构建自动降级为未签名。
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
