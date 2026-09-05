@@ -1,0 +1,90 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+target/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+*.p12
+*.keystore
+*.jks
+key.properties
+
+# Tauri
+src-tauri/target/
+# 整个 gen/ 为自动生成代码（含 Android/iOS 工程），一律不入库
+src-tauri/gen/
+
+# Database（本地数据与密钥材料，绝不入库）
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Private keys / secrets（NEW-01 审计补充）
+*.pem
+*.key
+*.pfx
+*.der
+secrets/
+.workbuddy/
+
+# Test
+test-results/
+coverage/
+.devtest/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Cache
+.cache/
+.parcel-cache/
+.vite/
+# Vite dev server 热重载临时文件（NEW-01 补充）
+vite.config.ts.timestamp-*.mjs
+dist_bak_*/
+# scripts/clean-dist.mjs 在跨设备 rename 失败时的回退落点
+.dist-trash/
+/frontend-deprecated/
+# ── AI 生成的文档：开源仓库只保留代码，不发布过程性文档 ──────────────
+# 这些是开发过程中产生的审计/计划/评审/方案记录，与代码无关，且体量大。
+deliverables/
+docs/**/*.md
+docs/debug/
+docs/design/
+docs/plan/
+docs/prd/
+# 顶层 AI 审计报告（README / LICENSE / NOTICE 除外）
+/ARCHITECTURE_AUDIT_V2.md
+/overview.md
+# 设计源图与临时截图素材（体积大，非代码）
+app-icon-source.jpg
+app-icon-source.png
+screenshot_android.png
+cdp_probe.py
+# 编辑器备份文件（非代码）
+*.bak
+# 图标备份目录与设计概念稿（过程素材，非代码）
+src-tauri/icons_backup_*/
+frontend/public/assets/logo_raw.png
+src-tauri/icons/logo_concept_*.jpg

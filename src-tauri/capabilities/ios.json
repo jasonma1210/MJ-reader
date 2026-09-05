@@ -1,0 +1,31 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "ios",
+  "description": "MJNexus-Reader iOS 专属能力声明（F5）。在 default.json 桌面权限基础上，补充移动端所需 IPC 权限；原生麦克风/相机/相册/本地网络权限在 Info.plist 声明（见 iOS-README §4/§5.1）。",
+  "platforms": ["iOS"],
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:app:default",
+    "core:event:default",
+    "core:webview:default",
+    "core:resources:default",
+    "sql:default",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-meta",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-remove",
+    "fs:allow-mkdir",
+    "dialog:default",
+    "store:default",
+    "http:default",
+    "os:default",
+    "shell:allow-open",
+    "deep-link:default"
+  ]
+}

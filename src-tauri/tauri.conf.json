@@ -1,0 +1,65 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MJNexus-Reader",
+  "version": "1.0.0",
+  "identifier": "com.mjnexusreader.app",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm --prefix ../frontend run dev",
+    "beforeBuildCommand": "f=../frontend; [ -d \"$f\" ] || f=../../frontend; ( cd \"$f\" && npx vite build )"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MJNexus-Reader",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob: asset: https://*; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://* ipc: http://ipc.localhost blob:; frame-src 'self' blob:; worker-src 'self' blob:; font-src 'self' data: asset:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**",
+          "$DOCUMENT/**",
+          "$DOWNLOAD/**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/Square30x30Logo.png",
+      "icons/Square44x44Logo.png",
+      "icons/Square71x71Logo.png",
+      "icons/Square89x89Logo.png",
+      "icons/Square107x107Logo.png",
+      "icons/Square142x142Logo.png",
+      "icons/Square150x150Logo.png",
+      "icons/Square284x284Logo.png",
+      "icons/Square310x310Logo.png",
+      "icons/StoreLogo.png"
+    ],
+    "category": "Productivity",
+    "shortDescription": "AI-native ebook reader",
+    "longDescription": "A cross-platform, privacy-first, AI-native ebook reader with summary, mind map, voice input, and multi-modal annotation.",
+    "android": {
+      "minSdkVersion": 24
+    },
+    "iOS": {
+      "developmentTeam": "6V7RHR32PB",
+      "minimumSystemVersion": "15.0"
+    }
+  }
+}

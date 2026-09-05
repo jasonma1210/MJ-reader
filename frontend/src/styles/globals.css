@@ -1,0 +1,273 @@
+/* MJNexus Reader — 全局样式入口（Tailwind v4）
+ *
+ * Tailwind v4 通过 @import "tailwindcss" 启用；不再需要 tailwind.config.js / postcss。
+ * tokens.css 是设计令牌单一真源；@theme inline 把 bg-paper / text-ink 等工具类
+ * 映射到 tokens.css 的 var()，确保 Tailwind 与 CSS 变量不出现副本漂移。
+ */
+@import "tailwindcss";
+@import "./tokens.css";
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-pure: var(--paper-pure);
+  --color-paper-soft: var(--paper-soft);
+  --color-paper-warm: var(--paper-warm);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-muted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-bg: var(--accent-bg);
+  --color-accent-fg: var(--accent-fg);
+  --color-ai: var(--ai);
+  --color-ai-strong: var(--ai-strong);
+  --color-ai-soft: var(--ai-soft);
+  --color-ai-bg: var(--ai-bg);
+  --color-ai-border: var(--ai-border);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-mastery-mastered: var(--mastery-mastered);
+  --color-mastery-learning: var(--mastery-learning);
+  --color-mastery-weak: var(--mastery-weak);
+  --color-mastery-none: var(--mastery-none);
+  --color-overlay-bg: var(--overlay-bg);
+  --color-overlay-fg: var(--overlay-fg);
+  --color-overlay-border: var(--overlay-border);
+  --color-overlay-soft: var(--overlay-soft);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: var(--line-height-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 统一滚动条（轻量，护眼跟随由 token 驱动） */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+/* 安全区占位：Android EdgeToEdge 下 fixed 元素统一 50px 兜底 */
+.safe-bottom-pad {
+  padding-bottom: calc(var(--tabbar-height, 78px) + 50px);
+}
+
+/* ===== react-flow 白板主题跟随（v1.1）：Background / MiniMap(全景视图) / Controls 跟随深浅色主题 ===== */
+.react-flow {
+  --xy-background-color: var(--paper);
+  --xy-background-color-secondary: var(--line-soft);
+  background-color: var(--paper);
+}
+.react-flow__pane,
+.react-flow__viewport {
+  background-color: var(--paper);
+}
+/* 背景点阵跟随主题 */
+.react-flow__background {
+  background-color: var(--paper);
+}
+/* 全景视图（MiniMap）：底色/遮罩/节点色跟随主题 */
+.react-flow__minimap {
+  background-color: var(--paper-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.react-flow__minimap-mask {
+  fill: var(--paper);
+  opacity: 0.72;
+}
+.react-flow__minimap-node {
+  fill: var(--line);
+  stroke: var(--line);
+}
+.react-flow__minimap-node.selected {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+/* 缩放控件跟随主题 */
+.react-flow__controls {
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.1);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.react-flow__controls-button {
+  background-color: var(--paper);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  fill: var(--ink);
+}
+.react-flow__controls-button:hover {
+  background-color: var(--paper-soft);
+}
+.react-flow__controls-button svg {
+  fill: var(--ink);
+}
+.react-flow__controls-button path {
+  fill: var(--ink);
+}
+
+/* recharts 主题跟随：CSS 属性覆盖 presentation attribute，使线条/文字引用 token */
+.recharts-line-curve {
+  stroke: var(--accent);
+}
+.recharts-text {
+  fill: var(--ink-muted);
+}
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick line {
+  stroke: var(--line);
+}
+
+/* ===== Markdown 阅读渲染（md-body，覆盖 md 高阶格式：代码块/表格/引用/图片/任务列表）===== */
+.md-body {
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+.md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 {
+  margin: 1.1em 0 0.5em;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--ink);
+}
+.md-body h1 { font-size: 1.6em; border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+.md-body h2 { font-size: 1.35em; border-bottom: 1px solid var(--line); padding-bottom: 0.25em; }
+.md-body h3 { font-size: 1.18em; }
+.md-body h4 { font-size: 1.05em; }
+.md-body p { margin: 0.7em 0; }
+.md-body a { color: var(--accent); text-decoration: underline; }
+.md-body ul, .md-body ol { margin: 0.6em 0; padding-left: 1.5em; }
+.md-body li { margin: 0.25em 0; }
+.md-body li > p { margin: 0.2em 0; }
+.md-body blockquote {
+  margin: 0.8em 0;
+  padding: 0.4em 0.9em;
+  border-left: 3px solid var(--accent);
+  background: var(--paper-soft);
+  color: var(--ink-soft);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.md-body blockquote p { margin: 0.3em 0; }
+.md-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--paper-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  color: var(--ink);
+}
+.md-body pre {
+  margin: 0.9em 0;
+  padding: 0.9em 1em;
+  background: #1e1f24;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.md-body pre code {
+  display: block;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: #e6e6eb;
+  font-size: 0.88em;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 4;
+}
+.md-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  margin: 0.8em 0;
+  display: block;
+}
+.md-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.9em 0;
+  font-size: 0.92em;
+}
+.md-body th, .md-body td {
+  border: 1px solid var(--line);
+  padding: 0.45em 0.7em;
+  text-align: left;
+}
+.md-body th {
+  background: var(--paper-soft);
+  font-weight: 600;
+}
+.md-body tr:nth-child(2n) td { background: var(--paper-soft); }
+.md-body hr { border: none; border-top: 1px solid var(--line); margin: 1.2em 0; }
+.md-body input[type="checkbox"] { margin-right: 0.4em; }
+.md-body del { color: var(--ink-muted); }
+
+/* ===== 深色阅读背景（深灰/暗夜）适配（2026-09-04）：md-body 不再跟随 App 主题变量，
+   改为继承阅读背景预设的前景色 + 半透明白表面，修复深色背景下白块/白字错乱 ===== */
+.reader-dark .md-body { color: inherit; }
+.reader-dark .md-body h1, .reader-dark .md-body h2, .reader-dark .md-body h3,
+.reader-dark .md-body h4, .reader-dark .md-body h5, .reader-dark .md-body h6 {
+  color: inherit;
+  border-bottom-color: rgba(255, 255, 255, 0.16);
+}
+.reader-dark .md-body a { color: #8ab4f9; }
+.reader-dark .md-body blockquote {
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+}
+.reader-dark .md-body code {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: inherit;
+}
+.reader-dark .md-body pre { background: #1e1f24; border: 1px solid rgba(255, 255, 255, 0.1); }
+.reader-dark .md-body pre code { color: #e6e6eb; }
+.reader-dark .md-body th, .reader-dark .md-body td {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.reader-dark .md-body th,
+.reader-dark .md-body tr:nth-child(2n) td { background: rgba(255, 255, 255, 0.06); }
+.reader-dark .md-body hr { border-top-color: rgba(255, 255, 255, 0.16); }
+.reader-dark .md-body del { color: rgba(255, 255, 255, 0.45); }
+.md-body .md-code-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0.9em 0 0;
+  font-size: 0.78em;
+  color: var(--ink-muted);
+}
+.md-body .md-code-title + pre { margin-top: 0.35em; }
+
+/* GFM 图格式：mermaid 图表容器（marked 已把 ```mermaid 转成 div.mermaid） */
+.md-body .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 1.2em 0;
+  padding: 1em;
+  background: var(--paper-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+.md-body .mermaid svg { max-width: 100%; height: auto; }
+

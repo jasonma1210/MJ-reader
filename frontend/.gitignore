@@ -1,0 +1,25 @@
+# dependencies
+node_modules
+.pnp
+.pnp.js
+
+# build output
+dist
+dist-ssr
+*.local
+
+# logs
+logs
+*.log
+npm-debug.log*
+
+# editor / OS
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

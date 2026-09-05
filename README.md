@@ -1,0 +1,199 @@
+# MJNexus-Reader
+
+**English** | [简体中文](./README.zh-CN.md)
+
+> An AI-native ebook reader that runs local-first. Own your library, your annotations and your models — no account, no cloud lock-in.
+
+[![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](./LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#platform-support)
+[![Tauri](https://img.shields.io/badge/Tauri-2.11-ffc131)](https://tauri.app)
+
+---
+
+## Screenshots
+
+| Bookshelf | AI Assistant | Learning |
+| :---: | :---: | :---: |
+| ![Bookshelf](./docs/screenshots/bookshelf.png) | ![AI Assistant](./docs/screenshots/ai-assistant.png) | ![Learning](./docs/screenshots/learn.png) |
+
+<sub>Captured on a physical OPPO device (Snapdragon 8 Elite, 11 GB RAM).</sub>
+
+---
+
+## What it does
+
+MJNexus-Reader is a complete reading stack: import a book, read it, annotate it, let AI break it down, then drill the parts you forgot — with optional **fully on-device** inference so nothing leaves the device.
+
+### Library and reading
+
+- **Formats** — EPUB, PDF, MOBI, TXT, DOCX, PPTX, XLSX, Markdown, comic archives
+- **Readers** — reflowable engine (foliate-js) for EPUB/MOBI, PDF.js for PDF, dedicated layouts for office and comic files
+- **Library** — directories, tags, bulk import, Wi-Fi transfer from a desktop browser
+- **Annotations** — highlights, bookmarks, marginal notes, free-hand whiteboard attached to any page
+- **Full-text search** — SQLite FTS5 with a custom bigram tokenizer (trigram tokenizers do not work for Chinese)
+
+### AI layer
+
+- **Book breakdown** — chapter-by-chapter structure, arguments and takeaways, generated locally or in the cloud
+- **AI assistant** — conversational Q&A grounded in the book you are reading
+- **Knowledge graph** — concepts and relations extracted from one book or across the whole library
+- **Quiz and review** — generated questions plus a spaced-repetition scheduler (SM-2 variant) and Anki export
+- **Teaching mode** — the AI explains a concept back to you and grades your retelling
+- **Mind maps and knowledge cards** — visual condensation of what you read
+
+### Learning loop
+
+- **Today's desk** — one screen for due reviews, weak points and reading streaks
+- **Mastery tracking** — per-concept proficiency inferred from quiz history
+- **Reading reports** — speed, retention and time-of-day analytics
+- **Learning paths** — ordered curricula assembled from your bookshelf
+
+### On-device inference
+
+- Runs **GGUF models via llama.cpp** directly on the device — no API key, no network
+- **Device tiering** (`src-tauri/src/services/device_tier.rs`): RAM and SoC are probed at runtime, then context window, KV-cache quantisation, thread count, GPU layers and maximum model size are derived from that
+- **Memory gate** — devices at or below **6 GB (iOS)** / **8 GB (Android)** are refused up front with a clear message, instead of being killed by the OS mid-load
+- **iOS memory rules** — `mmap` on, `mlock` off: mapped pages count as clean memory and do not hit the ~5 GB dirty-memory jetsam ceiling
+- **GPU policy** — Metal on Apple, Vulkan on Mali, **CPU-only on Adreno** (Snapdragon Vulkan inference raises `ErrorDeviceLost`, which aborts the process and cannot be caught or downgraded)
+- Measured on a Snapdragon 8 Elite, CPU-only, 4 threads: **~17 tokens/s** with Qwen3-1.7B Q8_0
+
+### Also included
+
+- **OCR** (PP-OCRv5 via ONNX Runtime) for scanned pages and images
+- **TTS / ASR** — Edge TTS playback; recognition via Android SpeechRecognizer, Apple `SFSpeechRecognizer`, or SenseVoice
+- **Sync and backup** — encrypted payloads (Argon2id + AES-GCM), conflict detection, local snapshots
+- **MCP client** — connect external tool servers to the assistant
+- **i18n** — Chinese and English, every UI string keyed (no hard-coded literals)
+
+---
+
+## Tech stack
+
+| Layer | Stack |
+| --- | --- |
+| Shell | [Tauri 2.11](https://tauri.app) (Rust) |
+| Frontend | React 18.3, TypeScript, Vite, Tailwind, Zustand 5, react-router 6, i18next |
+| Backend | Rust — 161 source files, ~70k lines, **364 Tauri commands** across 50 modules |
+| Database | SQLite via sqlx 0.8, 74 tables, FTS5 + custom bigram tokenizer |
+| Local LLM | llama.cpp through `llama-cpp-2` 0.1.154 (feature `llamacpp`) |
+| OCR | ONNX Runtime (PP-OCRv5) |
+| Renderers | foliate-js, PDF.js 6, mammoth, mermaid, `@xyflow/react` |
+
+---
+
+## Project structure
+
+```
+mjnexus-reader/
+├── frontend/                 # React + TypeScript UI
+│   └── src/
+│       ├── routes/           # 17 top-level pages + nested ai/ me/ whiteboard/
+│       ├── components/       # shared UI
+│       ├── services/         # typed wrappers over Tauri commands
+│       ├── stores/           # zustand state
+│       ├── i18n/             # zh-CN / en locales
+│       ├── ai/               # AI conversation orchestration
+│       └── renderer/         # book format renderers
+├── src-tauri/                # Rust backend
+│   └── src/
+│       ├── commands/         # 50 modules, 364 #[tauri::command] handlers
+│       ├── services/         # 26 services (parser, book_fts, local_llm,
+│       │                     #   device_tier, model_hub, ocr_engine, sync, mcp, ...)
+│       ├── db/               # schema, migrations, soft-delete, FTS
+│       └── lib.rs            # command registration, plugins, setup
+├── docs/screenshots/         # UI screenshots
+├── scripts/                  # build and consistency checks
+├── LICENSE                   # PolyForm Shield 1.0.0
+└── NOTICE                    # Required Notice + Licensor Line of Business
+```
+
+---
+
+## Getting started
+
+### Prerequisites
+
+- Node.js 18+ and npm
+- Rust 1.77+ (`rustup`)
+- Platform toolchain: Xcode (iOS/macOS), Android SDK + NDK 28 (Android), or standard build tools for desktop
+
+### Run in development
+
+```bash
+cd frontend && npm install
+cd ../src-tauri && cargo tauri dev
+```
+
+### Build a release
+
+```bash
+# Desktop (macOS / Windows / Linux)
+cargo tauri build
+```
+
+```bash
+# Android APK — CPU inference (Snapdragon/Adreno must stay on CPU)
+cargo tauri android build --apk --target aarch64 \
+  --features llamacpp,android-asr,android-wakelock
+```
+
+```bash
+# iOS IPA — Metal back-end enabled
+DEVELOPER_DIR=/Applications/Xcode.app \
+cargo tauri ios build --target aarch64 --features llamacpp,llama-metal
+```
+
+> **`llamacpp` is not a default feature** — it adds a large native library. Add it explicitly whenever you need on-device inference. Do **not** add `llama-gpu` for Adreno devices.
+
+### Quality gates
+
+```bash
+cd frontend
+npm run typecheck          # tsc --noEmit
+npm run lint               # eslint
+npm test                   # vitest
+npm run i18n-check         # locale parity
+npm run gate               # all of the above + build
+
+cd ../src-tauri
+cargo test --lib           # 442 unit tests
+cargo check                # warnings are ratcheted, never increased
+```
+
+---
+
+## Platform support
+
+| Platform | Status | On-device LLM |
+| --- | --- | --- |
+| Android (arm64) | Built and tested on device | Yes — CPU (Adreno stays off GPU) |
+| iOS / iPadOS (arm64) | Built and tested on device | Yes — Metal |
+| macOS (Apple Silicon) | Supported | Yes — Metal |
+| Windows / Linux | Supported | Yes — CPU |
+
+---
+
+## Download
+
+Prebuilt binaries are published on the [Releases](https://github.com/jasonma1210/MJ-reader/releases) page:
+
+- `app-universal-release.apk` — Android arm64
+- `MJNexus-Reader.ipa` — iOS arm64 (install with a development tool such as `devicectl`, or re-sign)
+
+---
+
+## License
+
+Released under the **[PolyForm Shield License 1.0.0](./LICENSE)** — a source-available licence.
+
+**You may:** download, run, read, modify and distribute the source for any purpose, including commercial ones.
+
+**You may not:** use this software to provide a **product that competes with it**, or with any product the licensor offers. Competing means offering a practical substitute — regardless of platform, language, or whether it is offered free of charge.
+
+**Please note:**
+
+- This is **not** an OSI-approved open-source licence. The [OSI Open Source Definition](https://opensource.org/osd) requires derivative works to be permitted, which PolyForm Shield restricts for competing products.
+- If your intent is "free to use, but nobody may modify it", no internationally recognised licence grants that. Creative Commons **BY-ND** (NoDerivatives) is explicitly *not recommended for software*. PolyForm Shield is the closest enforceable instrument.
+- Attribution is required: redistribute [`NOTICE`](./NOTICE) with any copy.
+
+© 2026 Jianma.

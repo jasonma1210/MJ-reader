@@ -1,0 +1,9 @@
+{
+  "name": "mjnexus-reader-src-tauri",
+  "version": "2.2.0",
+  "private": true,
+  "description": "Minimal package.json required by the Android gradle `rust` plugin. The plugin runs `npm run -- tauri android android-studio-script ...` from src-tauri (rootDirRel = ../../../); npm finds this package.json immediately (no walk-up) and invokes the Tauri CLI via absolute path so it does not depend on the shell PATH. The `tauri` script must NOT live at the project root, because a root package.json makes `cargo-tauri` resolve beforeBuildCommand's `../frontend` relative to the project root instead of src-tauri.",
+  "scripts": {
+    "tauri": "/Users/jianma/.cargo/bin/cargo-tauri"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "MJNexus-Reader default capability",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "sql:default",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-meta",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-remove",
+    "fs:allow-mkdir",
+    "dialog:default",
+    "store:default",
+    "os:default",
+    "shell:allow-open",
+    "deep-link:default"
+  ]
+}

@@ -1,0 +1,282 @@
+/* MJNexus Reader — 设计令牌（单一真源，对齐 Ardot 设计稿）
+ *
+ * 双态主题：亮（白底黑字性冷淡）/ 暗（#171717 底 + #d2d3da 字）。
+ * 组件统一使用 token 类（bg-paper / text-ink / border-line 等），
+ * 由 globals.css 的 @theme inline 把 Tailwind 工具类映射到这里的 var()，
+ * 杜绝硬编码 bg-white / slate-* 漂移。
+ *
+ * 默认亮色态采用「性冷淡」风格：纯白底、黑字、黑色图标、浅灰边框，零蓝。
+ *   --paper      #ffffff  → 纯白主基底
+ *   --paper-soft #f5f5f5  侧边栏/弹出栏衬底
+ *   --line       #e6e6e6  浅灰边框
+ *   --accent     #000000  黑色主色（图标/选中态黑色；logo 蓝仅保留于 --brand）
+ * 暗色态：背景 #171717、文字 #d2d3da、图标白色、边框 #383838、
+ *         侧边栏/弹出栏衬底 #262626。
+ * 护眼（eye-care）已按要求屏蔽，不再提供第三态。
+ */
+
+:root {
+  /* —— 安全区与视口（S3 响应式底座 · --safe-* 令牌族起点）——
+   * iOS：env() 在 viewport-fit=cover 下生效，直接采用系统值。
+   * Android EdgeToEdge：手势条覆盖底部约 50px 且 env() 常不生效，
+   * 由 html[data-platform="android"] 覆写 50px 兜底下限（main.tsx 写入平台标记）。 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* 底部 Tab 栏总高（pill 62px + 顶部间距 12px + 安全区），供页面 padding-bottom 预留 */
+  --tabbar-height: calc(74px + var(--safe-bottom));
+
+  /* —— 断点令牌（S3 响应式底座 · 与 useLayoutMode 阈值对齐）——
+   * 仅作文档化单一真源 + JS 读取用；CSS 媒体查询请直接用值。 */
+  --bp-phone: 768px;        /* 短边 < 此值 = 手机（底部 4-Tab） */
+  --bp-tablet: 1024px;      /* 非 Tauri 触控环境宽屏判定参考 */
+  --bp-desktop: 1280px;     /* 桌面工作台布局参考 */
+
+  /* —— 间距令牌（S3 · 页面级留白统一）—— */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* —— 视口高度（移动端地址栏/手势条塌缩兜底）—— */
+  --vh: 1vh; /* JS 可在 resize 时写回实际 1% 视口高 */
+
+  /* 文字（浅色：黑字） */
+  --ink: #000000;
+  --ink-soft: #2a2a2a;
+  --ink-muted: #666666;
+  --pdf-ink: #000000;
+  --pdf-paper: #ffffff;
+
+  /* 主色：纯黑性冷淡。图标/选中态/实心按钮一律黑色 */
+  --accent: #000000;
+  --accent-soft: #3a3a3a;
+  --accent-bg: #f5f5f5;
+  --accent-fg: #ffffff;
+
+  /* 品牌色（闪屏 / Logo）——logo/名称豁免于「无蓝」约束，仅此一处保留蓝 */
+  --brand: #4f6bed;
+  /* 标题文字 */
+  --ink-dark: #000000;
+  /* 略暖于 --paper 的纸面（卡片内衬） */
+  --paper-warm: #fafafa;
+
+  /* 纸面：纯白族（性冷淡） */
+  --paper: #ffffff;
+  --paper-pure: #ffffff;
+  /* 侧边栏 / 弹出栏衬底：0xf5f5f5 */
+  --paper-soft: #f5f5f5;
+  --paper-warm: #f7f7f7;
+
+  /* 分割线：0xe6e6e6 浅灰边框 */
+  --line: #e6e6e6;
+  --line-soft: #efefef;
+
+  /* 高亮底色（标注） */
+  --hi-yellow: #fef08a;
+  --hi-green: #bbf7d0;
+  --hi-blue: #bfdbfe;
+  --hi-pink: #fbcfe8;
+
+  /* 高亮标记圆点（径向菜单 / foliate 描边） */
+  --hi-dot-yellow: #fef08a;
+  --hi-dot-green: #4ade80;
+  --hi-dot-blue: #60a5fa;
+  --hi-dot-pink: #ef4444;
+
+  /* 脑图分支色（明暗共用色相；蓝→中性灰，去蓝） */
+  --branch-1: #2f2f2f;
+  --branch-2: #6b7280;
+  --branch-3: #10b981;
+  --branch-4: #f59e0b;
+  --branch-5: #ef4444;
+  --branch-6: #a855f7;
+  --branch-7: #14b8a6;
+  --branch-8: #f43f5e;
+
+  /* 知识图谱配色（节点类型：蓝→中性灰，去蓝） */
+  --kg-manual: #4b5563;
+  --kg-ai: #a855f7;
+  --kg-highlight: #f59e0b;
+  --kg-orphan: #9ca3af;
+  --kg-book: #10b981;
+  --kg-tag: #f43f5e;
+  --kg-default: #6b7280;
+  --kg-edge: #cbd5e1;
+  --kg-label: #374151;
+  --kg-node-stroke: #ffffff;
+  --kg-node-stroke-active: #141414;
+
+  /* 危险 / 错误 */
+  --danger: #dc2626;
+  --danger-soft: #fee2e2;
+  --danger-200: #fecaca;
+
+  /* 阅读主题预设（themeStore 引用） */
+  --theme-eye-bg: #cce8cf;
+  --theme-eye-text: #14532d;
+  --theme-eye-accent: #10b981;
+
+  /* AI 操作色（v2 主题中性化：去除 violet，对齐性冷淡黑灰；仅 --brand 豁免保留蓝） */
+  --ai: #141414;
+  --ai-strong: #000000;
+  --ai-soft: #f5f5f5;
+  --ai-hover: #f1f1f1;
+  --ai-200: #e0e0e0;
+  --ai-bg: #f5f5f5;
+  --ai-border: #e6e6e6;
+  --ai-dim: #666666;
+  --ai-900: #000000;
+
+  /* 状态语义色 */
+  --success: #10b981;
+  --success-strong: #047857;
+  --success-soft: #d1fae5;
+  --warning: #f59e0b;
+  --warning-strong: #b45309;
+  --warning-soft: #fef3c7;
+
+  /* 封面占位色板 */
+  --cover-pink: #ec4899;
+  --cover-green: #10b981;
+  --cover-amber: #f59e0b;
+  --cover-blue: #64748b;
+  --cover-violet: #8b5cf6;
+  --cover-red: #ef4444;
+  --cover-teal: #14b8a6;
+  --cover-orange: #f97316;
+  --cover-sky: #94a3b8;
+  --cover-lime: #84cc16;
+  --cover-rose: #f43f5e;
+  --cover-cyan: #9ca3af;
+  --cover-purple: #a855f7;
+  --cover-yellow: #eab308;
+  --cover-gray: #6b7280;
+
+  /* 掌握度语义色（四级） */
+  --mastery-mastered: #10b981;
+  --mastery-learning: #f59e0b;
+  --mastery-weak: #f97316;
+  --mastery-none: #ef4444;
+
+  /* 字号体系（组件统一引用 var(--fs-*)） */
+  --fs-appbar-h1: 22px;
+  --fs-appbar-sub: 13px;
+  --fs-subbar-h2: 18px;
+  --fs-card-title: 16px;
+  --fs-continue-title: 22px;
+  --fs-continue-pct: 28px;
+  --fs-review-big: 30px;
+  --fs-section-title: 13px;
+  --fs-li-main: 14px;
+  --fs-li-sub: 11.5px;
+  --fs-me-name: 20px;
+  --fs-me-stat: 18px;
+  --fs-book-name: 12px;
+  --fs-book-author: 10.5px;
+  --fs-tabbar: 10.5px;
+  --fs-hint: 11px;
+  --fs-tag: 11.5px;
+  --fs-badge: 10.5px;
+
+  /* 触控 / 行距 */
+  --touch-target: 44px;
+  --line-height-body: 1.6;
+
+  /* 字重 */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-extrabold: 800;
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+
+  /* 浮层换肤单一真源（浅色：侧边栏/弹窗 #f5f5f5，边框 #e6e6e6） */
+  --overlay-bg: #f5f5f5;
+  --overlay-fg: #666666;
+  --overlay-border: #e6e6e6;
+  --overlay-soft: #eaeaea;
+}
+
+/* Android EdgeToEdge 兜底：手势条覆盖底部约 50px 且 env() 常不生效。
+   平台标记由 main.tsx 启动时写入 documentElement.dataset.platform。 */
+html[data-platform="android"] {
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), 50px);
+}
+
+/* 暗色态：背景 0x171717，文字 0xd2d3da，图标白色，边框 0x383838 */
+:root.dark,
+.dark {
+  --ink: #d2d3da;
+  --ink-soft: #b8b9c0;
+  --ink-muted: #8a8c94;
+  --pdf-ink: #d2d3da;
+  --pdf-paper: #171717;
+  --accent: #ffffff;
+  --accent-soft: #d2d3da;
+  --accent-bg: #262626;
+  --accent-fg: #171717;
+  --paper: #171717;
+  --paper-pure: #2e2e2e;
+  /* 侧边栏 / 弹出栏衬底：0x262626 */
+  --paper-soft: #262626;
+  --paper-warm: #212121;
+  --line: #383838;
+  --line-soft: #2e2e2e;
+  --hi-yellow: #fef08a;
+  --hi-green: #bbf7d0;
+  --hi-blue: #bfdbfe;
+  --hi-pink: #fbcfe8;
+  --branch-1: #e6e8ec;
+  --branch-2: #64748b;
+  --branch-3: #34d399;
+  --branch-4: #fbbf24;
+  --branch-5: #f87171;
+  --branch-6: #c084fc;
+  --branch-7: #2dd4bf;
+  --branch-8: #fb7185;
+  --kg-edge: #475569;
+  --kg-label: #cbd5e1;
+  --kg-node-stroke: #0f172a;
+  --kg-node-stroke-active: #e6e8ec;
+  --danger: #f87171;
+  --danger-soft: #7f1d1d;
+  --ai: #d2d3da;
+  --ai-strong: #e6e8ec;
+  --ai-soft: #262626;
+  --ai-hover: #2e2e2e;
+  --ai-200: #383838;
+  --ai-bg: #262626;
+  --ai-border: #383838;
+  --ai-dim: #8a8c94;
+  --ai-900: #e6e8ec;
+  --mastery-mastered: #34d399;
+  --mastery-learning: #fbbf24;
+  --mastery-weak: #fb923c;
+  --mastery-none: #f87171;
+  --overlay-bg: #262626;
+  --overlay-fg: #d2d3da;
+  --overlay-border: #383838;
+  --overlay-soft: #2e2e2e;
+}
+
+/* 浮层工具类（阅读路径浮层统一用，禁止裸写 bg-white） */
+.bg-overlay {
+  background-color: var(--overlay-bg);
+}
+.text-overlay {
+  color: var(--overlay-fg);
+}
+.border-overlay {
+  border-color: var(--overlay-border);
+}
+.bg-overlay-soft {
+  background-color: var(--overlay-soft);
+}

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  MJNexus-Reader macOS Entitlements
+  =================================
+  该文件定义 App Sandbox 启用后允许应用访问的系统资源。
+  * 沙箱启用后，所有权限必须显式声明
+  * 通过 codesign 命令的 entitlements 参数在签名阶段注入
+  * 修改后需重新签名并重新公证(notarize)
+-->
+<plist version="1.0">
+<dict>
+    <!-- 启用 App Sandbox：macOS 分发必需 -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- 网络客户端：访问 AI 服务（OpenAI / Claude / Tavily 等 HTTPS API） -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- 网络服务端：Webview 内部 IPC 服务（Tauri 自定义协议、本地资源服务） -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- 用户选择文件读写：通过 dialog 插件导入的书籍、笔记导出 -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- App 域书籍 bookmark：导入的书籍通过 security-scoped bookmark 持久化访问 -->
+    <key>com.apple.security.files.bookmarks.app-scope</key>
+    <true/>
+
+    <!-- 麦克风访问：实时 ASR 语音识别输入 -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- 允许 JIT：V8 引擎（WebView2/WKWebView JS 引擎）执行 JIT 代码 -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- 允许未签名的可执行内存：pdfjs / wasm 模块加载需要 -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

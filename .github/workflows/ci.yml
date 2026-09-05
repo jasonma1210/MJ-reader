@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# 门禁（2026-08-18 扩展为全平台矩阵，对齐仓库布局 frontend/ + src-tauri/）：
+#   - frontend-check : 矩阵 ubuntu / macos / windows → npm ci → tsc → eslint → vitest → build
+#   - rust-check     : 矩阵 ubuntu / macos（macOS 覆盖 ASR/whisper 等平台专属代码，
+#                      cfg 隔离保证 Linux 可编译）→ cargo check → cargo test --lib
+#                      → check-unwrap（let _ = 静默丢弃棘轮）→ check-soft-delete（软删守卫棘轮）
+# 注：若仓库最终嵌套在父仓（如 <parent>/mjnexus-reader/），需给各 working-directory
+#     与 cache-dependency-path 加 "mjnexus-reader/" 前缀（旧版即此布局，当前按本地根目录）。
+jobs:
+  frontend-check:
+    name: Frontend (tsc / eslint / vitest / build)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+      - name: Unit tests (vitest)
+        run: npx vitest run
+      - name: i18n key parity check
+        run: npm run i18n-check
+      - name: V2 product metrics (dead routes / ghost CMD keys / route whitelist)
+        run: node ../scripts/check-v2-metrics.mjs
+      - name: Build
+        run: npm run build
+
+  rust-check:
+    name: Backend (cargo check / test / ratchets)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo check
+        run: cargo check
+      - name: cargo test (lib 单元/契约测试)
+        run: cargo test --lib
+      - name: Ratchet — no silent discard (let _ =)
+        run: bash scripts/check-unwrap.sh
+      - name: Ratchet — soft-delete guards
+        run: bash ../scripts/check-soft-delete.sh

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>MJNexus-Reader 需要访问麦克风以进行语音识别（ASR），将您的语音转换为文字用于 AI 对话输入。</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>MJNexus-Reader 需要使用语音识别功能将您的语音转换为文字，用于 AI 助手的对话输入。识别内容仅在本设备或本地模型中处理。</string>
+    <key>NSCameraUsageDescription</key>
+    <string>用于扫描书籍条码导入图书，以及对图片中的文字进行 OCR 识别。</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>用于从相册导入图片或书籍文件。</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>用于将导出的 PDF 学习笔记保存到相册。</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>用于访问桌面文件夹导入书籍文件。</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>用于访问文档文件夹导入书籍文件。</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>用于访问下载文件夹导入已下载的书籍文件。</string>
+    <key>NSFileProviderDomainUsageDescription</key>
+    <string>用于访问文件提供程序（如 iCloud 云盘）以同步书籍和笔记。</string>
+    <key>NSUserActivityTypes</key>
+    <array/>
+    <!-- v1.1.0 P2.2：注册 mjnexus:// URL Scheme（全局定位卡片/书籍/思维导图） -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.mjnexusreader.app</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>mjnexus</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

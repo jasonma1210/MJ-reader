@@ -1,0 +1,21 @@
+# BE-13 修复（2026-08-05 审计）：async 上下文内禁用同步阻塞 IO 的 clippy 护栏。
+#
+# 背景：114 处 std::fs 同步 IO 跑在 async 上下文（tokio worker），读 200MB PDF 或
+# 访问网络盘时连锁拖慢所有并发命令（含 UI 心跳与 AI 流式输出）。
+#
+# 启用方式（分片改造完成后逐步生效）：
+#   1. 改造 sync/mod.rs → commands/file.rs → commands/book.rs 为 tokio::fs / spawn_blocking
+#   2. 在对应模块顶部加 `#![deny(clippy::disallowed_methods)]`（test 豁免）
+#   3. 全部存量清零后，再在 lib.rs 顶层统一 deny
+#
+# 注意：全局 deny 之前不要直接引入——clippy.toml 的 disallowed-methods 会产生 warning，
+# 而 CI 的 clippy 以 `-W warnings` 运行，存量 114 处会立刻把 CI 打红。
+disallowed-methods = [
+  { path = "std::fs::read", reason = "async 内禁用同步 IO，改用 tokio::fs::read 或 spawn_blocking（BE-13）" },
+  { path = "std::fs::read_to_string", reason = "async 内禁用同步 IO，改用 tokio::fs::read_to_string（BE-13）" },
+  { path = "std::fs::write", reason = "async 内禁用同步 IO，改用 tokio::fs::write（BE-13）" },
+  { path = "std::fs::copy", reason = "async 内禁用同步 IO，改用 tokio::fs::copy（BE-13）" },
+  { path = "std::fs::remove_file", reason = "async 内禁用同步 IO，改用 tokio::fs::remove_file（BE-13）" },
+  { path = "std::fs::metadata", reason = "async 内禁用同步 IO，改用 tokio::fs::metadata（BE-13）" },
+  { path = "std::fs::File::open", reason = "async 内禁用同步 IO，改用 tokio::fs::File（BE-13）" },
+]

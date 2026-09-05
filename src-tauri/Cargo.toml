@@ -1,0 +1,267 @@
+[package]
+name = "mjnexus-reader"
+version = "1.0.0"
+description = "AI-native cross-platform ebook reader"
+authors = ["MJNexus"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "mjnexus_reader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# v2.0 T09：PP-OCRv5 真机探针（复用 lib 引擎，脱离 Tauri 上下文验证 ONNX 推理）。
+# 构建：cargo build --release --target aarch64-linux-android --features onnx --bin pp_ocr_probe
+# 该 bin 不参与 APK 打包（tauri android build 只打 lib），仅供设备端验证用。
+[[bin]]
+name = "pp_ocr_probe"
+path = "src/bin/pp_ocr_probe.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+# Android 构建时可使用 --no-default-features 关闭 table-recognition 以减小 APK 体积：
+#   cargo tauri android build --release --target aarch64 --no-default-features
+# 若项目中不需要表格识别功能（Microsoft TableTransformer），可安全关闭。
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
+tauri-plugin-http = "2"
+tauri-plugin-os = "2"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+env_logger = "0.11"
+chardet = "0.2"
+encoding_rs = "0.8"
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls", "multipart"], default-features = false }
+futures-util = "0.3"
+tauri-plugin-shell = "2"
+# v1.1.0 P2.2 实现：URL Scheme 全局定位（mjnexus://card/{uid} 等）
+tauri-plugin-deep-link = "2"
+hound = "3"
+jsonpath_lib = "0.3"
+scraper = "0.20"
+sxd-document = "0.3"
+sxd-xpath = "0.4"
+regex = "1"
+lopdf = "0.34"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+zip = "2"
+quick-xml = "0.36"
+url = "2"
+# v0.8.0 P2.6 实现：Readwise 导入兼容（CSV / JSON / API）
+csv = "1.3"
+# v0.5.0 实现：MCP 协议 HTTP server
+# v3.0（3-Tab IA 重构）：axum 新增 multipart feature（局域网文件服务器接收上传）
+axum = { version = "0.7", features = ["json", "multipart"] }
+tower = "0.5"
+# v0.5.0 实现：跨设备同步（SyncProvider trait 异步接口 + S3 SigV4 签名）
+async-trait = "0.1"
+hmac = "0.12"
+# v0.5.0 模块3：sherpa-onnx 模型 tar.bz2 解压
+bzip2 = "0.4"
+tar = "0.4"
+# v0.7.0 实现：API Key 加密存储（AES-256-GCM + 机器指纹派生密钥）
+aes-gcm = "0.10"
+whoami = "1"
+# BE-02 修复（2026-08-05 审计）：弱 KDF（单轮 SHA256、无盐）→ Argon2id + 持久化随机盐
+argon2 = "0.5"
+# v0.8.0 P1.4 实现：同步端到端加密（PBKDF2-HMAC-SHA256 密钥派生 + 随机数）
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+rand = "0.8"
+# v3.0（3-Tab IA 重构）：局域网文件服务器 — QR 码 SVG 生成（上传页展示）
+# 启用 svg feature：qrcode 0.14 默认不含 SVG 渲染，需显式开启
+qrcode = { version = "0.14", features = ["svg"] }
+# 局域网文件服务器：Android 上可靠获取本机局域网 IP（getifaddrs），
+# 替代 UDP connect 8.8.8.8 探测（移动网络/无外网路由时失败 → 误返回 127.0.0.1）
+local-ip-address = "0.6"
+
+# v3.4 实现：Edge TTS（微软 Read Aloud 在线合成，多端统一神经音色）
+# 纯 Rust，复用树内 tokio-tungstenite / sha2 / rand / serde_json；无系统 TLS/音频依赖，
+# 利于 Android aarch64 / iOS aarch64 交叉编译。详见 docs/design/tts-edge-mobile-assessment.md
+kothok-edge-tts = "0.2"
+
+# v2.0 T09 实现：云端 ASR 服务（腾讯云实时语音识别 WebSocket + 小米 MiMo ASR）
+# - tokio-tungstenite：腾讯云 wss://asr.cloud.tencent.com 流式识别客户端
+# - sha1：腾讯云 HMAC-SHA1 签名（签名原文 → HMAC-SHA1(SecretKey) → Base64 → urlencode）
+# 注意：Android/iOS 无 OpenSSL，native-tls 在移动端不可用，必须用 rustls（webpki-roots 自带根证书，无需系统证书库）。
+# default-features=false 去掉 native-tls，显式启用 connect/stream/rustls-tls-webpki-roots，修复「TLS support not compiled in」。
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "stream", "rustls-tls-webpki-roots"] }
+sha1 = "0.10"
+
+# v0.8.0 P2.1 实现：Anki .apkg 导入导出
+# rusqlite 使用 bundled feature 避免依赖系统 sqlite 库
+# rusqlite 与现有 sqlx 共存：两个 crate 各自打开各自的 Connection，互不冲突
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# v0.8.0 P1.3 实现：OCR 表格识别（Microsoft TableTransformer ONNX 推理 + 图像处理）
+# - `table-recognition` feature 控制是否编译 image / imageproc / ndarray（默认开启）。
+# - `onnx` feature 控制是否编译 ort（PP-OCRv5 移动端通用 OCR + 表格检测共用）。
+image = { version = "0.25", optional = true }
+imageproc = { version = "0.25", optional = true }
+ndarray = { version = "0.16", optional = true }
+[features]
+# 说明（2026-08-22）：llamacpp 已从 default 移除。默认构建不再携带 llama-cpp-2，
+# 以减小安装包体积（约 -532MB .so）。端侧本地模型后端相关代码均以
+# `#[cfg(feature = "llamacpp")]` 门控，需要本地推理时显式指定：
+#   cargo build --features llamacpp
+# 如需 GPU（Vulkan）或多模态，仍可按需追加 llama-gpu / mtmd。
+default = ["table-recognition", "onnx"]
+table-recognition = ["dep:image", "dep:imageproc", "dep:ndarray"]
+# v2.0 T09 实现：启用 ONNX Runtime（PP-OCRv5 移动端通用 OCR + 表格检测）。
+# 升级说明：原 ort 2.0.0-rc.9 在稳定 rustc 下 `ortsys!` 宏不兼容（229 错误），
+# 已升级到稳定 2.x；下载预编译原生库（download-binaries）以规避系统 onnxruntime 依赖。
+# 启用后体积约 +50MB（首次构建拉取 ort 原生库）。
+#   cargo build --features onnx
+#   cargo tauri android build --target aarch64 --features onnx
+onnx = ["dep:ort"]
+# v2.0 T05 实现：Android 系统 SpeechRecognizer 桥接特性。
+# 启用后引入 jni crate，通过 JNI 调用 SpeechRecognizerBridge.kt。
+# 默认不启用以避免无 NDK 环境下阻塞 release 构建；真机构建命令：
+#   pnpm tauri android build --target aarch64 --features android-asr
+# 详见 docs/android-asr-jni-runbook.md。
+android-asr = ["dep:jni"]
+# 2026-09-04：下载保活（用户需求「锁屏黑屏后下载继续直到完成」）。
+# 启用后经 JNI 调 DownloadWakeLock.kt 持 PARTIAL_WAKE_LOCK（CPU 保活、屏幕可熄），
+# 下载结束/取消/失败自动释放（RAII guard）。ndk-context 已是 android target 非可选依赖。
+# 构建命令追加：cargo tauri android build --target aarch64 --features ...,android-wakelock
+# iOS 锁屏挂起为系统级限制，需原生 background URLSession（P1 backlog），此 feature 对 iOS 无效。
+android-wakelock = ["dep:jni"]
+# v3.0（3-Tab IA 重构）：端侧 LLM 推理（llama-cpp-2 GGUF 推理）。
+# 默认不启用：交叉编译耗时较长；真机需启用本 feature 才能跑本地模型。启用方式：
+#   Android：cargo tauri android build --target aarch64 --features llamacpp
+#   iOS    ：cargo tauri ios build --target aarch64 --features llamacpp,llama-metal
+llamacpp = ["dep:llama-cpp-2"]
+# GPU 卸载（Android / Vulkan）：仅在 llamacpp 启用时生效。
+# 构建：cargo tauri android build --target aarch64 --features llamacpp,llama-gpu
+# 运行时按 SoC 厂商动态定 ngl（Mali=99 / Adreno=0，Adreno Vulkan 推理 DeviceLost 崩）。
+llama-gpu = ["llama-cpp-2/vulkan"]
+# iOS GPU 卸载（Metal）：仅在 llamacpp 启用时生效。
+# 说明：llama.cpp 在 APPLE 平台默认 `GGML_METAL=ON`（metallib 以 .incbin 嵌入静态库，
+# 无需运行时 default.metallib 文件——非嵌入分支用 `xcrun -sdk macosx`，iOS 不可用）。
+# 故 iOS 构建天然含 Metal 后端，本 feature **只控制是否把层 offload 到 Metal**
+# （见 `compute_n_gpu_layers`），不控制是否编译，因此无需引用 llama-cpp-2/metal
+# （后者在 llama-cpp-sys-2 0.1.154 中是 no-op，仅靠 llama.cpp 的 APPLE 默认值生效）。
+# iOS 无 Vulkan，llama-gpu 对 iOS 无意义。
+llama-metal = []
+# 多模态（mmproj 投影文件）：启用后本地模型可理解图片（Gemma4-E / Qwen-VL 等）。
+# 须与 llamacpp 一起启用；构建命令追加 ,mtmd：
+#   cargo tauri android build --target aarch64 --features llamacpp,mtmd[,llama-gpu]
+# 不启用时构建保持纯文本推理，二进制更小。
+mtmd = ["llamacpp", "llama-cpp-2/mtmd"]
+[dependencies.ort]
+version = "=2.0.0-rc.13"
+default-features = false
+features = ["download-binaries", "tls-rustls", "std"]
+optional = true
+
+# v3.0（3-Tab IA 重构）：端侧 LLM 推理（GGUF 模型加载 + 上下文推理）。
+# 仅 llamacpp feature 启用时编译。最新版本 0.1.154 绑定 2026-08 llama.cpp。
+#
+# 依赖声明按目标平台拆分（Cargo 特性不可按目标条件化，只能拆分依赖声明）：
+# - openmp：仅在**有 OpenMP 运行时**的平台开启（Linux/Android NDK clang）。
+#   Apple 平台（macOS/iOS）**必须关闭**：Xcode clang 不对 iOS 提供 libomp，
+#   GGML_OPENMP=ON 会注入 -fopenmp 编译旗标，产生 __kmpc_* 未定义符号，
+#   静态库阶段不报错、最终 App 链接阶段才失败（排查成本极高）。
+# - android-shared-stdcxx：仅 Android（链接 c++_shared，避免打包冲突）。
+
+# v0.9.0 Wave B（T-PLAT-05）Android 原生 ASR feature 预留（环境阻塞：需 NDK）：
+# 计划经 JNI 调用系统 SpeechRecognizer 替代离线 sherpa-onnx（见
+# src-tauri/src/commands/asr.rs 的 transcribe_with_android_speech_recognizer 占位 +
+# docs/android-asr-jni-runbook.md）。届时在此新增：
+#   android-asr = ["dep:jni", ...]
+# 当前 Android 端 ASR command 保留返回友好错误，不引入新 feature 以免破坏 release 构建。
+
+# v0.8.0 实现：联网搜索 Provider 单元测试使用 wiremock 拦截 reqwest 请求
+[dev-dependencies]
+wiremock = "0.6"
+
+# whisper-rs 仅在 macOS 平台编译（Android v0.8.0 暂不集成 ASR 引擎）
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.15", features = ["metal"] }
+
+# v1.4.0 实现：内置 OCR 引擎（Apple Vision framework）
+# objc2 0.6 与 objc2-vision 0.3.2 配套（供 autoreleasepool 使用）
+objc2 = { version = "0.6", features = ["std"] }
+objc2-vision = { version = "0.3.2", features = ["VNRecognizeTextRequest", "VNRequestHandler", "VNRequest"] }
+objc2-foundation = { version = "0.3", features = ["NSData", "NSArray", "NSString", "NSDictionary", "NSError", "NSEnumerator"] }
+
+# v2.0 T02 备注：iOS SFSpeechRecognizer 原生 ASR 因 objc2 0.6 生态 API 全面变更
+# （block2 回调 / MainThreadOnly / 音频类迁移至 objc2-avf-audio）且从未编译验证，
+# 采用与 Android v0.8.0 sherpa-onnx 相同的降级策略：命令保留注册，返回友好错误。
+# 故 iOS 不再依赖 objc2-speech / objc2-av-foundation，待真机联调阶段按 objc2 0.6 规范重新接入。
+# 前置：rustup target add aarch64-apple-ios
+# 详见 docs/ios-asr-runbook.md
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = { version = "0.6", features = ["std"] }
+# v1.4.0 实现：内置 OCR 引擎（Apple Vision framework，iOS 与 macOS 共用，objc2 0.6 生态）
+objc2-vision = { version = "0.3.2", features = ["VNRecognizeTextRequest", "VNRequestHandler", "VNRequest"] }
+objc2-foundation = { version = "0.3", features = ["NSData", "NSArray", "NSString", "NSDictionary", "NSError", "NSEnumerator", "NSLocale", "NSObject", "NSURL"] }
+# v2.0+ iOS 原生 ASR（SFSpeechRecognizer 实时流式识别）：Speech.framework + AVFAudio 绑定。
+# 默认 features 已含 SFSpeechRecognizer / SFSpeechAudioBufferRecognitionRequest / SFTranscription，
+# 并自动引入 objc2-avf-audio（AVAudioEngine 采音）与 objc2-core-media。
+objc2-speech = { version = "0.3.2" }
+objc2-avf-audio = { version = "0.3.2" }
+block2 = { version = "0.6", features = ["std"] }
+# 端侧 LLM（iOS）：**不开 openmp**（Xcode clang 无 iOS libomp，见 [dependencies] 上方注释）。
+# 多线程由 llama.cpp 自带 pthread 后端提供；GPU 走 Metal（llama-metal feature 控制 offload）。
+llama-cpp-2 = { version = "0.1.154", default-features = false, optional = true }
+
+# v1.4.0 实现：内置 OCR 引擎（Windows.Media.Ocr，免安装）
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Media_Ocr", "Graphics_Imaging", "Foundation", "Storage_Streams", "Win32_Foundation", "Win32_System_Com"] }
+
+# v2.0 T05 实现：Android 平台 SpeechRecognizer JNI 桥接
+# 通过 jni crate 调用 SpeechRecognizerBridge.kt（单例模式）。
+# 启用方式：cargo build --target aarch64-linux-android --features android-asr
+# 前置：rustup target add aarch64-linux-android + Android NDK r25+
+# 详见 docs/android-asr-jni-runbook.md。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", optional = true }
+# v1.4.0：Android 原生 ASR 获取 JavaVM（ndk-context 在 Tauri 2 下未初始化，
+# 已用 catch_unwind 保护，panic 不崩溃应用）
+ndk-context = "0.1"
+# 端侧 LLM（Android）：openmp 多线程 CPU 推理（NDK clang 原生支持 libomp）
+# + android-shared-stdcxx（链接 c++_shared，避免打包冲突）。
+llama-cpp-2 = { version = "0.1.154", default-features = false, features = ["openmp", "android-shared-stdcxx"], optional = true }
+
+# 端侧 LLM（桌面端 macOS / Windows / Linux）：保留 openmp 多线程 CPU 推理。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+llama-cpp-2 = { version = "0.1.154", default-features = false, features = ["openmp"], optional = true }
+
+# v0.8.0 收尾：Android 平台暂不集成 sherpa-onnx。
+# 原因：sherpa-onnx-sys 1.13.3 的 build.rs 在 archive_name 中不支持 Android aarch64，
+# 即使设置 SHERPA_ONNX_LIB_DIR 也会先 panic。强行集成会阻塞 release APK 构建。
+# Android 端的 ASR command 保留注册（保持前端调用兼容），但运行时返回友好错误提示。
+# v0.9.0 计划改用 Android 系统 SpeechRecognizer（通过 JNI 调用）替换离线 ASR。
+# macOS 平台继续使用 whisper-rs，不受此变更影响。
+
+[profile.release]
+# panic = "abort" 已移除：whisper-rs 的 C++ 异常需要 unwind
+codegen-units = 1
+lto = true
+opt-level = "s"
+# v3.7.2 恢复 strip + 关 debug：用户要求 release APK ≤150MB。
+# llamacpp 0 字根因（chat template）已修复，真机崩溃符号化调试期结束；
+# 若需 addr2line 符号化，临时改回 strip=false + debug=true 再重打。
+strip = true
+debug = false
+
+# iOS 27 SDK 强制 UIScene 生命周期（TN3187）：tao 0.35.3 的
+# configurationForConnectingSceneSession 未 autorelease 返回值，
+# UIKit 在 _connectUISceneFromFBSScene 中 objc_retain 已释放对象 → 启动 SIGSEGV。
+# vendor 内已修（Retained::autorelease_return），待上游修复后移除本 patch。
+[patch.crates-io]
+tao = { path = "vendor/tao-0.35.3" }

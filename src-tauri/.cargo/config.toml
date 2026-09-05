@@ -1,0 +1,19 @@
+# v1.0.0 修复：macOS 上交叉编译 Android 需显式指定 NDK 工具链
+# NDK 28 不再提供无后缀的 <triple>-clang，需使用带 API level 后缀的版本
+# 项目 minSdk=24，对应 aarch64-linux-android24-clang
+[target.aarch64-linux-android]
+linker = "/Users/jianma/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang"
+ar = "/Users/jianma/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=--target=aarch64-linux-android24"]
+
+[target.armv7-linux-androideabi]
+linker = "/Users/jianma/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi24-clang"
+ar = "/Users/jianma/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+
+[target.i686-linux-android]
+linker = "/Users/jianma/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/i686-linux-android24-clang"
+ar = "/Users/jianma/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+
+[target.x86_64-linux-android]
+linker = "/Users/jianma/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android24-clang"
+ar = "/Users/jianma/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"

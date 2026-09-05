@@ -1,0 +1,135 @@
+[package]
+name = "mjnexus-reader"
+version = "1.0.0"
+description = "AI-native cross-platform ebook reader"
+authors = ["MJNexus"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "mjnexus_reader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+# Android 构建时可使用 --no-default-features 关闭 table-recognition 以减小 APK 体积：
+#   cargo tauri android build --release --target aarch64 --no-default-features
+# 若项目中不需要表格识别功能（Microsoft TableTransformer），可安全关闭。
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
+tauri-plugin-http = "2"
+tauri-plugin-os = "2"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+env_logger = "0.11"
+chardet = "0.2"
+encoding_rs = "0.8"
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls", "multipart"], default-features = false }
+futures-util = "0.3"
+tauri-plugin-shell = "2"
+# v1.1.0 P2.2 实现：URL Scheme 全局定位（mjnexus://card/{uid} 等）
+tauri-plugin-deep-link = "2"
+hound = "3"
+jsonpath_lib = "0.3"
+scraper = "0.20"
+sxd-document = "0.3"
+sxd-xpath = "0.4"
+regex = "1"
+lopdf = "0.34"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+zip = "2"
+quick-xml = "0.36"
+url = "2"
+# v0.8.0 P2.6 实现：Readwise 导入兼容（CSV / JSON / API）
+csv = "1.3"
+# v0.5.0 实现：MCP 协议 HTTP server
+axum = { version = "0.7", features = ["json"] }
+tower = "0.5"
+# v0.5.0 实现：跨设备同步（SyncProvider trait 异步接口 + S3 SigV4 签名）
+async-trait = "0.1"
+hmac = "0.12"
+# v0.5.0 模块3：sherpa-onnx 模型 tar.bz2 解压
+bzip2 = "0.4"
+tar = "0.4"
+# v0.7.0 实现：API Key 加密存储（AES-256-GCM + 机器指纹派生密钥）
+aes-gcm = "0.10"
+whoami = "1"
+# v0.8.0 P1.4 实现：同步端到端加密（PBKDF2-HMAC-SHA256 密钥派生 + 随机数）
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+rand = "0.8"
+
+# v0.8.0 P2.1 实现：Anki .apkg 导入导出
+# rusqlite 使用 bundled feature 避免依赖系统 sqlite 库
+# rusqlite 与现有 sqlx 共存：两个 crate 各自打开各自的 Connection，互不冲突
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# v0.8.0 P1.3 实现：OCR 表格识别（Microsoft TableTransformer ONNX 推理 + 图像处理）
+# - `table-recognition` feature 控制是否编译 image / imageproc / ndarray（默认开启）。
+# - `onnx` feature 控制是否编译 ort（默认关闭，v0.8.0 收尾期间 ort 2.0-rc.9 仍与
+#   rustc stable 的 `partialeq_numeric!` 宏存在兼容性问题；GPU 加速留待 v0.8.1 启用）。
+# - 纯 CPU 推理走 ort 默认后端，体积约 50MB（首次 cargo build 拉取）。
+image = { version = "0.25", optional = true }
+imageproc = { version = "0.25", optional = true }
+ndarray = { version = "0.16", optional = true }
+[features]
+default = ["table-recognition"]
+table-recognition = ["dep:image", "dep:imageproc", "dep:ndarray"]
+# v0.8.0 收尾 + Wave B (T-PLAT-06)：默认不启用 ort。
+# 启用 OCR 表格识别（Microsoft TableTransformer ONNX 推理）需显式开启 onnx 特性：
+#   cargo build --features onnx
+# 注意：启用后体积约 +50MB（首次构建需拉取 ort 2.0.0-rc.9）。
+# 详见 docs/ocr-onnx-build.md。
+onnx = ["dep:ort"]
+# Wave B (T-PLAT-05)：Android 系统 SpeechRecognizer 桥接特性（预留占位）。
+# 当前不关联任何 crate；接入 Kotlin SpeechRecognizerBridge 后，此处会加入
+# jni / android_logger 等依赖，并通过 `cfg(feature = "android-asr")` 隔离相关代码。
+# 前置与步骤见 docs/android-asr-jni-runbook.md（环境阻塞，本机未验证）。
+android-asr = []
+[dependencies.ort]
+version = "=2.0.0-rc.9"
+default-features = false
+features = []
+optional = true
+
+# v0.9.0 Wave B（T-PLAT-05）Android 原生 ASR feature 预留（环境阻塞：需 NDK）：
+# 计划经 JNI 调用系统 SpeechRecognizer 替代离线 sherpa-onnx（见
+# src-tauri/src/commands/asr.rs 的 transcribe_with_android_speech_recognizer 占位 +
+# docs/android-asr-jni-runbook.md）。届时在此新增：
+#   android-asr = ["dep:jni", ...]
+# 当前 Android 端 ASR command 保留返回友好错误，不引入新 feature 以免破坏 release 构建。
+
+# v0.8.0 实现：联网搜索 Provider 单元测试使用 wiremock 拦截 reqwest 请求
+[dev-dependencies]
+wiremock = "0.6"
+
+# whisper-rs 仅在 macOS 平台编译（Android v0.8.0 暂不集成 ASR 引擎）
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.15", features = ["metal"] }
+
+# v0.8.0 收尾：Android 平台暂不集成 sherpa-onnx。
+# 原因：sherpa-onnx-sys 1.13.3 的 build.rs 在 archive_name 中不支持 Android aarch64，
+# 即使设置 SHERPA_ONNX_LIB_DIR 也会先 panic。强行集成会阻塞 release APK 构建。
+# Android 端的 ASR command 保留注册（保持前端调用兼容），但运行时返回友好错误提示。
+# v0.9.0 计划改用 Android 系统 SpeechRecognizer（通过 JNI 调用）替换离线 ASR。
+# macOS 平台继续使用 whisper-rs，不受此变更影响。
+
+[profile.release]
+# panic = "abort" 已移除：whisper-rs 的 C++ 异常需要 unwind
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
