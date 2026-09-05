@@ -52,18 +52,17 @@ jobs:
 
     env:
       # whisper-rs-sys 的 C++（whisper.cpp / ggml-backend-reg.cpp）用了 std::filesystem，
-      # 该 API 自 macOS 10.15 起可用。不显式设置时 cc crate 会按更低的部署目标编译，
-      # 报一堆 `'path' is unavailable: introduced in macOS 10.15` 导致构建失败。
+      # 该 API 自 macOS 10.15 起可用。其 build.rs 用 cmake crate 编译，cmake 子进程会把
+      # 部署目标写进 CMakeCache（CMAKE_OSX_DEPLOYMENT_TARGET），默认落到 10.13，
+      # 导致一堆 `'path' is unavailable: introduced in macOS 10.15` 编译错误。
       #
-      # 三重保险（2026-09-05 修正，勿回退）：
-      #   1) MACOSX_DEPLOYMENT_TARGET——cc crate 读取后注入 -mmacosx-version-min；
-      #   2) CFLAGS / CXXFLAGS——cc crate 每次编译 C/C++ 都无条件透传，作为兜底；
-      #   3) 下方 rust-cache 的 key 显式换值，强制丢弃旧的 target/ 缓存，让 whisper.cpp
-      #      真正重新编译（否则 rust-cache 还原的 build/whisper-rs-sys-*/out 会让 cc 跳过
-      #      重编译，env 改了也不生效——这正是之前两次构建均失败的根因）。
+      # 正解（2026-09-05 修正，勿回退）：直接设 CMAKE_OSX_DEPLOYMENT_TARGET=11.0。
+      # cmake 初始化 CMAKE_OSX_DEPLOYMENT_TARGET 缓存变量时会读取同名环境变量；
+      # 仅设 MACOSX_DEPLOYMENT_TARGET（cc crate 读的那个）不足以驱动 cmake 子进程，
+      # 之前两次构建均因此失败。下方 rust-cache 的 key 换值强制丢弃陈旧 cmake 缓存，
+      # 让 whisper.cpp 以 11.0 重新配置编译。
       MACOSX_DEPLOYMENT_TARGET: '11.0'
-      CFLAGS: '-mmacosx-version-min=11.0'
-      CXXFLAGS: '-mmacosx-version-min=11.0'
+      CMAKE_OSX_DEPLOYMENT_TARGET: '11.0'
       # Tauri 2 内建签名 / 公证；Secrets 缺失时为空串，构建自动降级为未签名。
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
