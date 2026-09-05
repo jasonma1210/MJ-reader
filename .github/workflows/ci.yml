@@ -70,6 +70,13 @@ jobs:
             librsvg2-dev \
             patchelf
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # 平台 cfg 一致性门禁：模块带 cfg 而 generate_handler! 注册项没带时，
+      # macOS 上完全不可见，只在 Linux runner 上炸 E0433（2026-09-05 ASR 事故）。
+      - name: Ratchet — handler platform cfg parity
+        run: node ../scripts/check-handler-cfg.mjs
       - name: cargo check
         run: cargo check
       - name: cargo test (lib 单元/契约测试)

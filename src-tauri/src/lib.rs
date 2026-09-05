@@ -375,14 +375,26 @@ pub fn run() {
             asr::transcribe_streaming,
             // v2.0 T05 实现：Android 系统 SpeechRecognizer JNI 桥接命令
             // （未启用 android-asr feature 时为降级 stub，保持 invoke 兼容）
+            //
+            // ⚠️ cfg 不可省略：`commands::asr` 模块整体只在 macos/android/ios 编译，
+            // Linux 上这 8 个路径会解析不到模块，报 E0433 `cannot find module or crate asr`
+            // （ubuntu CI 的 cargo check 必挂）。新增 ASR 命令请沿用同一 cfg。
+            #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::android_speech_recognizer_start,
+            #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::android_speech_recognizer_stop,
+            #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::android_speech_recognizer_check_auth,
+            #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::android_speech_recognizer_request_auth,
             // v2.0 T02 实现：iOS SFSpeechRecognizer 原生 ASR 命令（流式 + 权限）
+            #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::ios_speech_recognizer_start,
+            #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::ios_speech_recognizer_stop,
+            #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::ios_speech_recognizer_check_auth,
+            #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::ios_speech_recognizer_request_auth,
             settings::get_cache_info,
             settings::clear_app_cache,
