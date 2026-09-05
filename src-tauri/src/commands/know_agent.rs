@@ -271,7 +271,7 @@ async fn persist_ask_chat(
     let now = chrono::Utc::now().timestamp();
     let scope = if book_id.is_some() { "book" } else { "none" };
 
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO ai_chats (id, conversation_id, book_id, role, content, model, chapter_index, scope, extra, created_at) \
          VALUES (?, ?, ?, 'user', ?, ?, 0, ?, NULL, ?)",
     )
@@ -283,10 +283,13 @@ async fn persist_ask_chat(
     .bind(scope)
     .bind(now)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] INSERT INTO ai_chats 失败：{e}");
+    }
 
     let extra = serde_json::to_string(citations).unwrap_or_else(|_| "[]".to_string());
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO ai_chats (id, conversation_id, book_id, role, content, model, chapter_index, scope, extra, created_at) \
          VALUES (?, ?, ?, 'assistant', ?, ?, 0, ?, ?, ?)",
     )
@@ -299,7 +302,10 @@ async fn persist_ask_chat(
     .bind(extra)
     .bind(now)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] INSERT INTO ai_chats 失败：{e}");
+    }
 
     cid
 }

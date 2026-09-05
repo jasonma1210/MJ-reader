@@ -136,21 +136,30 @@ pub async fn write_knowledge_units_and_points(
     let now = chrono::Utc::now().timestamp();
 
     // 1. 幂等清旧（同书重新拆书覆盖；quiz_questions 仅清本模块写入的 self_test 题）
-    let _ = sqlx::query("DELETE FROM knowledge_points WHERE book_id = ?")
+    if let Err(e) = sqlx::query("DELETE FROM knowledge_points WHERE book_id = ?")
         .bind(book_id)
         .execute(db)
-        .await;
-    let _ = sqlx::query("DELETE FROM knowledge_units WHERE book_id = ?")
+        .await
+    {
+        log::warn!("[db] DELETE FROM knowledge_points 失败：{e}");
+    }
+    if let Err(e) = sqlx::query("DELETE FROM knowledge_units WHERE book_id = ?")
         .bind(book_id)
         .execute(db)
-        .await;
-    let _ = sqlx::query(
+        .await
+    {
+        log::warn!("[db] DELETE FROM knowledge_units 失败：{e}");
+    }
+    if let Err(e) = sqlx::query(
         "DELETE FROM quiz_questions WHERE book_id = ? AND type = 'self_test' AND trace_json LIKE ?",
     )
     .bind(book_id)
     .bind("%\"source\":\"knowledge_layer\"%")
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] DELETE FROM quiz_questions 失败：{e}");
+    }
 
     // 2. 归并单元（level=1 分组；无则整书一单元）
     //    units: (id, title, chapter_range, summary)
@@ -309,7 +318,7 @@ pub async fn write_knowledge_units_and_points(
                         "unit_index": c.chapter_index,
                     })
                     .to_string();
-                    let _ = sqlx::query(
+                    if let Err(e) = sqlx::query(
                         "INSERT INTO quiz_questions (id, book_id, chapter_index, type, question, options, answer, explanation, difficulty, source_chapter, related_knowledge_point, trace_json, created_at)
                          VALUES (?, ?, ?, 'self_test', ?, NULL, '', '', 'basic', ?, ?, ?, ?)",
                     )
@@ -322,7 +331,10 @@ pub async fn write_knowledge_units_and_points(
                     .bind(&trace)
                     .bind(now)
                     .execute(db)
-                    .await;
+                    .await
+                    {
+                        log::warn!("[db] INSERT INTO quiz_questions 失败：{e}");
+                    }
                 }
             }
         }

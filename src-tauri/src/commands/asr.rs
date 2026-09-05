@@ -315,7 +315,7 @@ pub async fn download_asr_model(
         dir.join(format!("{}.bin", model.id)).to_string_lossy().to_string()
     };
 
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO asr_models (id, name, engine, model_size, download_url, mirror_url, file_path, file_size, status, supports_punctuation, languages, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'downloading', ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET status = 'downloading', updated_at = excluded.updated_at",
@@ -333,7 +333,10 @@ pub async fn download_asr_model(
     .bind(now)
     .bind(now)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] INSERT INTO asr_models 失败：{e}");
+    }
 
     let _ = app.emit("asr-download-progress", DownloadProgressEvent {
         model_id: model_id.clone(),
@@ -402,14 +405,17 @@ pub async fn download_asr_model(
     };
 
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE asr_models SET status = 'downloaded', file_path = ?, updated_at = ? WHERE id = ?",
     )
     .bind(final_path.to_string_lossy())
     .bind(now)
     .bind(&model_id)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] UPDATE asr_models 失败：{e}");
+    }
 
     let _ = app.emit("asr-download-progress", DownloadProgressEvent {
         model_id,
@@ -648,15 +654,21 @@ pub async fn set_active_asr_model(
 
     let now = chrono::Utc::now().timestamp();
 
-    let _ = sqlx::query("UPDATE asr_models SET is_active = 0")
+    if let Err(e) = sqlx::query("UPDATE asr_models SET is_active = 0")
         .execute(db)
-        .await;
+        .await
+    {
+        log::warn!("[db] UPDATE asr_models 失败：{e}");
+    }
 
-    let _ = sqlx::query("UPDATE asr_models SET is_active = 1, updated_at = ? WHERE id = ?")
+    if let Err(e) = sqlx::query("UPDATE asr_models SET is_active = 1, updated_at = ? WHERE id = ?")
         .bind(now)
         .bind(&model_id)
         .execute(db)
-        .await;
+        .await
+    {
+        log::warn!("[db] UPDATE asr_models 失败：{e}");
+    }
 
     Ok(())
 }
@@ -690,11 +702,14 @@ pub async fn delete_asr_model(
     }
 
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query("UPDATE asr_models SET status = 'not_downloaded', is_active = 0, updated_at = ? WHERE id = ?")
+    if let Err(e) = sqlx::query("UPDATE asr_models SET status = 'not_downloaded', is_active = 0, updated_at = ? WHERE id = ?")
         .bind(now)
         .bind(&model_id)
         .execute(db)
-        .await;
+        .await
+    {
+        log::warn!("[db] UPDATE asr_models 失败：{e}");
+    }
 
     Ok(())
 }

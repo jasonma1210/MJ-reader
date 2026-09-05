@@ -218,10 +218,13 @@ pub(crate) async fn upsert_breakdown_knowledge_nodes(
     let stale: Vec<String> = old_ids.difference(&new_ids).cloned().collect();
     if !stale.is_empty() {
         for sid in &stale {
-            let _ = sqlx::query("DELETE FROM knowledge_nodes WHERE id = ?")
+            if let Err(e) = sqlx::query("DELETE FROM knowledge_nodes WHERE id = ?")
                 .bind(sid)
                 .execute(pool)
-                .await;
+                .await
+            {
+                log::warn!("[db] DELETE FROM knowledge_nodes 失败：{e}");
+            }
         }
     }
 
@@ -277,14 +280,17 @@ async fn append_edge(
         description: description.to_string(),
     });
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE knowledge_nodes SET edges_json = ?, updated_at = ? WHERE id = ?",
     )
     .bind(serde_json::to_string(&edges).unwrap_or_else(|_| "[]".to_string()))
     .bind(now)
     .bind(source_id)
     .execute(pool)
-    .await;
+    .await
+    {
+        log::warn!("[db] UPDATE knowledge_nodes 失败：{e}");
+    }
 }
 
 /// 列出某本书的全部知识节点（脑图/图谱渲染、总览统计共用）。
@@ -466,7 +472,7 @@ async fn propagate_mastery(pool: &SqlitePool, node_id: &str) {
         match edge.relation_type.as_str() {
             // 我是 source（前置），target 依赖我 → 下游 readiness_boost
             "prerequisite" => {
-                let _ = sqlx::query(
+                if let Err(e) = sqlx::query(
                     "UPDATE knowledge_nodes SET
                         readiness_boost = MIN(1.0, readiness_boost + 0.15), updated_at = ?
                      WHERE id = ?",
@@ -474,17 +480,23 @@ async fn propagate_mastery(pool: &SqlitePool, node_id: &str) {
                 .bind(now)
                 .bind(&edge.target_node_id)
                 .execute(pool)
-                .await;
+                .await
+                {
+                    log::warn!("[db] UPDATE knowledge_nodes 失败：{e}");
+                }
             }
             "contrast" => {
-                let _ = sqlx::query(
+                if let Err(e) = sqlx::query(
                     "UPDATE knowledge_nodes SET needs_contrast_check = 1, updated_at = ?
                      WHERE id = ?",
                 )
                 .bind(now)
                 .bind(&edge.target_node_id)
                 .execute(pool)
-                .await;
+                .await
+                {
+                    log::warn!("[db] UPDATE knowledge_nodes 失败：{e}");
+                }
             }
             _ => {}
         }
@@ -508,7 +520,7 @@ async fn propagate_mastery(pool: &SqlitePool, node_id: &str) {
                 .iter()
                 .any(|e| e.target_node_id == node_id && e.relation_type == "prerequisite")
             {
-                let _ = sqlx::query(
+                if let Err(e) = sqlx::query(
                     "UPDATE knowledge_nodes SET
                         mastery_confidence = MAX(0.1, mastery_confidence - 0.1), updated_at = ?
                      WHERE id = ? AND mastery_score < 0.6",
@@ -516,7 +528,10 @@ async fn propagate_mastery(pool: &SqlitePool, node_id: &str) {
                 .bind(now)
                 .bind(&source_id)
                 .execute(pool)
-                .await;
+                .await
+                {
+                    log::warn!("[db] UPDATE knowledge_nodes 失败：{e}");
+                }
             }
         }
     }

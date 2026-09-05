@@ -2545,14 +2545,17 @@ pub async fn import_book_from_uri(
     let dest = books_dir.join(&safe_name);
     if dest.exists() {
         let ts = chrono::Utc::now().timestamp();
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "UPDATE books SET deleted_at = ?, updated_at = ? WHERE file_path = ? AND deleted_at IS NULL",
         )
         .bind(ts)
         .bind(ts)
         .bind(dest.to_string_lossy().to_string())
         .execute(&*pool)
-        .await;
+        .await
+        {
+            log::warn!("[db] UPDATE books 失败：{e}");
+        }
         let _ = std::fs::remove_file(&dest);
     }
     std::fs::rename(&staging, &dest).map_err(|e| {

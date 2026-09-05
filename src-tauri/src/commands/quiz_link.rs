@@ -148,14 +148,17 @@ pub async fn link_highlight_to_questions(
     if !matched_ids.is_empty() {
         let ids_json = serde_json::json!(matched_ids).to_string();
         let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "UPDATE highlights SET related_question_ids = ?, updated_at = ? WHERE id = ?",
         )
         .bind(&ids_json)
         .bind(now)
         .bind(&highlight_id)
         .execute(db)
-        .await;
+        .await
+        {
+            log::warn!("[db] UPDATE highlights 失败：{e}");
+        }
     }
 
     Ok(matched_rows)

@@ -119,11 +119,14 @@ pub(crate) async fn resolve_book_file_path(
         ))
     })?;
     let new_path = relocated.to_string_lossy().into_owned();
-    let _ = sqlx::query("UPDATE books SET file_path = ? WHERE id = ?")
+    if let Err(e) = sqlx::query("UPDATE books SET file_path = ? WHERE id = ?")
         .bind(&new_path)
         .bind(book_id)
         .execute(pool)
-        .await;
+        .await
+    {
+        log::warn!("[db] UPDATE books 失败：{e}");
+    }
     Ok(new_path)
 }
 

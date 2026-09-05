@@ -4,144 +4,133 @@ name: Release macOS
 # MJNexus-Reader macOS 发布工作流
 # =============================================================================
 #
-# 触发条件：push 形如 v1.0.0 / v1.0.0-rc.1 的 tag
+# 触发条件：
+#   - push 形如 v1.0.0 / v1.0.0-rc.1 的 tag
+#   - 手动 workflow_dispatch（可选 features，如 `llamacpp,llama-metal`）
 #
-# 流程：checkout → setup node/rust → pnpm install → tauri build →
-#       codesign + notarize + staple → 上传 .app 与 .dmg artifact
+# 流程：checkout → setup node/rust → npm ci → tauri build（--bundles app）
+#       → 可选签名（Tauri 2 内建，走 APPLE_* 环境变量）→ hdiutil 打 DMG
+#       → 上传 .app / .dmg artifact 并挂到 GitHub Release
 #
-# 必需 Secrets（在仓库 Settings → Secrets and variables → Actions 配置）：
-#   APPLE_DEVELOPER_ID   Developer ID Application 证书 CN
-#   APPLE_ID             Apple Developer 账号邮箱
-#   APPLE_PASSWORD       App-specific password
-#   APPLE_TEAM_ID        10 位 Team ID
+# 必需 Secrets（仓库 Settings → Secrets and variables → Actions）：
+#   APPLE_CERTIFICATE            base64 编码的 .p12 证书内容
+#   APPLE_CERTIFICATE_PASSWORD   导出 .p12 时的密码
+#   APPLE_SIGNING_IDENTITY       Developer ID Application 证书 CN
+#   APPLE_ID                     Apple Developer 账号邮箱
+#   APPLE_PASSWORD               App-specific password
+#   APPLE_TEAM_ID                10 位 Team ID
 #
-# 未配置 Secrets 时工作流仍会运行，但跳过签名（artifact 未签名）。
+# 未配置 Secrets 时工作流仍会运行，但跳过签名（产物未签名，仅内部测试用）。
+#
+# 历史坑位（2026-09-05 修正，勿回退）：
+#   - 旧版用 pnpm + `mjnexus-reader/` 路径前缀 + `scripts/sign-macos.sh` +
+#     `scripts/patch-canvas.cjs`；后两者在本仓库根本不存在，工作流第 3 步即失败
+#     （`Some specified paths were not resolved, unable to cache dependencies`）。
+#   - 本仓库已全面迁移 npm（frontend/package-lock.json），且 src-tauri/ 与 frontend/
+#     为同级目录，不存在 `mjnexus-reader/` 这一层。
+#   - 签名改用 Tauri 2 内建能力（APPLE_* 环境变量），不再手写 keychain 导入脚本。
 # =============================================================================
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: # 允许手动触发，便于调试
+  workflow_dispatch:
+    inputs:
+      features:
+        description: '额外 cargo features（如 llamacpp,llama-metal）；留空用 Cargo.toml default'
+        required: false
+        default: ''
 
 permissions:
   contents: write # 上传 release asset 需要
 
 jobs:
   release-macos:
-    name: Build & Sign macOS
-    runs-on: macos-14 # Apple Silicon (M1) runner
+    name: Build macOS (Apple Silicon)
+    runs-on: macos-14 # Apple Silicon runner
+
+    env:
+      # Tauri 2 内建签名 / 公证；Secrets 缺失时为空串，构建自动降级为未签名。
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
-          cache-dependency-path: mjnexus-reader/pnpm-lock.yaml
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: mjnexus-reader/src-tauri
+          workspaces: src-tauri
 
       - name: Install frontend dependencies
-        working-directory: mjnexus-reader
-        run: pnpm install --frozen-lockfile
-
-      - name: Patch canvas for jsdom (defensive)
-        working-directory: mjnexus-reader
-        run: node scripts/patch-canvas.cjs || true
-
-      - name: Import Apple Developer ID certificate
-        if: ${{ env.APPLE_DEVELOPER_ID != '' }}
-        env:
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-        run: |
-          # 将 base64 编码的 .p12 证书导入到 login keychain
-          # APPLE_CERT_BASE64 = base64 编码的 p12 文件内容
-          # APPLE_CERT_PASSWORD = 导出 p12 时设置的密码
-          if [[ -z "${APPLE_CERT_BASE64:-}" ]]; then
-            echo "[INFO] APPLE_CERT_BASE64 未配置，假定 runner keychain 已包含证书"
-            exit 0
-          fi
-          CERT_FILE="$RUNNER_TEMP/developer-id.p12"
-          KEYCHAIN="build.keychain"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          echo "${APPLE_CERT_BASE64}" | base64 --decode > "${CERT_FILE}"
-          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-          security default-keychain -s "${KEYCHAIN}"
-          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-          security import "${CERT_FILE}" -P "${APPLE_CERT_PASSWORD}" -k "${KEYCHAIN}" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-          rm -f "${CERT_FILE}"
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
 
       - name: Build with Tauri
-        working-directory: mjnexus-reader
-        run: pnpm tauri build
-
-      - name: Sign + Notarize + Staple
-        if: ${{ env.APPLE_DEVELOPER_ID != '' }}
-        working-directory: mjnexus-reader
-        env:
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_RECORD_NOTARY_LOG: '1'
-        run: ./scripts/sign-macos.sh
+        # 从仓库根目录调用 frontend 里的 CLI：CLI 需在同级看到 src-tauri/ 与 frontend/。
+        # beforeBuildCommand（tauri.conf.json）会自行执行 npx vite build，此处不重复。
+        run: |
+          set -euo pipefail
+          FEATURES="${{ github.event.inputs.features || '' }}"
+          ARGS=(build --bundles app)
+          if [ -n "$FEATURES" ]; then
+            ARGS+=(--features "$FEATURES")
+          fi
+          ./frontend/node_modules/.bin/tauri "${ARGS[@]}"
 
       - name: Warn if unsigned
-        if: ${{ env.APPLE_DEVELOPER_ID == '' }}
-        run: |
-          echo "::warning::未配置 APPLE_DEVELOPER_ID 等 Secrets，产物未签名。仅可用于内部测试。"
+        if: ${{ env.APPLE_SIGNING_IDENTITY == '' }}
+        run: echo "::warning::未配置 APPLE_* Secrets，产物未签名，仅可用于内部测试。"
 
       - name: Create DMG
-        working-directory: mjnexus-reader
         env:
           TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           APP_PATH="src-tauri/target/release/bundle/macos/MJNexus-Reader.app"
-          DMG_PATH="mjnexus-reader-${TAG}-macos.dmg"
-          hdiutil create -volname "MJNexus-Reader" -srcfolder "${APP_PATH}" -ov -format UDZO "${DMG_PATH}"
-          echo "DMG_PATH=${DMG_PATH}" >> $GITHUB_ENV
+          test -d "$APP_PATH" || { echo "::error::未找到 .app：$APP_PATH"; exit 1; }
+          DMG_STAGE="$RUNNER_TEMP/dmg-stage"
+          mkdir -p "$DMG_STAGE"
+          cp -R "$APP_PATH" "$DMG_STAGE/"
+          ln -s /Applications "$DMG_STAGE/Applications"
+          DMG_PATH="MJNexus-Reader-${TAG}-macos.dmg"
+          hdiutil create -volname "MJNexus-Reader" \
+            -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_PATH"
+          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
 
       - name: Sign DMG (optional)
-        if: ${{ env.APPLE_DEVELOPER_ID != '' }}
-        working-directory: mjnexus-reader
-        env:
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          DMG_PATH: ${{ env.DMG_PATH }}
+        if: ${{ env.APPLE_SIGNING_IDENTITY != '' }}
         run: |
-          codesign --sign "${APPLE_DEVELOPER_ID}" "${DMG_PATH}"
-          xcrun notarytool submit "${DMG_PATH}" \
+          set -euo pipefail
+          codesign --sign "${APPLE_SIGNING_IDENTITY}" --timestamp --options runtime "$DMG_PATH"
+          xcrun notarytool submit "$DMG_PATH" \
             --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}" --wait
-          xcrun stapler staple "${DMG_PATH}"
-          xcrun stapler validate "${DMG_PATH}"
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
 
       - name: Upload .app artifact
         uses: actions/upload-artifact@v4
         with:
           name: MJNexus-Reader-${{ github.ref_name }}-macos-app
-          path: mjnexus-reader/src-tauri/target/release/bundle/macos/*.app
+          path: src-tauri/target/release/bundle/macos/*.app
           if-no-files-found: error
           retention-days: 30
 
@@ -149,7 +138,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MJNexus-Reader-${{ github.ref_name }}-macos-dmg
-          path: mjnexus-reader/*.dmg
+          path: '*.dmg'
           if-no-files-found: error
           retention-days: 30
 
@@ -158,6 +147,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            mjnexus-reader/*.dmg
+            *.dmg
           draft: true
           generate_release_notes: true

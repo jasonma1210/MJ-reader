@@ -355,14 +355,17 @@ async fn handle_upload(
 
         // 3) 原名落盘：同名旧文件（内容不同）先软删旧书记录，再覆盖写入
         if dest.exists() {
-            let _ = sqlx::query(
+            if let Err(e) = sqlx::query(
                 "UPDATE books SET deleted_at = ?, updated_at = ? WHERE file_path = ? AND deleted_at IS NULL",
             )
             .bind(chrono::Utc::now().timestamp())
             .bind(chrono::Utc::now().timestamp())
             .bind(dest.to_string_lossy().to_string())
             .execute(&state.db)
-            .await;
+            .await
+            {
+                log::warn!("[db] UPDATE books 失败：{e}");
+            }
             let _ = std::fs::remove_file(&dest);
         }
         if let Err(e) = std::fs::rename(&staging, &dest) {

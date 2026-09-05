@@ -66,12 +66,15 @@ async fn load_edges_json(pool: &SqlitePool, node_id: &str) -> Vec<serde_json::Va
 /// 覆盖写入某节点 edges_json。
 async fn save_edges_json(pool: &SqlitePool, node_id: &str, edges: &[serde_json::Value]) {
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query("UPDATE knowledge_nodes SET edges_json = ?, updated_at = ? WHERE id = ?")
+    if let Err(e) = sqlx::query("UPDATE knowledge_nodes SET edges_json = ?, updated_at = ? WHERE id = ?")
         .bind(serde_json::to_string(edges).unwrap_or_else(|_| "[]".to_string()))
         .bind(now)
         .bind(node_id)
         .execute(pool)
-        .await;
+        .await
+    {
+        log::warn!("[db] UPDATE knowledge_nodes 失败：{e}");
+    }
 }
 
 /// 从边元素里取出 source 引用（可能存 id、名称或 target_node 字段）。
@@ -100,7 +103,7 @@ async fn load_nodes(
         "SELECT kn.id, kn.node_name, kn.node_type, kn.mastery_score, kn.book_id, kn.edges_json,
                 kn.related_card_ids,
                 COALESCE(b.title, '已删除资料') AS book_title
-         FROM knowledge_nodes kn LEFT JOIN books b ON b.id = kn.book_id",
+         FROM knowledge_nodes kn LEFT JOIN books b ON b.id = kn.book_id AND b.deleted_at IS NULL",
     );
     if let Some(bid) = book_id.as_deref().filter(|s| !s.trim().is_empty()) {
         sql.push_str(" WHERE kn.book_id = ?");
@@ -325,12 +328,15 @@ pub async fn knowledge_graph_add_edge(
             continue;
         }
         edges.push(obj);
-        let _ = sqlx::query("UPDATE knowledge_nodes SET edges_json = ?, updated_at = ? WHERE id = ?")
+        if let Err(e) = sqlx::query("UPDATE knowledge_nodes SET edges_json = ?, updated_at = ? WHERE id = ?")
             .bind(serde_json::to_string(&edges).unwrap_or_else(|_| "[]".to_string()))
             .bind(now)
             .bind(&a)
             .execute(pool)
-            .await;
+            .await
+        {
+            log::warn!("[db] UPDATE knowledge_nodes 失败：{e}");
+        }
     }
     Ok(GraphEdge {
         id: format!("e-{}", Uuid::new_v4().to_string()),

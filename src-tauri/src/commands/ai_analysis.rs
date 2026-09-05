@@ -99,7 +99,7 @@ pub async fn ai_summarize(
 
     let now = chrono::Utc::now().timestamp();
     let id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO ai_summaries (id, book_id, scope, scope_ref, summary_text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
@@ -109,7 +109,10 @@ pub async fn ai_summarize(
     .bind(&summary)
     .bind(now)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] INSERT INTO ai_summaries 失败：{e}");
+    }
 
     Ok(summary)
 }
@@ -157,7 +160,7 @@ pub async fn ai_generate_mindmap(
 
     let now = chrono::Utc::now().timestamp();
     let id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO mindmaps (id, book_id, scope, scope_ref, markdown_content, is_ai_generated, created_at, updated_at) VALUES (?, ?, 'chapter', ?, ?, 1, ?, ?)",
     )
     .bind(&id)
@@ -167,7 +170,10 @@ pub async fn ai_generate_mindmap(
     .bind(now)
     .bind(now)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] INSERT INTO mindmaps 失败：{e}");
+    }
 
     Ok(markdown)
 }

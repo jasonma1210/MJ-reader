@@ -147,7 +147,7 @@ async fn seed_default_tags(pool: &SqlitePool) -> Vec<TagNodeJson> {
     for (i, name) in names.iter().enumerate() {
         let id = format!("tg-default-{}", i + 1);
         let t = now();
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "INSERT OR IGNORE INTO tags (id, name, parent_id, color, icon, sort_order, created_at, updated_at)
              VALUES (?, ?, NULL, ?, '', ?, ?, ?)",
         )
@@ -158,7 +158,10 @@ async fn seed_default_tags(pool: &SqlitePool) -> Vec<TagNodeJson> {
         .bind(t)
         .bind(t)
         .execute(pool)
-        .await;
+        .await
+        {
+            log::warn!("[db] INSERT OR 失败：{e}");
+        }
         out.push(TagNodeJson {
             id,
             name: name.to_string(),
@@ -440,7 +443,7 @@ pub async fn tags_apply(
             Some(r) => r.try_get::<String, _>("id").unwrap_or_default(),
             None => {
                 let id = Uuid::new_v4().to_string();
-                let _ = sqlx::query(
+                if let Err(e) = sqlx::query(
                     "INSERT OR IGNORE INTO tags (id, name, parent_id, color, icon, sort_order, created_at, updated_at)
                      VALUES (?, ?, NULL, '#8a94a6', '', 0, ?, ?)",
                 )
@@ -449,7 +452,10 @@ pub async fn tags_apply(
                 .bind(tk)
                 .bind(tk)
                 .execute(pool)
-                .await;
+                .await
+                {
+                    log::warn!("[db] INSERT OR 失败：{e}");
+                }
                 id
             }
         };

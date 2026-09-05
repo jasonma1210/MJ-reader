@@ -1411,14 +1411,17 @@ pub async fn record_wrong_question(
         .await?;
 
         // 同时标记原题为已尝试且错误
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "UPDATE quiz_questions SET user_answer = ?, is_correct = 0, attempted_at = ? WHERE id = ?",
         )
         .bind(&user_answer)
         .bind(now)
         .bind(&quiz_question_id)
         .execute(db)
-        .await;
+        .await
+        {
+            log::warn!("[db] UPDATE quiz_questions 失败：{e}");
+        }
 
         return Ok(wid);
     }
@@ -1443,14 +1446,17 @@ pub async fn record_wrong_question(
     .await?;
 
     // 同时标记原题为已尝试且错误
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE quiz_questions SET user_answer = ?, is_correct = 0, attempted_at = ? WHERE id = ?",
     )
     .bind(&user_answer)
     .bind(now)
     .bind(&quiz_question_id)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] UPDATE quiz_questions 失败：{e}");
+    }
 
     Ok(id)
 }

@@ -975,7 +975,7 @@ async fn detect_book_type_and_meta(db: &SqlitePool, content: &str, book_id: &str
     let content_category_json = Some(
         serde_json::to_string(&normalized_category).unwrap_or_else(|_| "{}".into()),
     );
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO book_breakdown_meta (book_id, book_type, meta_json, content_category, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(book_id) DO UPDATE SET
@@ -991,7 +991,10 @@ async fn detect_book_type_and_meta(db: &SqlitePool, content: &str, book_id: &str
     .bind(now)
     .bind(now)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] INSERT INTO book_breakdown_meta 失败：{e}");
+    }
     log::info!(
         "[ai_book_breakdown] 书籍类型判别：{}；内容分类：{}",
         book_type_json,
@@ -1864,7 +1867,7 @@ async fn ai_book_breakdown_inner(
     if is_comic {
         // 写 comic 标记（幂等），后续 AI 功能靠 book_breakdown_meta 判定即可拦截
         let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "INSERT INTO book_breakdown_meta (book_id, book_type, meta_json, created_at, updated_at)
              VALUES (?, '[\"comic\"]', '{}', ?, ?)
              ON CONFLICT(book_id) DO UPDATE SET book_type = excluded.book_type, updated_at = excluded.updated_at",
@@ -1873,7 +1876,10 @@ async fn ai_book_breakdown_inner(
         .bind(now)
         .bind(now)
         .execute(db)
-        .await;
+        .await
+        {
+            log::warn!("[db] INSERT INTO book_breakdown_meta 失败：{e}");
+        }
         return Err(AppError::General(
             "检测到漫画/图片类书籍（以图为主、无可提取文字），按设计不触发 AI 拆书。".into(),
         ));
@@ -2058,24 +2064,33 @@ async fn ai_book_breakdown_inner(
 
     // 5.0 重新拆解：清掉旧分析结果（章节文本 + 该脑图的节点 + 拆书概念卡），
     //     保证「重新拆解」幂等——不清理的话旧章节点/旧卡会与新结果混在一起。
-    let _ = sqlx::query("DELETE FROM book_breakdowns WHERE book_id = ?")
+    if let Err(e) = sqlx::query("DELETE FROM book_breakdowns WHERE book_id = ?")
         .bind(&book_id)
         .execute(db)
-        .await;
-    let _ = sqlx::query("DELETE FROM mindmap_nodes WHERE mindmap_id = ?")
+        .await
+    {
+        log::warn!("[db] DELETE FROM book_breakdowns 失败：{e}");
+    }
+    if let Err(e) = sqlx::query("DELETE FROM mindmap_nodes WHERE mindmap_id = ?")
         .bind(&mindmap_id)
         .execute(db)
-        .await;
+        .await
+    {
+        log::warn!("[db] DELETE FROM mindmap_nodes 失败：{e}");
+    }
     // S3 (T02)：重拆清理——在删 concept cards 之前清掉其镜像的 flashcards（仅 AI 生成，
     // 不动 learner 手动闪卡）。必须早于下方 `DELETE FROM cards`，否则子查询看不到 cards 行 → no-op。
     let _ = clear_ai_flashcards_on_rebreak(db, &book_id).await;
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "DELETE FROM cards WHERE book_id = ? AND card_type = 'concept' AND source_locator LIKE ?",
     )
     .bind(&book_id)
     .bind("%\"kind\":\"breakdown\"%")
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] DELETE FROM cards 失败：{e}");
+    }
 
     sqlx::query(
         "INSERT OR IGNORE INTO mindmaps (id, book_id, scope, scope_ref, markdown_content, is_ai_generated, created_at, updated_at) VALUES (?, ?, 'book', NULL, '', 0, ?, ?)",
@@ -3425,7 +3440,7 @@ async fn ai_book_breakdown_inner(
         if let Some(graph) = &payload.knowledge_graph {
             if !graph.nodes.is_empty() {
                 let graph_json = serde_json::to_string(graph).unwrap_or_default();
-                let _ = sqlx::query(
+                if let Err(e) = sqlx::query(
                     "INSERT INTO book_knowledge_graphs (book_id, chapter_index, graph_json, created_at, updated_at)
                      VALUES (?, ?, ?, ?, ?)
                      ON CONFLICT(book_id, chapter_index) DO UPDATE SET graph_json = excluded.graph_json, updated_at = excluded.updated_at",
@@ -3436,7 +3451,10 @@ async fn ai_book_breakdown_inner(
                 .bind(now2)
                 .bind(now2)
                 .execute(db)
-                .await;
+                .await
+                {
+                    log::warn!("[db] INSERT INTO book_knowledge_graphs 失败：{e}");
+                }
             }
         }
 
@@ -3742,11 +3760,14 @@ pub async fn build_complete_detail_tree(
     let now = chrono::Utc::now().timestamp();
 
     // 0. 清旧树（重新拆解幂等）
-    let _ = sqlx::query("DELETE FROM mindmap_nodes WHERE mindmap_id = ?")
+    if let Err(e) = sqlx::query("DELETE FROM mindmap_nodes WHERE mindmap_id = ?")
         .bind(&detail_mindmap_id)
         .execute(db)
-        .await;
-    let _ = sqlx::query(
+        .await
+    {
+        log::warn!("[db] DELETE FROM mindmap_nodes 失败：{e}");
+    }
+    if let Err(e) = sqlx::query(
         "INSERT OR IGNORE INTO mindmaps (id, book_id, scope, scope_ref, markdown_content, is_ai_generated, created_at, updated_at)
          VALUES (?, ?, 'book', 'complete_detail', '完整拆解脑图（由拆书结构化明细自动生成）', 1, ?, ?)",
     )
@@ -3755,7 +3776,10 @@ pub async fn build_complete_detail_tree(
     .bind(now)
     .bind(now)
     .execute(db)
-    .await;
+    .await
+    {
+        log::warn!("[db] INSERT OR 失败：{e}");
+    }
 
     // 1. 根节点（书名）
     let root_node_id = uuid::Uuid::new_v4().to_string();

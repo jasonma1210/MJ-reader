@@ -58,6 +58,17 @@ jobs:
         working-directory: src-tauri
     steps:
       - uses: actions/checkout@v4
+      # Tauri 在 Linux 依赖 WebKitGTK / librsvg / patchelf 等系统库；
+      # 缺这些会直接让 `cargo check` 在链接阶段失败（exit 101）。
+      - name: Install Linux system dependencies (Tauri / WebKitGTK)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
       - uses: dtolnay/rust-toolchain@stable
       - name: cargo check
         run: cargo check

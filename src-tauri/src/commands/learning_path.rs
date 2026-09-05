@@ -359,7 +359,7 @@ pub async fn learning_path_generate(
     let now = chrono::Utc::now().timestamp();
     let new_active = !has_active_path(pool).await?;
     if new_active {
-        let _ = sqlx::query("UPDATE learning_paths SET is_active = 0, updated_at = ? WHERE is_active = 1")
+        let _ = sqlx::query("UPDATE learning_paths SET is_active = 0, updated_at = ? WHERE is_active = 1")  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
             .bind(now)
             .execute(pool)
             .await?;
@@ -432,12 +432,12 @@ pub async fn learning_path_activate(
     // 确保该路径存在
     load_path(pool, &path_id).await?;
     // 其它全部置 0
-    let _ = sqlx::query("UPDATE learning_paths SET is_active = 0, updated_at = ? WHERE is_active = 1")
+    let _ = sqlx::query("UPDATE learning_paths SET is_active = 0, updated_at = ? WHERE is_active = 1")  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
         .bind(now)
         .execute(pool)
         .await?;
     // 本条置 1
-    let _ = sqlx::query("UPDATE learning_paths SET is_active = 1, updated_at = ? WHERE id = ?")
+    let _ = sqlx::query("UPDATE learning_paths SET is_active = 1, updated_at = ? WHERE id = ?")  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
         .bind(now)
         .bind(&path_id)
         .execute(pool)
@@ -457,7 +457,7 @@ pub async fn learning_path_update(
     let now = chrono::Utc::now().timestamp();
 
     // 1. 删除旧节点
-    let _ = sqlx::query("DELETE FROM path_nodes WHERE path_id = ?")
+    let _ = sqlx::query("DELETE FROM path_nodes WHERE path_id = ?")  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
         .bind(&path_id)
         .execute(pool)
         .await?;
@@ -498,7 +498,7 @@ pub async fn learning_path_update(
 
     // 3. 同步 nodes_json 快照与 updated_at
     let nodes_json = snapshot_nodes(&persisted);
-    let _ = sqlx::query("UPDATE learning_paths SET nodes_json = ?, updated_at = ? WHERE id = ?")
+    let _ = sqlx::query("UPDATE learning_paths SET nodes_json = ?, updated_at = ? WHERE id = ?")  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
         .bind(&nodes_json)
         .bind(now)
         .bind(&path_id)
@@ -527,7 +527,7 @@ pub async fn learning_path_node_status(
         )));
     }
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query(
+    let _ = sqlx::query(  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
         "UPDATE path_nodes SET status = ?, updated_at = ? WHERE id = ? AND path_id = ?",
     )
     .bind(&status)
@@ -629,7 +629,7 @@ pub async fn learning_path_adjust_evaluate(
                 // 高掌握度 → complete
                 if st != "completed" {
                     st = "completed".to_string();
-                    let _ = sqlx::query(
+                    let _ = sqlx::query(  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
                         "UPDATE path_nodes SET status = ?, updated_at = ? WHERE id = ?",
                     )
                     .bind("completed")
@@ -655,7 +655,7 @@ pub async fn learning_path_adjust_evaluate(
                 if consecutive_weak >= 2 {
                     if st != "supplemented" {
                         st = "supplemented".to_string();
-                        let _ = sqlx::query(
+                        let _ = sqlx::query(  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
                             "UPDATE path_nodes SET status = ?, updated_at = ? WHERE id = ?",
                         )
                         .bind("supplemented")
@@ -714,7 +714,7 @@ async fn write_adjustment(
 ) {
     let now = chrono::Utc::now().timestamp();
     let id = Uuid::new_v4().to_string();
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO path_adjustments
            (id, path_id, node_id, node_title, reason, action, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -728,7 +728,10 @@ async fn write_adjustment(
     .bind(now)
     .bind(now)
     .execute(pool)
-    .await;
+    .await
+    {
+        log::warn!("[db] INSERT INTO path_adjustments 失败：{e}");
+    }
 }
 
 /// F-6-002：读取路径调整历史。
@@ -771,14 +774,14 @@ pub async fn learning_path_delete(path_id: String, state: State<'_, AppState>) -
     let was_active: bool = row.try_get("is_active").unwrap_or(0) != 0;
 
     let now = chrono::Utc::now().timestamp();
-    let _ = sqlx::query("DELETE FROM learning_paths WHERE id = ?")
+    let _ = sqlx::query("DELETE FROM learning_paths WHERE id = ?")  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
         .bind(&path_id)
         .execute(pool)
         .await?;
 
     // 若删除的是激活路径，把激活标志交给最近创建的其它路径（若有）
     if was_active {
-        let _ = sqlx::query(
+        let _ = sqlx::query(  // allow-unwrap: 错误已由 `?` 向上传播，此处仅丢弃成功值
             "UPDATE learning_paths SET is_active = 1, updated_at = ?
              WHERE id = (SELECT id FROM learning_paths WHERE is_active = 0 ORDER BY created_at DESC, updated_at DESC LIMIT 1)",
         )

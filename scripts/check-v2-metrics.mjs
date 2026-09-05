@@ -81,7 +81,8 @@ const WHITELIST = [
   "/whiteboard", "/whiteboard/:bookId",
   "/practice", "/teaching",
   "/me/asr", "/me/ocr", "/me/websearch", "/me/age", "/me/backup", "/me/about",
-  "/ai-config", "/ai-config/remote",
+  "/me/guide",
+  "/ai-config", "/ai-config/remote", "/ai-config/ondevice", "/ai-config/ollama",
   "/*",
 ];
 const declared = new Set();
