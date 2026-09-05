@@ -7,7 +7,7 @@
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm --prefix ../frontend run dev",
-    "beforeBuildCommand": "f=../frontend; [ -d \"$f\" ] || f=../../frontend; ( cd \"$f\" && npx vite build )"
+    "beforeBuildCommand": "npm --prefix ../frontend run build:dist"
   },
   "app": {
     "windows": [
