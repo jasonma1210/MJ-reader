@@ -63,13 +63,10 @@ jobs:
       # 让 whisper.cpp 以 11.0 重新配置编译。
       MACOSX_DEPLOYMENT_TARGET: '11.0'
       CMAKE_OSX_DEPLOYMENT_TARGET: '11.0'
-      # Tauri 2 内建签名 / 公证；Secrets 缺失时为空串，构建自动降级为未签名。
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # 注意：APPLE_* 签名变量**不能**写在 job env 里。Secrets 缺失时
+      # `${{ secrets.APPLE_CERTIFICATE }}` 解析成空串，Tauri 仍会尝试 `security import` 空证书
+      # 而失败（`failed to import keychain certificate`）。故改为下方仅在证书存在时才注入的步骤，
+      # 缺失时完全不设置这些变量，Tauri 自动降级为未签名构建。
 
     steps:
       - name: Checkout
@@ -91,9 +88,19 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           # key 换值 → 强制丢弃旧缓存（含陈旧的 whisper-rs-sys C++ 产物），
-          # 让 whisper.cpp 用 MACOSX_DEPLOYMENT_TARGET/CXXFLAGS=11.0 重新编译。
+          # 让 whisper.cpp 以 11.0 重新配置编译。
           key: macos-whisper-min11
           workspaces: src-tauri
+
+      - name: Configure macOS signing (only when secrets present)
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        run: |
+          echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}" >> "$GITHUB_ENV"
+          echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}" >> "$GITHUB_ENV"
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> "$GITHUB_ENV"
+          echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
         working-directory: frontend
