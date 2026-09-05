@@ -2,7 +2,7 @@
 
 [English](./README.md) | **简体中文**
 
-> 一个本地优先（local-first）的 AI 原生电子书阅读器。书库、批注、模型都归你所有——无需账号，没有云端锁定。
+> 一款面向学习者的「阅读 + 学习 + AI 辅助」工具。读一本书，再让 AI 帮你拆解、巩固遗忘点、形成记忆——围绕「读—学—练—忆」的学习闭环设计。
 
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#平台支持)
@@ -22,7 +22,7 @@
 
 ## 项目简介
 
-MJNexus-Reader 是一套完整的阅读闭环：导入书籍 → 阅读 → 批注 → AI 拆解 → 针对遗忘点复习。推理可**完全在设备本地**完成，数据不出手机。
+MJNexus-Reader 是一套面向「为理解而读」的学习者的阅读 + 学习工具：导入书籍 → 阅读 → 批注 → AI 拆解 → 针对遗忘点复习，整体围绕「读—学—练—忆」的学习闭环组织。
 
 ### 书库与阅读
 
@@ -34,7 +34,7 @@ MJNexus-Reader 是一套完整的阅读闭环：导入书籍 → 阅读 → 批�
 
 ### AI 能力
 
-- **AI 拆书** — 逐章输出结构、论点与要点，可本地生成也可用云端模型
+- **AI 拆书** — 逐章输出结构、论点与要点，由你配置的 AI 提供方（云端 API 或本地 Ollama）生成
 - **AI 助手** — 基于你正在读的那本书进行对话问答
 - **知识图谱** — 从单本书或整个书库抽取概念与关系
 - **测验与复习** — 自动生成题目，配合间隔重复调度（SM-2 变体），支持导出 Anki
@@ -48,14 +48,13 @@ MJNexus-Reader 是一套完整的阅读闭环：导入书籍 → 阅读 → 批�
 - **阅读报告** — 速度、留存率、时段分布等统计
 - **学习路径** — 从书库中编排出的有序课程
 
-### 端侧推理
+### AI 后端
 
-- 通过 llama.cpp **直接在设备上跑 GGUF 模型** — 无需 API Key，无需联网
-- **设备档位化**（`src-tauri/src/services/device_tier.rs`）：运行时探测内存与 SoC，据此推导上下文窗口、KV 缓存量化、线程数、GPU 层数与模型体积上限
-- **内存门槛** — **iOS ≤ 6 GB / Android ≤ 8 GB** 的设备直接拦截并给出明确提示，而不是加载到一半被系统杀掉
-- **iOS 内存规则** — `mmap` 开、`mlock` 关：mmap 映射页计入 clean memory，不会撞上约 5 GB 的 dirty memory jetsam 上限
-- **GPU 策略** — Apple 走 Metal，Mali 走 Vulkan，**Adreno 强制纯 CPU**（骁龙 Vulkan 推理会抛 `ErrorDeviceLost`，属 C++ abort，无法捕获也无法降级）
-- 骁龙 8 Elite 实测（纯 CPU、4 线程）：Qwen3-1.7B Q8_0 **约 17 tokens/s**
+AI 助手、AI 拆书、知识图谱、测验生成、教学模式与思维导图都运行在你于「设置」中配置的、可插拔的 AI 提供方之上：
+
+- **云端 LLM API** —— 任意 OpenAI 兼容端点（自带 Key）。速度与最强模型首选。
+- **本地 Ollama** —— 将应用指向运行在本机或设备上的 Ollama 服务，即可获得完全本地、离线的推理（无需 Key、不上传数据）。
+- 应用本身不捆绑任何模型权重，推理在哪里发生由你决定。
 
 ### 其他能力
 
@@ -75,7 +74,7 @@ MJNexus-Reader 是一套完整的阅读闭环：导入书籍 → 阅读 → 批�
 | 前端 | React 18.3、TypeScript、Vite、Tailwind、Zustand 5、react-router 6、i18next |
 | 后端 | Rust — 161 个源文件、约 7 万行、**364 个 Tauri 命令**，分布在 50 个模块 |
 | 数据库 | SQLite（sqlx 0.8），74 张表，FTS5 + 自研 bigram 分词 |
-| 本地大模型 | llama.cpp，经 `llama-cpp-2` 0.1.154 接入（feature `llamacpp`） |
+| AI 后端 | 可插拔提供方——云端 LLM API（OpenAI 兼容）或本地 Ollama |
 | OCR | ONNX Runtime（PP-OCRv5） |
 | 渲染器 | foliate-js、PDF.js 6、mammoth、mermaid、`@xyflow/react` |
 
@@ -132,18 +131,18 @@ cargo tauri build
 ```
 
 ```bash
-# 安卓 APK —— 纯 CPU 推理（骁龙/Adreno 必须留在 CPU）
+# 安卓 APK
 cargo tauri android build --apk --target aarch64 \
-  --features llamacpp,android-asr,android-wakelock
+  --features android-asr,android-wakelock
 ```
 
 ```bash
-# iOS IPA —— 启用 Metal 后端
+# iOS IPA
 DEVELOPER_DIR=/Applications/Xcode.app \
-cargo tauri ios build --target aarch64 --features llamacpp,llama-metal
+cargo tauri ios build --target aarch64
 ```
 
-> **`llamacpp` 不在默认 feature 里** —— 它会引入体积较大的原生库。需要端侧推理时显式加上。**Adreno 设备不要加 `llama-gpu`。**
+> **AI 走你配置的提供方**——云端 LLM API 或本地 Ollama 服务。应用不捆绑模型权重，默认构建保持精简。如需改为内置端侧推理引擎，可附加 `llamacpp` feature（进阶用法，会引入体积较大的原生库）。
 
 ### 质量门禁
 
@@ -164,12 +163,12 @@ cargo check                # 告警数只减不增（棘轮）
 
 ## 平台支持
 
-| 平台 | 状态 | 端侧大模型 |
+| 平台 | 状态 | AI 后端 |
 | --- | --- | --- |
-| Android（arm64） | 已构建并通过真机验证 | 支持 —— 纯 CPU（Adreno 不走 GPU） |
-| iOS / iPadOS（arm64） | 已构建并通过真机验证 | 支持 —— Metal |
-| macOS（Apple Silicon） | 支持 | 支持 —— Metal |
-| Windows / Linux | 支持 | 支持 —— 纯 CPU |
+| Android（arm64） | 已构建并通过真机验证 | 云端 API / 本地 Ollama |
+| iOS / iPadOS（arm64） | 已构建并通过真机验证 | 云端 API / 本地 Ollama |
+| macOS（Apple Silicon） | 支持 | 云端 API / 本地 Ollama |
+| Windows / Linux | 支持 | 云端 API / 本地 Ollama |
 
 ---
 
