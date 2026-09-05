@@ -5,6 +5,11 @@ description = "AI-native cross-platform ebook reader"
 authors = ["MJNexus"]
 edition = "2021"
 rust-version = "1.77"
+# 桌面端主二进制。本 crate 有 3 个 bin（mjnexus-reader / pp_ocr_probe / tts_probe），
+# 不指定 default-run 时 Tauri CLI 无法确定入口，构建会直接失败：
+#   "Error failed to find main binary, make sure you have a `package > default-run`"
+# 移动端（iOS/Android）走 lib 入口，不受此字段影响。
+default-run = "mjnexus-reader"
 
 [lib]
 name = "mjnexus_reader_lib"
