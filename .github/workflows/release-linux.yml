@@ -16,9 +16,16 @@ name: Release Linux
 #       故桌面构建无需端侧推理相关 feature。需要本地模型时再 `cargo tauri build --features llamacpp`。
 #
 # 历史坑位（2026-09-05）：
-#   - Tauri 2 在 Linux 依赖 webkit2gtk-4.1（≥2.40）。ubuntu-22.04 默认源提供
+#   - Tauri 2 在 Linux 依赖 webkit2gtk-4.1（≥2.40）。ubuntu-24.04 默认源提供
 #     libwebkit2gtk-4.1-dev，必须显式 apt 安装，否则 `tauri build` 在链接阶段报找不到
 #     webkit 符号。appimage 还需 patchelf。
+#   - 🔑 链接坑（首跑失败根因）：rust-lld 报 undefined symbol
+#     `__isoc23_strtol/strtoll/strtoull`（glibc ≥2.38 才有）+ `std::__cxx11::basic_string::_M_replace_cold`
+#     （libstdc++）。前者来自本项目 `ort` 的 onnxruntime 预编译库（download-binaries 下载的
+#     Linux 版按 glibc ≥2.38 构建），ubuntu-22.04 的 glibc 2.35 没有 `__isoc23_*` → 链接失败；
+#     后者是 rust-lld 默认不自动链接 libstdc++。
+#     修复：runner 改用 ubuntu-24.04（glibc 2.39，含 `__isoc23_*`）+ 构建步加
+#     `RUSTFLAGS="-C link-arg=-lstdc++"` 显式链接 libstdc++。
 #   - 调用方式与 release-macos.yml 保持一致：从仓库根目录执行
 #     `./frontend/node_modules/.bin/tauri`（CLI 需在同级看到 src-tauri/ 与 frontend/）。
 # =============================================================================
@@ -40,7 +47,7 @@ permissions:
 jobs:
   release-linux:
     name: Build Linux (x86_64)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -76,6 +83,10 @@ jobs:
 
       - name: Build with Tauri
         # 与 macOS 工作流一致：从仓库根目录调用 frontend 里的 CLI。
+        # RUSTFLAGS 显式链接 libstdc++：rust-lld 默认不会自动链，否则报
+        # `std::__cxx11::basic_string::_M_replace_cold` 等 undefined symbol。
+        env:
+          RUSTFLAGS: "-C link-arg=-lstdc++"
         run: |
           set -euo pipefail
           FEATURES="${{ github.event.inputs.features || '' }}"
