@@ -1,0 +1,111 @@
+name: Release Windows
+
+# =============================================================================
+# MJNexus-Reader Windows (PC) 发布工作流
+# =============================================================================
+#
+# 触发条件：
+#   - push 形如 v1.0.0 / v1.0.0-rc.1 的 tag
+#   - 手动 workflow_dispatch（可选 features，如 `llamacpp`）
+#
+# 流程：checkout → setup node/rust(MSVC) → npm ci → tauri build（--bundles nsis）
+#       → 重命名为统一命名 → 上传 .exe 安装包并挂到 GitHub Release
+#
+# 说明：桌面端 AI 后端走云端 API / 本地 Ollama（Cargo.toml default 不含 llamacpp），
+#       故桌面构建无需端侧推理相关 feature。NSIS 安装包内含 WebView2 引导。
+#       产物未做代码签名，仅内部测试用；如需签名需后续接入 Windows 代码签名证书。
+#
+# 历史坑位（2026-09-05）：
+#   - windows-latest 默认 shell 是 pwsh，`./frontend/node_modules/.bin/tauri` 是 bash
+#     脚本，故本步骤用 `shell: bash`（git bash）执行，与 macOS 工作流保持一致。
+#   - windows-latest 镜像已预装「Desktop development with C++」工作负载 + Windows SDK，
+#     `cargo build` / `tauri build` 可直接链接；`windows` crate（v0.58 OCR）也能编译。
+#   - MSVC target 显式声明 x86_64-pc-windows-msvc，与 runner 主机一致。
+# =============================================================================
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      features:
+        description: '额外 cargo features（如 llamacpp）；留空用 Cargo.toml default'
+        required: false
+        default: ''
+
+permissions:
+  contents: write # 上传 release asset 需要
+
+jobs:
+  release-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Rust toolchain (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-release
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
+
+      - name: Build with Tauri
+        # 与 macOS 工作流一致：从仓库根目录执行 frontend 里的 CLI（shell 用 git bash）。
+        shell: bash
+        run: |
+          set -euo pipefail
+          FEATURES="${{ github.event.inputs.features || '' }}"
+          ARGS=(build --bundles nsis)
+          if [ -n "$FEATURES" ]; then
+            ARGS+=(--features "$FEATURES")
+          fi
+          ./frontend/node_modules/.bin/tauri "${ARGS[@]}"
+
+      - name: Rename installer (统一命名)
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          BUNDLE="src-tauri/target/release/bundle/nsis"
+          EXE=$(ls "$BUNDLE"/*.exe | head -n1)
+          test -n "$EXE" || { echo "::error::未找到 nsis 安装包"; exit 1; }
+          cp "$EXE" "MJNexus-Reader-${TAG}-windows-x86_64.exe"
+          echo "EXE=MJNexus-Reader-${TAG}-windows-x86_64.exe" >> "$GITHUB_ENV"
+
+      - name: Upload .exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MJNexus-Reader-${{ github.ref_name }}-windows-nsis
+          path: ${{ env.EXE }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.exe
+          draft: true
+          generate_release_notes: false
+          fail_on_unmatched_files: false

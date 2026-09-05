@@ -1,6 +1,6 @@
 [package]
 name = "mjnexus-reader"
-version = "1.0.0"
+version = "1.0.1"
 description = "AI-native cross-platform ebook reader"
 authors = ["MJNexus"]
 edition = "2021"
