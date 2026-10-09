@@ -8,7 +8,7 @@ import { downloadOcrModel } from "../../services/ocrService";
 import { useBreakdownStore } from "../../stores/breakdownStore";
 import { trackMetric } from "../../services/telemetryService";
 import { logError } from "../../utils/logError";
-import type { BreakdownResult, ContentCategory, KnowledgeUnit, KnowledgePoint, BreakdownKnowledgeGraph, ParseSelfCheck } from "../../types";
+import type { BreakdownResult, ContentCategory, KnowledgeUnit, KnowledgePoint, BreakdownKnowledgeGraph, ParseSelfCheck, BookBreakdownChunk, BreakdownQuality } from "../../types";
 
 /** 内容大类（对齐阅读内容大类+细分小类划分文档，7 类） */
 const CATEGORIES: { key: string; label: string }[] = [
@@ -78,6 +78,12 @@ export function BreakdownPanel({
 
   const hasResult = (result?.chunks?.length ?? 0) > 0;
 
+  // P0-1（2026-10-09）拆书四件套：单章深度分析（meaning/知识点/脑图）与全书质量自检
+  const [chunkDetail, setChunkDetail] = useState<{ chapterIndex: number; data: BookBreakdownChunk | null } | null>(null);
+  const [chunkLoading, setChunkLoading] = useState(false);
+  const [quality, setQuality] = useState<BreakdownQuality | null>(null);
+  const [qualityLoading, setQualityLoading] = useState(false);
+
   // 内容分类：后端返回对象（ContentCategory）或旧版字符串；统一提取主类与细分用于显示/比较。
   const cc = result?.contentCategory ?? null;
   const ccMain: string = typeof cc === "string" ? cc : (cc?.mainCategory ?? "");
@@ -132,13 +138,21 @@ export function BreakdownPanel({
   // 自动加载已存在的拆书结果（再次进入工作区直接看到脑图/题库/复盘数据源）
   useEffect(() => {
     let alive = true;
+    // P0-1 四件套①：先查进行中状态——面板重进时若后台拆书仍在跑，
+    // 恢复全局 running（进度条/取消键继续可见），避免重复触发拆书。
+    void breakdownService.getStatus(bookId).then((st) => {
+      if (!alive || !st?.running) return;
+      breakdownStart(bookId);
+      setOcrStore(bookId, null);
+    });
     void breakdownService.getResult(bookId).then((r) => {
       if (alive && r && (r.chunks?.length ?? 0) > 0) setResult(r);
     });
     return () => {
       alive = false;
     };
-  }, [bookId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- store 函数引用稳定，仅 bookId 变化时重跑
+  }, [bookId, breakdownStart, setOcrStore]);
 
   const start = async () => {
     setResult(null);
@@ -154,6 +168,8 @@ export function BreakdownPanel({
       );
       if (r.status === "error") {
         breakdownFail(bookId);
+        // P0-1 四件套④：失败后强制清掉后端遗留 running 标记，保证下次可重拆
+        void breakdownService.forceReset(bookId);
         if (r.needsOcrModel) {
           setOcrModelNeeded(true);
           setLoadErr(t("workspace.breakdown.ocrModelNeeded"));
@@ -221,6 +237,85 @@ export function BreakdownPanel({
         <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-success-soft bg-success-soft/30 p-3 text-sm text-success-strong">
           <BookOpenCheck className="h-4 w-4 shrink-0" />
           {t("workspace.breakdown.doneHint")}
+          {/* P0-1 四件套③：质量自检入口 */}
+          <button
+            type="button"
+            onClick={() => {
+              if (quality) {
+                setQuality(null);
+                return;
+              }
+              setQualityLoading(true);
+              void breakdownService
+                .getSelfCheck(bookId)
+                .then(setQuality)
+                .catch((e) => logError("BreakdownPanel.getSelfCheck", e))
+                .finally(() => setQualityLoading(false));
+            }}
+            className="ml-auto flex items-center gap-1 rounded-md border border-success-soft bg-paper px-2 py-0.5 text-xs font-medium text-success-strong transition hover:bg-accent hover:text-accent-fg"
+            aria-label={t("workspace.breakdown.selfCheck")}
+          >
+            {qualityLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <BookOpenCheck className="h-3 w-3" />
+            )}
+            {quality ? t("workspace.breakdown.selfCheckHide") : t("workspace.breakdown.selfCheck")}
+          </button>
+        </div>
+      )}
+
+      {/* P0-1 四件套③：质量自检结果卡 */}
+      {hasResult && quality && (
+        <div className="rounded-[var(--radius-lg)] border border-line bg-paper p-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-ink">
+              {t("workspace.breakdown.qualityScore", { score: quality.score })}
+            </span>
+            {quality.score >= 80 ? (
+              <CheckCircle2 className="h-4 w-4 text-success-strong" />
+            ) : (
+              <AlertCircle className="h-4 w-4 text-danger" />
+            )}
+          </div>
+          <ul className="mt-2 space-y-1 text-xs text-ink-muted">
+            {quality.chapterMissing.length > 0 && (
+              <li>
+                {t("workspace.breakdown.qualityMissingChapters", {
+                  count: quality.chapterMissing.length,
+                })}
+              </li>
+            )}
+            {quality.emptySummary > 0 && (
+              <li>
+                {t("workspace.breakdown.qualityEmptySummary", { count: quality.emptySummary })}
+              </li>
+            )}
+            {quality.duplicateKnowledge > 0 && (
+              <li>
+                {t("workspace.breakdown.qualityDuplicateKnowledge", {
+                  count: quality.duplicateKnowledge,
+                })}
+              </li>
+            )}
+            {!quality.positionMonotonic && (
+              <li>{t("workspace.breakdown.qualityPositionNonMonotonic")}</li>
+            )}
+            {quality.knowledgeMissingSource > 0 && (
+              <li>
+                {t("workspace.breakdown.qualityMissingSource", {
+                  count: quality.knowledgeMissingSource,
+                })}
+              </li>
+            )}
+            {(quality.chapterMissing.length === 0 &&
+              quality.emptySummary === 0 &&
+              quality.duplicateKnowledge === 0 &&
+              quality.positionMonotonic &&
+              quality.knowledgeMissingSource === 0) && (
+              <li>{t("workspace.breakdown.qualityAllGood")}</li>
+            )}
+          </ul>
         </div>
       )}
 
@@ -510,8 +605,71 @@ export function BreakdownPanel({
                       {t("workspace.breakdown.jumpToChapter")}
                     </button>
                   )}
+                  {/* P0-1 四件套②：单章深度分析（meaning / 知识点 / 脑图） */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setChunkDetail({ chapterIndex: c.chapterIndex, data: null });
+                      setChunkLoading(true);
+                      void breakdownService
+                        .getChunk(bookId, c.chapterIndex)
+                        .then((ch) => {
+                          if (ch) setChunkDetail({ chapterIndex: c.chapterIndex, data: ch });
+                          else setChunkDetail(null);
+                        })
+                        .catch((e) => logError("BreakdownPanel.getChunk", e))
+                        .finally(() => setChunkLoading(false));
+                    }}
+                    title={t("workspace.breakdown.analyzeChapter")}
+                    aria-label={t("workspace.breakdown.analyzeChapter")}
+                    className="flex items-center gap-1 rounded-md border border-line bg-paper-soft px-2 py-0.5 text-xs font-medium text-ink-muted transition hover:bg-accent hover:text-accent-fg"
+                  >
+                    {chunkLoading && chunkDetail?.chapterIndex === c.chapterIndex ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3 w-3" />
+                    )}
+                    {t("workspace.breakdown.analyzeChapter")}
+                  </button>
                 </div>
                 {c.summary && <p className="text-sm text-ink-soft">{c.summary}</p>}
+
+                {/* P0-1 四件套②：单章深度分析展开（meaning / 知识点 / 脑图） */}
+                {chunkDetail?.chapterIndex === c.chapterIndex && chunkDetail.data && (
+                  <div className="mt-3 space-y-2 rounded-[var(--radius-md)] border border-line bg-paper-soft/60 p-3">
+                    {chunkDetail.data.meaning && (
+                      <div>
+                        <div className="text-xs font-semibold text-ink-soft">
+                          {t("workspace.breakdown.meaning")}
+                        </div>
+                        <p className="mt-0.5 text-sm text-ink-soft">{chunkDetail.data.meaning}</p>
+                      </div>
+                    )}
+                    {chunkDetail.data.knowledgePoints &&
+                      chunkDetail.data.knowledgePoints.length > 0 && (
+                        <div>
+                          <div className="text-xs font-semibold text-ink-soft">
+                            {t("workspace.breakdown.chunkKnowledgePoints")}
+                          </div>
+                          <ul className="mt-0.5 space-y-1">
+                            {chunkDetail.data.knowledgePoints.map((kp, j) => (
+                              <li key={j} className="flex gap-2 text-sm text-ink-soft">
+                                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                                {kp}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    {(chunkDetail.data.cardsCount ?? 0) > 0 && (
+                      <div className="text-xs text-ink-muted">
+                        {t("workspace.breakdown.chunkCards", {
+                          count: chunkDetail.data.cardsCount ?? 0,
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {c.keyPoints && c.keyPoints.length > 0 && (
                   <ul className="mt-2 space-y-1">

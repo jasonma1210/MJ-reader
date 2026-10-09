@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN" style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MJNexus-Reader 项目健康度总览 2026-10-09</title>
+<style>
+  :root { --ink:#1f2937; --mut:#6b7280; --ok:#059669; --warn:#d97706; --bad:#dc2626; --line:#e5e7eb; --paper:#ffffff; --soft:#f3f4f6; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:#f8fafc; color:var(--ink); }
+  .wrap { max-width:980px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--mut); font-size:13px; margin-bottom:20px; }
+  .card { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card h2 { font-size:16px; margin:0 0 12px; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; color:#fff; }
+  .b-ok { background:var(--ok); } .b-warn { background:var(--warn); } .b-bad { background:var(--bad); } .b-mut { background:#9ca3af; }
+  /* 闭环链路 */
+  .chain { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:center; }
+  .step { border:2px solid; border-radius:10px; padding:10px 14px; min-width:110px; text-align:center; }
+  .step .t { font-weight:700; font-size:15px; }
+  .step .d { font-size:12px; color:var(--mut); margin-top:3px; }
+  .step .tag { display:inline-block; margin-top:6px; font-size:11px; padding:1px 8px; border-radius:999px; }
+  .s-ok { border-color:var(--ok); background:#ecfdf5; } .s-ok .tag { background:var(--ok); color:#fff; }
+  .s-warn { border-color:var(--warn); background:#fffbeb; } .s-warn .tag { background:var(--warn); color:#fff; }
+  .s-bad { border-color:var(--bad); background:#fef2f2; } .s-bad .tag { background:var(--bad); color:#fff; }
+  .arrow { font-size:20px; color:#9ca3af; font-weight:700; }
+  .legend { display:flex; gap:16px; justify-content:center; margin-top:12px; font-size:12px; color:var(--mut); flex-wrap:wrap; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:4px; vertical-align:middle; }
+  .l-ok { background:var(--ok); } .l-warn { background:var(--warn); } .l-bad { background:var(--bad); }
+  /* 指标 */
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+  .metric { border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--soft); }
+  .metric .name { font-size:13px; color:var(--mut); }
+  .metric .val { font-size:22px; font-weight:800; margin:2px 0; }
+  .metric .note { font-size:12px; color:var(--mut); }
+  .barrow { display:flex; align-items:center; gap:8px; margin:8px 0; }
+  .barrow .lab { width:120px; font-size:12px; color:var(--mut); flex-shrink:0; text-align:right; }
+  .barrow .track { flex:1; background:var(--line); border-radius:6px; height:18px; position:relative; overflow:hidden; }
+  .barrow .fill { position:absolute; left:0; top:0; bottom:0; border-radius:6px; }
+  .barrow .num { width:86px; font-size:12px; font-weight:600; flex-shrink:0; }
+  .issues li { margin:6px 0; font-size:13.5px; line-height:1.5; }
+  .issues .k { font-weight:700; }
+  .road { display:flex; flex-wrap:wrap; gap:8px; }
+  .ph { flex:1; min-width:220px; border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .ph h3 { margin:0 0 8px; font-size:14px; }
+  .ph ul { margin:0; padding-left:18px; font-size:12.5px; line-height:1.7; color:#374151; }
+  .concl { background:#eef2ff; border:1px solid #c7d2fe; border-radius:10px; padding:14px; font-size:14px; line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>MJNexus-Reader 项目健康度总览</h1>
+  <div class="sub">2026-10-09 一手源码复核 + 门禁实测 · 与报告《MJNexus-Reader-质量审查报告-2026-10-09.md》配套</div>
+
+  <!-- 1. 五步闭环 -->
+  <div class="card">
+    <h2>1 · 学习闭环「读 → 问 → 炼 → 练 → 忆」断链定位</h2>
+    <div class="chain">
+      <div class="step s-ok"><div class="t">读 · 阅读器</div><div class="d">沉浸 · 划线 · 批注</div><span class="tag">达标</span></div>
+      <div class="arrow">→</div>
+      <div class="step s-ok"><div class="t">问 · AI 中枢</div><div class="d">8 动词路由已建并接入</div><span class="tag">达标</span></div>
+      <div class="arrow">→</div>
+      <div class="step s-warn"><div class="t">炼 · 拆书 / 制卡</div><div class="d">制卡只出聊天文案，不落复习队列</div><span class="tag">半断</span></div>
+      <div class="arrow">→</div>
+      <div class="step s-warn"><div class="t">练 · 复习队列</div><div class="d">掌握度回写仅闪卡 1 处（练习/教学未接）</div><span class="tag">半断</span></div>
+      <div class="arrow">→</div>
+      <div class="step s-bad"><div class="t">忆 · 图谱 / 掌握度</div><div class="d">/graph /mastery 无入口不可达；错题↔知识节点永久断链</div><span class="tag">断链</span></div>
+      <div class="arrow">→</div>
+      <div class="step s-bad"><div class="t">回跳原文</div><div class="d">图谱节点回跳原文未接线</div><span class="tag">断链</span></div>
+    </div>
+    <div class="legend">
+      <span><i class="l-ok"></i>闭环正常</span>
+      <span><i class="l-warn"></i>半断（有实现未接全）</span>
+      <span><i class="l-bad"></i>硬断链（数据流或入口断裂）</span>
+    </div>
+  </div>
+
+  <!-- 2. 关键指标 -->
+  <div class="card">
+    <h2>2 · 关键指标（本次实测）</h2>
+    <div class="barrow"><span class="lab">命令接线</span><span class="track"><span class="fill" style="width:70.3%;background:#059669;"></span></span><span class="num">251 / 357 已调用</span></div>
+    <div class="barrow"><span class="lab">未接命令缺口</span><span class="track"><span class="fill" style="width:29.7%;background:#d97706;"></span></span><span class="num">106 条 (30%)</span></div>
+    <div class="barrow"><span class="lab">幽灵命令</span><span class="track"><span class="fill" style="width:0%;background:#059669;"></span></span><span class="num">0 条（优）</span></div>
+    <div class="barrow"><span class="lab">闭环必须接线（11 条）</span><span class="track"><span class="fill" style="width:9%;background:#dc2626;"></span></span><span class="num">1 / 11 (9%)</span></div>
+    <div class="barrow"><span class="lab">孤路由（有页面无入口）</span><span class="track"><span class="fill" style="width:33%;background:#dc2626;"></span></span><span class="num">6 / 18 顶层页</span></div>
+    <div class="barrow"><span class="lab">前端单测覆盖</span><span class="track"><span class="fill" style="width:6%;background:#d97706;"></span></span><span class="num">55 个 / 4.9 万行</span></div>
+    <div class="barrow"><span class="lab">后端单测</span><span class="track"><span class="fill" style="width:100%;background:#059669;"></span></span><span class="num">442 通过</span></div>
+    <div class="barrow"><span class="lab">前端主包体积</span><span class="track"><span class="fill" style="width:100%;background:#d97706;"></span></span><span class="num">1.97 MB (gzip 604 KB)</span></div>
+    <div class="barrow"><span class="lab">tsc / eslint</span><span class="track"><span class="fill" style="width:100%;background:#059669;"></span></span><span class="num">0 错误</span></div>
+  </div>
+
+  <!-- 3. 断链清单 -->
+  <div class="card">
+    <h2>3 · 学习闭环断链清单（数据流级）</h2>
+    <ul class="issues">
+      <li><span class="badge b-bad">P0-1</span> <span class="k">题目 ↔ 知识节点：</span><code>ai_quiz.rs</code> 出题入库后未调用 <code>link_question_to_knowledge_node</code>，<code>related_question_ids</code> 永远为空 → 错题无法回溯知识节点。</li>
+      <li><span class="badge b-bad">P0-2</span> <span class="k">脑图 ↔ 知识节点：</span><code>mindmap_nodes</code> 表无 <code>linked_node_ids</code> 字段，脑图与知识图谱完全互不相通。</li>
+      <li><span class="badge b-warn">半断</span> <span class="k">划词制卡不落库：</span>「存为闪卡」走聊天 prompt（<code>verbPrompt("makeCard")</code>），产物不进 <code>cards</code> 表；真落库命令 <code>ai_highlight_to_flashcard</code> 零调用。</li>
+      <li><span class="badge b-warn">半断</span> <span class="k">掌握度回写：</span><code>update_knowledge_mastery</code> 仅接 ReviewFlashcardsPage，PracticePage / TeachingPage 未接 → 练习结果不反馈看板。</li>
+      <li><span class="badge b-bad">入口</span> <span class="k">6 个孤儿路由：</span>/graph /mastery /practice /teaching /output /labels 在活动代码中 0 入口，桌面侧边栏与移动 4-Tab 均不可达。</li>
+      <li><span class="badge b-warn">映射</span> <span class="k">SUGGESTION_ROUTE 语义错位：</span><code>path → /mastery</code>、<code>practice → /learn</code>，建议卡片跳转与意图不符。</li>
+      <li><span class="badge b-ok">已修</span> <span class="k">P1-1 拆书边解析：</span><code>edge_source_ref</code> 已加 <code>target_node_id</code> 兜底，拆书边不再被图谱跳过。</li>
+      <li><span class="badge b-ok">已修</span> <span class="k">安全：</span><code>db_execute / db_query</code> 裸 SQL 通道已从 lib.rs 移除。</li>
+    </ul>
+  </div>
+
+  <!-- 4. 阶段路线 -->
+  <div class="card">
+    <h2>4 · 修改方向（三阶段）</h2>
+    <div class="road">
+      <div class="ph">
+        <h3><span class="badge b-bad">阶段 A · 闭环止损（1–2 周）</span></h3>
+        <ul>
+          <li>6 个孤儿路由接入学习工具网格，或正式收编/下架</li>
+          <li>修复 P0-1 / P0-2 / 制卡落库 / 掌握度回写 4 处断链</li>
+          <li>AI 配置页真实生效（provider 三件套 + 测试连接）</li>
+          <li>核心 8 页加载/错误态补全，消灭静默 catch</li>
+        </ul>
+      </div>
+      <div class="ph">
+        <h3><span class="badge b-warn">阶段 B · 工程质量（3–6 周）</span></h3>
+        <ul>
+          <li>拆分巨型模块（ai_breakdown 225KB / book 119KB / ai_core 101KB）</li>
+          <li>前端核心链路测试基线 + 恢复最小 E2E</li>
+          <li>Rust 警告清零 + 棘轮脚本回归 CI</li>
+          <li>路由级分包，主包 1.97MB → 目标 &lt; 1MB</li>
+        </ul>
+      </div>
+      <div class="ph">
+        <h3><span class="badge b-mut">阶段 C · 产品收敛（持续）</span></h3>
+        <ul>
+          <li>确立产品北极星（一本教材 → 拆知识点 → 到期复习 → 回原文）</li>
+          <li>冷启动引导演示 8 动词；图谱回跳 / 掌握度入口落地</li>
+          <li>文档治理：归档一次性报告，docs 只留「当前真源」</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="concl">
+    <b>结论：</b>代码层已达个人项目的优秀水准（0 幽灵命令、442 后端测试、CI 棘轮、0 any / i18n 全对齐）；产品方向正确（五步闭环 + AI 中枢）；瓶颈在「产品与代码之间」——106 条未接命令、6 个孤儿路由、4 处闭环断链。下一步唯一该做的是把已建成能力接到用户路径上，而非新建任何功能。
+  </div>
+
+</div>
+</body>
+</html>

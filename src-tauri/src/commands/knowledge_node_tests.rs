@@ -230,6 +230,75 @@ async fn graphrag_empty_when_no_match() {
     assert!(ctx.is_empty(), "问题未命中任何概念应返回空");
 }
 
+// ==================== P0-1（2026-10-09）：题目→知识节点关联落值 ====================
+
+use crate::commands::knowledge_node::{auto_link_question_by_concept, link_question_to_node};
+
+#[tokio::test]
+async fn auto_link_question_by_concept_writes_related_question_ids() {
+    let pool = test_pool().await;
+    let chapters = vec![vec![(
+        "concept".to_string(),
+        "渗透压".to_string(),
+        "半透膜两侧压力差".to_string(),
+    )]];
+    upsert_breakdown_knowledge_nodes(&pool, "b1", &chapters, &[]).await.unwrap();
+
+    // 概念名精确匹配 → 题目应被挂到节点
+    auto_link_question_by_concept(&pool, "b1", "渗透压", "q-1").await;
+    let ids: String =
+        sqlx::query_scalar("SELECT related_question_ids FROM knowledge_nodes WHERE node_name = '渗透压'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(ids.contains("q-1"), "related_question_ids 应包含 q-1，实际 {}", ids);
+
+    // 去重：同一题再次关联不重复
+    auto_link_question_by_concept(&pool, "b1", "渗透压", "q-1").await;
+    let ids2: String =
+        sqlx::query_scalar("SELECT related_question_ids FROM knowledge_nodes WHERE node_name = '渗透压'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(ids2, ids, "重复关联不应改变 related_question_ids");
+
+    // 概念名不存在 → 静默跳过，不报错
+    auto_link_question_by_concept(&pool, "b1", "不存在的概念", "q-2").await;
+
+    // 空概念名 → 静默跳过
+    auto_link_question_by_concept(&pool, "b1", "  ", "q-3").await;
+}
+
+#[tokio::test]
+async fn link_question_to_node_appends_and_dedups() {
+    let pool = test_pool().await;
+    let chapters = vec![vec![(
+        "concept".to_string(),
+        "浓度差".to_string(),
+        "两侧浓度之差".to_string(),
+    )]];
+    upsert_breakdown_knowledge_nodes(&pool, "b1", &chapters, &[]).await.unwrap();
+    let node_id: String =
+        sqlx::query_scalar("SELECT id FROM knowledge_nodes WHERE node_name = '浓度差'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    link_question_to_node(&pool, &node_id, "qa").await.unwrap();
+    link_question_to_node(&pool, &node_id, "qb").await.unwrap();
+    link_question_to_node(&pool, &node_id, "qa").await.unwrap();
+
+    let ids: String =
+        sqlx::query_scalar("SELECT related_question_ids FROM knowledge_nodes WHERE id = ?")
+            .bind(&node_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let parsed: Vec<String> = serde_json::from_str(&ids).unwrap();
+    assert_eq!(parsed.len(), 2, "两次关联 + 一次重复应只剩 2 条：{:?}", parsed);
+    assert!(parsed.contains(&"qa".to_string()) && parsed.contains(&"qb".to_string()));
+}
+
 // ==================== v3.4 真机核对：同书去重 ====================
 
 #[tokio::test]

@@ -419,7 +419,9 @@
     "boardFailed": "上板失败",
     "makeCard": "制卡",
     "quizMe": "考我",
-    "breakdown": "拆这段"
+    "breakdown": "拆这段",
+    "cardSaved": "已存入复习队列",
+    "cardFailed": "制卡失败，请重试"
   },
   "ai": {
     "title": "AI 助手",
@@ -585,7 +587,14 @@
       "emptyDesc": "去书架挑一本，开始今天的学习",
       "reviewCta": "复习 {{count}} 张到期卡",
       "reviewDesc": "到期就练，不靠意志力",
-      "askAi": "问 AI"
+      "askAi": "问 AI",
+      "stats": {
+        "streak": "连续学习",
+        "days": "天",
+        "todayTime": "今日时长",
+        "due": "待复习",
+        "monthTime": "本月时长"
+      }
     },
     "todayDue": "今天要复习 {{count}} 张",
     "todayRead": "今日已读 {{min}} 分钟",
@@ -766,7 +775,7 @@
       "mindmap": "脑图节点",
       "chapterLabel": "第 {{index}} 章 · {{title}}",
       "noChunks": "暂无拆书结果",
-      "selfCheck": "自检",
+      "selfCheck": "质量自检",
       "viewChapter": "章节视图",
       "viewUnit": "单元视图",
       "loadingUnits": "加载知识单元…",
@@ -816,7 +825,19 @@
       "categoryTitle": "内容大类识别",
       "knowledgeTitle": "全书必知知识点（{{count}}）",
       "memoryTitle": "全书必掌握记忆点（{{count}}）",
-      "examTitle": "全书考点/易错点（{{count}}）"
+      "examTitle": "全书考点/易错点（{{count}}）",
+      "analyzeChapter": "分析",
+      "meaning": "深度解读",
+      "chunkKnowledgePoints": "本章知识点",
+      "chunkCards": "本章概念卡 {{count}} 张",
+      "selfCheckHide": "收起自检",
+      "qualityScore": "拆书质量分 {{score}}/100",
+      "qualityMissingChapters": "缺 {{count}} 章解析",
+      "qualityEmptySummary": "{{count}} 章摘要为空",
+      "qualityDuplicateKnowledge": "{{count}} 个重复知识点",
+      "qualityPositionNonMonotonic": "章节位置顺序异常",
+      "qualityMissingSource": "{{count}} 个知识点缺原文来源",
+      "qualityAllGood": "未发现问题，质量达标"
     },
     "quiz": {
       "title": "题库",

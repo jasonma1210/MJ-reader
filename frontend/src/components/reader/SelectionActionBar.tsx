@@ -17,6 +17,7 @@ import { useHighlightStore } from "../../stores/highlightStore";
 import { useReaderSelectionStore } from "../../stores/readerSelectionStore";
 import { highlightService } from "../../services/highlightService";
 import { whiteboardService } from "../../services/whiteboardService";
+import { highlightToFlashcard } from "../../services/closedLoopService";
 import { toast } from "../../utils/toast";
 import { cn } from "../../utils/cn";
 import { logError } from "../../utils/logError";
@@ -163,6 +164,45 @@ export function SelectionActionBar() {
     }
   };
 
+  // P0-1（2026-10-09）：划词「存为闪卡」真落库（R3 裁决）。
+  // 先落一条高亮真源 → 后端 ai_highlight_to_flashcard 写 cards 主表 + 调度（立即可复习），
+  // 复习队列 /review 可见。聊天 verb 通道保留为「快速生成」。
+  const makeRealCard = async () => {
+    const sel = useReaderSelectionStore.getState().selection;
+    const bookId = useReaderStore.getState().bookId;
+    if (!sel || !bookId) return;
+    const cfiRange = sel.cfi?.trim() ? sel.cfi.trim() : `${sel.start}-${sel.end}`;
+    try {
+      const hlId = await highlightService.saveHighlight({
+        bookId,
+        selectedText: sel.text,
+        cfiRange,
+        color: "yellow",
+        style: "highlight",
+        chapterIndex: 0,
+      });
+      addHighlight({
+        id: hlId,
+        bookId,
+        cfiRange,
+        selectedText: sel.text,
+        color: "yellow",
+        style: "highlight",
+        chapterIndex: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await highlightToFlashcard(hlId);
+      toast(t("selection.cardSaved"));
+    } catch (e) {
+      logError("SelectionActionBar.makeCard", e);
+      toast(t("selection.cardFailed"));
+    } finally {
+      window.getSelection()?.removeAllRanges();
+      clearReaderSel();
+    }
+  };
+
   const actions = [
     {
       key: "summarize",
@@ -184,17 +224,12 @@ export function SelectionActionBar() {
           selectionText: selection.text,
         }),
     },
-    // V2 动词发起位：制卡 / 考我 / 拆这段 —— 动词 prompt 自动发送（chat 承载，走书语境 grounding）
+    // V2 动词发起位：制卡（真落库）/ 考我 / 拆这段（后两者 chat 承载，走书语境 grounding）
     {
       key: "makeCard",
       label: t("selection.makeCard"),
       icon: Layers,
-      run: () =>
-        openPanel("chat", {
-          scope: "selection",
-          selectionText: verbPrompt("makeCard", null, selection.text),
-          autoSend: true,
-        }),
+      run: () => void makeRealCard(),
     },
     {
       key: "quizSelection",

@@ -112,6 +112,8 @@ pub mod lan_file_server;
 #[cfg(test)]
 pub mod knowledge_node_tests;
 #[cfg(test)]
+pub mod mindmap_node_tests;
+#[cfg(test)]
 pub mod study_note_tests;
 #[cfg(test)]
 pub mod annotation_tests;

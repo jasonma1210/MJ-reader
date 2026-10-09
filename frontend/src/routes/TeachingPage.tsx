@@ -11,6 +11,7 @@ import {
 } from "../services/practiceService";
 import { KnowledgeNodeSelect } from "../components/learn/KnowledgeNodeSelect";
 import { VoiceInteractionRecorder } from "../components/voice/VoiceInteractionRecorder";
+import { updateKnowledgeMastery } from "../services/closedLoopService";
 import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 import { EmptyState, ErrorState } from "../components/common/states";
@@ -30,6 +31,7 @@ export function TeachingPage() {
   const navigate = useNavigate();
 
   const [targetKnowledgeId, setTargetKnowledgeId] = useState("");
+  const [targetBookId, setTargetBookId] = useState<string | null>(null);
   const [session, setSession] = useState<TeachingSession | null>(null);
   const [history, setHistory] = useState<TeachingSession[]>([]);
   const [textInput, setTextInput] = useState("");
@@ -95,6 +97,12 @@ export function TeachingPage() {
       const s = await teachingFinish(session.id);
       if (s) setSession(s);
       void loadHistory();
+      // P0-1（2026-10-09）：结课回写掌握度（教学成功 = 对目标知识点的正向贡献，尽力而为）
+      if (s?.status === "done" && s.targetKnowledgeId && targetBookId) {
+        updateKnowledgeMastery(targetBookId, s.targetKnowledgeId, "teaching", true).catch(
+          (e) => logError("TeachingPage.mastery", e),
+        );
+      }
     } catch (e) {
       logError("TeachingPage.finish", e);
       toast(t("teaching.finishFailed"));
@@ -133,7 +141,11 @@ export function TeachingPage() {
         <ErrorState message={error} onRetry={start} retryLabel={t("common.retry")} />
       ) : !session ? (
         <Surface pad="md" className="flex flex-col gap-4">
-          <KnowledgeNodeSelect value={targetKnowledgeId} onChange={setTargetKnowledgeId} />
+          <KnowledgeNodeSelect
+            value={targetKnowledgeId}
+            onChange={setTargetKnowledgeId}
+            onBookChange={setTargetBookId}
+          />
           <Button block size="lg" onClick={start} disabled={starting} iconLeft={starting ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}>
             {starting ? t("teaching.starting") : t("teaching.start")}
           </Button>

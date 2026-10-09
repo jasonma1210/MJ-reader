@@ -46,6 +46,7 @@ pub struct MindmapNodeRow {
     pub created_at: i64,
     pub linked_card_id: Option<String>,
     pub linked_highlight_id: Option<String>,
+    pub linked_node_ids: Vec<String>,
     pub layer: i64,
     pub submap_root_id: Option<String>,
     pub node_uid: Option<String>,
@@ -62,6 +63,7 @@ pub struct NodeInput {
     pub metadata: Option<String>,
     pub linked_card_id: Option<String>,
     pub linked_highlight_id: Option<String>,
+    pub linked_node_ids: Option<Vec<String>>,
     pub layer: Option<i64>,
     pub submap_root_id: Option<String>,
     pub node_uid: Option<String>,
@@ -77,6 +79,11 @@ fn row_to_node(row: &sqlx::sqlite::SqliteRow) -> MindmapNodeRow {
         created_at: row.try_get("created_at").unwrap_or_default(),
         linked_card_id: row.try_get("linked_card_id").ok().flatten(),
         linked_highlight_id: row.try_get("linked_highlight_id").ok().flatten(),
+        linked_node_ids: {
+            let raw: Option<String> = row.try_get("linked_node_ids").ok();
+            raw.and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default()
+        },
         layer: row.try_get("layer").unwrap_or(0),
         submap_root_id: row.try_get("submap_root_id").ok().flatten(),
         node_uid: row.try_get("node_uid").ok().flatten(),
@@ -126,8 +133,8 @@ pub(crate) async fn save_mindmap_nodes_inner(
         sqlx::query(
             "INSERT INTO mindmap_nodes
              (id, mindmap_id, parent_id, topic, metadata, created_at,
-              linked_card_id, linked_highlight_id, layer, submap_root_id, node_uid, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              linked_card_id, linked_highlight_id, linked_node_ids, layer, submap_root_id, node_uid, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                mindmap_id = excluded.mindmap_id,
                parent_id = excluded.parent_id,
@@ -136,6 +143,8 @@ pub(crate) async fn save_mindmap_nodes_inner(
                created_at = COALESCE(mindmap_nodes.created_at, excluded.created_at),
                linked_card_id = excluded.linked_card_id,
                linked_highlight_id = excluded.linked_highlight_id,
+               -- 关联由 link_node_to_knowledge_node 管理：保存不覆盖已有关联（空数组时保留原值）
+               linked_node_ids = CASE WHEN excluded.linked_node_ids = '[]' THEN mindmap_nodes.linked_node_ids ELSE excluded.linked_node_ids END,
                layer = excluded.layer,
                submap_root_id = excluded.submap_root_id,
                node_uid = excluded.node_uid,
@@ -149,6 +158,7 @@ pub(crate) async fn save_mindmap_nodes_inner(
         .bind(now)
         .bind(node.linked_card_id.as_deref())
         .bind(node.linked_highlight_id.as_deref())
+        .bind(serde_json::to_string(node.linked_node_ids.as_deref().unwrap_or(&[])).unwrap_or_else(|_| "[]".to_string()))
         .bind(node.layer.unwrap_or(0))
         .bind(node.submap_root_id.as_deref())
         .bind(node.node_uid.as_deref())
@@ -199,7 +209,7 @@ pub(crate) async fn load_mindmap_nodes_inner(
 ) -> AppResult<Vec<MindmapNodeRow>> {
     let rows = sqlx::query(
         "SELECT id, mindmap_id, parent_id, topic, metadata, created_at,
-                linked_card_id, linked_highlight_id, layer, submap_root_id, node_uid, updated_at
+                linked_card_id, linked_highlight_id, linked_node_ids, layer, submap_root_id, node_uid, updated_at
          FROM mindmap_nodes WHERE mindmap_id = ? ORDER BY layer, created_at",
     )
     .bind(mindmap_id)
@@ -246,6 +256,35 @@ pub async fn link_node_to_highlight(
     Ok(())
 }
 
+/// v27（2026-10-09 P0-2 修复）：将脑图节点挂接到知识节点（打通「炼→忆」）。
+/// linked_node_ids 为 JSON 数组；重复挂接自动去重。
+#[tauri::command]
+pub async fn link_node_to_knowledge_node(
+    node_id: String,
+    knowledge_node_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let pool: &SqlitePool = &state.db;
+    let now = chrono::Utc::now().timestamp();
+    let row = sqlx::query("SELECT linked_node_ids FROM mindmap_nodes WHERE id = ?")
+        .bind(&node_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::General(format!("未找到脑图节点 {}", node_id)))?;
+    let raw: String = row.try_get("linked_node_ids").unwrap_or_default();
+    let mut ids: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
+    if !ids.contains(&knowledge_node_id) {
+        ids.push(knowledge_node_id.clone());
+    }
+    sqlx::query("UPDATE mindmap_nodes SET linked_node_ids = ?, updated_at = ? WHERE id = ?")
+        .bind(serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string()))
+        .bind(now)
+        .bind(&node_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// 按 node_uid 查询节点（URL Scheme mjnexus://node/{uid} 定位用）
 #[tauri::command]
 pub async fn get_node_by_uid(
@@ -255,7 +294,7 @@ pub async fn get_node_by_uid(
     let pool: &SqlitePool = &state.db;
     let row = sqlx::query(
         "SELECT id, mindmap_id, parent_id, topic, metadata, created_at,
-                linked_card_id, linked_highlight_id, layer, submap_root_id, node_uid, updated_at
+                linked_card_id, linked_highlight_id, linked_node_ids, layer, submap_root_id, node_uid, updated_at
          FROM mindmap_nodes WHERE node_uid = ? LIMIT 1",
     )
     .bind(&uid)
@@ -278,7 +317,7 @@ pub async fn list_outline_nodes(
     let mindmap_id = format!("mindmap-{}", book_id);
     let rows = sqlx::query(
         "SELECT id, mindmap_id, parent_id, topic, metadata, created_at,
-                linked_card_id, linked_highlight_id, layer, submap_root_id, node_uid, updated_at
+                linked_card_id, linked_highlight_id, linked_node_ids, layer, submap_root_id, node_uid, updated_at
          FROM mindmap_nodes WHERE mindmap_id = ? ORDER BY layer, created_at",
     )
     .bind(&mindmap_id)
@@ -297,7 +336,7 @@ pub async fn load_submap(
     let pool: &SqlitePool = &state.db;
     let rows = sqlx::query(
         "SELECT id, mindmap_id, parent_id, topic, metadata, created_at,
-                linked_card_id, linked_highlight_id, layer, submap_root_id, node_uid, updated_at
+                linked_card_id, linked_highlight_id, linked_node_ids, layer, submap_root_id, node_uid, updated_at
          FROM mindmap_nodes WHERE submap_root_id = ? ORDER BY layer, created_at",
     )
     .bind(&submap_root_id)
@@ -327,8 +366,8 @@ pub async fn save_submap(
         sqlx::query(
             "INSERT INTO mindmap_nodes
              (id, mindmap_id, parent_id, topic, metadata, created_at,
-              linked_card_id, linked_highlight_id, layer, submap_root_id, node_uid, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              linked_card_id, linked_highlight_id, linked_node_ids, layer, submap_root_id, node_uid, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                mindmap_id = excluded.mindmap_id,
                parent_id = excluded.parent_id,
@@ -337,6 +376,8 @@ pub async fn save_submap(
                created_at = COALESCE(mindmap_nodes.created_at, excluded.created_at),
                linked_card_id = excluded.linked_card_id,
                linked_highlight_id = excluded.linked_highlight_id,
+               -- 关联由 link_node_to_knowledge_node 管理：保存不覆盖已有关联（空数组时保留原值）
+               linked_node_ids = CASE WHEN excluded.linked_node_ids = '[]' THEN mindmap_nodes.linked_node_ids ELSE excluded.linked_node_ids END,
                layer = excluded.layer,
                submap_root_id = excluded.submap_root_id,
                node_uid = excluded.node_uid,
@@ -350,6 +391,7 @@ pub async fn save_submap(
         .bind(now)
         .bind(node.linked_card_id.as_deref())
         .bind(node.linked_highlight_id.as_deref())
+        .bind(serde_json::to_string(node.linked_node_ids.as_deref().unwrap_or(&[])).unwrap_or_else(|_| "[]".to_string()))
         .bind(node.layer.unwrap_or(1))
         .bind(&submap_root_id)
         .bind(node.node_uid.as_deref())
@@ -486,6 +528,7 @@ mod tests {
                 created_at INTEGER NOT NULL,
                 linked_card_id TEXT,
                 linked_highlight_id TEXT,
+                linked_node_ids TEXT NOT NULL DEFAULT '[]',
                 layer INTEGER NOT NULL DEFAULT 0,
                 submap_root_id TEXT,
                 node_uid TEXT,

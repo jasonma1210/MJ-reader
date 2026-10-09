@@ -30,7 +30,7 @@ use std::str::FromStr;
 ///   lan_file_server / local_model_runtime 四张新表（端侧推理 + 局域网文件服务器）
 ///
 /// 后续版本示例：v1.1.3 → 2，v1.2.0 → 3
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 26;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 27;
 
 /// 契约 §2 强制列清单（22 列）——所有 `INSERT INTO cards` 必须一列不少。
 ///
@@ -541,6 +541,12 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error>
     // （projector/mlx 语义不变），幂等：非 gguf 行不受影响。
     sqlx::query("UPDATE local_models SET model_kind = 'llm' WHERE model_kind = 'gguf'")
         .execute(pool)
+        .await?;
+
+    // ===== schema v27（2026-10-09 P0-2 修复）：mindmap_nodes.linked_node_ids =====
+    // 脑图节点此前与 knowledge_nodes 完全断链；新增 linked_node_ids 列（JSON 数组，
+    // 存关联的知识节点 id），供脑图节点挂接知识图谱，打通「炼→忆」。
+    migrate_add_column(pool, "mindmap_nodes", "linked_node_ids", "TEXT NOT NULL DEFAULT '[]'")
         .await?;
 
     // v1.1.2 审计修复：标记 v1.1.2 整合迁移已应用

@@ -488,6 +488,8 @@ pub fn run() {
             mindmap_node::load_mindmap_nodes,
             mindmap_node::link_node_to_card,
             mindmap_node::link_node_to_highlight,
+            // v27（P0-2）：脑图节点挂接知识节点
+            mindmap_node::link_node_to_knowledge_node,
             mindmap_node::get_node_by_uid,
             // v1.1.0 P1.4：大纲视图节点加载
             mindmap_node::list_outline_nodes,

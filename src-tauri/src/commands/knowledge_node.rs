@@ -538,7 +538,9 @@ async fn propagate_mastery(pool: &SqlitePool, node_id: &str) {
 }
 
 /// 将题目与知识节点关联（出题入库后调用，供自适应出题复用题库）。
+/// book_id 参数保留仅为兼容旧调用方；关联按 node_id 唯一解析，无需再校验书维度。
 #[tauri::command]
+#[allow(unused_variables)]
 pub async fn link_question_to_knowledge_node(
     book_id: String,
     node_id: String,
@@ -546,25 +548,53 @@ pub async fn link_question_to_knowledge_node(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let pool: &SqlitePool = &state.db;
-    let row = sqlx::query("SELECT related_question_ids FROM knowledge_nodes WHERE id = ? AND book_id = ?")
-        .bind(&node_id)
-        .bind(&book_id)
+    link_question_to_node(pool, &node_id, &question_id).await
+}
+
+/// 向节点追加一道题（去重；被 command 与出题管线复用）。
+pub(crate) async fn link_question_to_node(
+    pool: &SqlitePool,
+    node_id: &str,
+    question_id: &str,
+) -> AppResult<()> {
+    let row = sqlx::query("SELECT related_question_ids FROM knowledge_nodes WHERE id = ?")
+        .bind(node_id)
         .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::General(format!("未找到知识节点 {}（book {}）", node_id, book_id)))?;
+        .await?;
+    let Some(row) = row else {
+        return Err(AppError::General(format!("未找到知识节点 {node_id}")));
+    };
     let ids_json: String = row.try_get("related_question_ids").unwrap_or_default();
     let mut ids: Vec<String> = serde_json::from_str(&ids_json).unwrap_or_default();
-    if !ids.contains(&question_id) {
-        ids.push(question_id.clone());
+    if !ids.contains(&question_id.to_string()) {
+        ids.push(question_id.to_string());
     }
     let now = chrono::Utc::now().timestamp();
     sqlx::query("UPDATE knowledge_nodes SET related_question_ids = ?, updated_at = ? WHERE id = ?")
         .bind(serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string()))
         .bind(now)
-        .bind(&node_id)
+        .bind(node_id)
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// 出题入库后按概念名自动关联知识节点（P0-1 修复：related_question_ids 落值）。
+/// 概念名为空或匹配不到节点时静默跳过，不阻断出题主流程。
+pub(crate) async fn auto_link_question_by_concept(
+    pool: &SqlitePool,
+    book_id: &str,
+    concept_name: &str,
+    question_id: &str,
+) {
+    if concept_name.trim().is_empty() {
+        return;
+    }
+    if let Some(node_id) = resolve_node_id(pool, book_id, concept_name).await {
+        if let Err(e) = link_question_to_node(pool, &node_id, question_id).await {
+            log::warn!("[auto_link] 题目 {} 关联节点 {} 失败：{}", question_id, node_id, e);
+        }
+    }
 }
 
 // ==================== GraphRAG（v3.3 研习态升级） ====================

@@ -419,7 +419,9 @@
     "boardFailed": "Failed to add to board",
     "makeCard": "Make card",
     "quizMe": "Quiz me",
-    "breakdown": "Break this"
+    "breakdown": "Break this",
+    "cardSaved": "Saved to review queue",
+    "cardFailed": "Failed to create card, please retry"
   },
   "ai": {
     "title": "AI Assistant",
@@ -585,7 +587,14 @@
       "emptyDesc": "Pick one from your shelf to start today",
       "reviewCta": "Review {{count}} due cards",
       "reviewDesc": "Practice when due, no willpower needed",
-      "askAi": "Ask AI"
+      "askAi": "Ask AI",
+      "stats": {
+        "streak": "Day streak",
+        "days": "d",
+        "todayTime": "Today",
+        "due": "Due reviews",
+        "monthTime": "This month"
+      }
     },
     "todayDue": "Review {{count}} cards today",
     "todayRead": "Read {{min}} min today",
@@ -766,7 +775,7 @@
       "mindmap": "Mindmap nodes",
       "chapterLabel": "Ch {{index}} · {{title}}",
       "noChunks": "No breakdown result yet",
-      "selfCheck": "Self-check",
+      "selfCheck": "Quality check",
       "viewChapter": "Chapter view",
       "viewUnit": "Unit view",
       "loadingUnits": "Loading knowledge units…",
@@ -816,7 +825,19 @@
       "categoryTitle": "Content category detection",
       "knowledgeTitle": "Key knowledge points ({{count}})",
       "memoryTitle": "Key memory points ({{count}})",
-      "examTitle": "Exam points / easy mistakes ({{count}})"
+      "examTitle": "Exam points / easy mistakes ({{count}})",
+      "analyzeChapter": "Analyze",
+      "meaning": "Deep meaning",
+      "chunkKnowledgePoints": "Chapter knowledge points",
+      "chunkCards": "{{count}} concept cards in this chapter",
+      "selfCheckHide": "Hide check",
+      "qualityScore": "Breakdown quality {{score}}/100",
+      "qualityMissingChapters": "{{count}} chapters missing",
+      "qualityEmptySummary": "{{count}} chapters with empty summary",
+      "qualityDuplicateKnowledge": "{{count}} duplicate knowledge points",
+      "qualityPositionNonMonotonic": "Chapter position order abnormal",
+      "qualityMissingSource": "{{count}} knowledge points lack source",
+      "qualityAllGood": "No issues found, quality passed"
     },
     "quiz": {
       "title": "Quiz",

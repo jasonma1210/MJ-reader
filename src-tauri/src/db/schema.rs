@@ -268,6 +268,7 @@ CREATE TABLE IF NOT EXISTS mindmap_nodes (
     parent_id TEXT,
     topic TEXT NOT NULL,
     metadata TEXT,
+    linked_node_ids TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     FOREIGN KEY (mindmap_id) REFERENCES mindmaps(id) ON DELETE CASCADE
 );

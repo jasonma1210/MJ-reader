@@ -32,6 +32,11 @@ export const CMD = {
   // ai_breakdown
   aiBookBreakdown: "ai_book_breakdown",
   aiBookBreakdownCancel: "ai_book_breakdown_cancel",
+  // P0-1（2026-10-09）：拆书四件套（状态恢复/章节分析/质量自检/强制重置）
+  getBreakdownStatus: "get_breakdown_status",
+  getBookBreakdownChunk: "get_book_breakdown_chunk",
+  getBreakdownSelfCheck: "get_breakdown_self_check",
+  forceResetBreakdown: "force_reset_breakdown",
   // v3.2（Part A 缺口②③）：结构化文本路由命令（一次往返定 OCR/文字层取舍）
   extractTextRoutes: "extract_text_routes",
   getBookBreakdown: "get_book_breakdown",

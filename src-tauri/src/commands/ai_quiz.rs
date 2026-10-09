@@ -438,6 +438,9 @@ pub async fn ai_generate_quiz(
         {
             // 入库失败不影响本次答题（题目已在内存里），但错题本会缺这一题，必须留痕
             log::warn!("[ai_generate_quiz] 题目入库失败：{}", e);
+        } else {
+            // P0-1：入库成功后按概念名关联知识节点，错题才能回溯到薄弱点
+            super::knowledge_node::auto_link_question_by_concept(db, &book_id, &structured_concept, &id).await;
         }
     }
 
@@ -681,10 +684,45 @@ pub async fn ai_highlight_to_flashcard(
     let result: FlashcardResult =
         serde_json::from_str(&json_str).map_err(|e| AppError::General(format!("解析闪卡 JSON 失败: {}", e)))?;
 
-    // 入库到 flashcards 表
-    let id = uuid::Uuid::new_v4().to_string();
+    // 入库（P0-1 修复 2026-10-09）：复习队列读 cards 单一数据源，必须写 cards 主表；
+    // flashcards 表保留兼容写入（旧查询/迁移回填仍读它）。
     let now = chrono::Utc::now().timestamp();
     let due_date = now; // 立即可复习
+
+    // 1) cards 主表（title=front, content=back，与 ReviewFlashcardsPage 渲染契约一致）
+    let card_id = uuid::Uuid::new_v4().to_string();
+    let card_uid = format!("card-{}", uuid::Uuid::new_v4());
+    sqlx::query(
+        "INSERT INTO cards (id, uid, study_set_id, book_id, highlight_id, title, content, color, cfi_range, page_index, rect_x, rect_y, rect_width, rect_height, card_type, note_type, selected_text, transcript, voice_path, source_locator, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&card_id)
+    .bind(&card_uid)
+    .bind(Option::<String>::None)
+    .bind(&book_id)
+    .bind(&highlight_id)
+    .bind(&result.front)
+    .bind(&result.back)
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(Option::<i64>::None)
+    .bind(Option::<f64>::None)
+    .bind(Option::<f64>::None)
+    .bind(Option::<f64>::None)
+    .bind(Option::<f64>::None)
+    .bind("flashcard")
+    .bind("text")
+    .bind(&text) // selected_text = 高亮原文
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(now)
+    .bind(now)
+    .execute(db)
+    .await?;
+
+    // 2) flashcards 兼容表（旧查询/回填路径仍读它）
+    let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO flashcards (id, book_id, highlight_id, front, back, due_date, is_ai_generated, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
     )
@@ -695,6 +733,18 @@ pub async fn ai_highlight_to_flashcard(
     .bind(&result.back)
     .bind(due_date)
     .bind(now)
+    .bind(now)
+    .execute(db)
+    .await?;
+
+    // 3) 调度：立即可复习（review 队列按 card_scheduling.due_date 出队）
+    sqlx::query(
+        "INSERT INTO card_scheduling (card_id, ease_factor, interval_days, repetitions, due_date, last_reviewed)
+         VALUES (?, 2.5, 0, 0, ?, ?)
+         ON CONFLICT(card_id) DO UPDATE SET due_date = excluded.due_date, last_reviewed = excluded.last_reviewed",
+    )
+    .bind(&card_id)
+    .bind(due_date)
     .bind(now)
     .execute(db)
     .await?;
@@ -1071,6 +1121,9 @@ pub async fn ai_extract_questions(
         {
             // 卡片已建成，题目本身可用；缺的是错题本里的这一条记录，必须留痕
             log::warn!("[ai_extract_questions] quiz_questions 入库失败：{}", e);
+        } else {
+            // P0-1：入库成功后按概念名关联知识节点，错题才能回溯到薄弱点
+            super::knowledge_node::auto_link_question_by_concept(db, &book_id, &source_concept, &quiz_id).await;
         }
 
         // 3. 发射 card_updated 事件

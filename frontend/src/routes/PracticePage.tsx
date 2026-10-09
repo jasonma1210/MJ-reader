@@ -17,6 +17,7 @@ import { SubBackHeader } from "../components/shell/SubBackHeader";
 import { toast } from "../utils/toast";
 import { logError } from "../utils/logError";
 import { cn } from "../utils/cn";
+import { updateKnowledgeMastery } from "../services/closedLoopService";
 
 type Mode = "feynman" | "case" | "project" | "compare";
 
@@ -87,9 +88,18 @@ export function PracticePage() {
     setEvaluating(true);
     setError(null);
     try {
-      await practiceScenarioEvaluate(session.id, text);
+      const evalResult = await practiceScenarioEvaluate(session.id, text);
       setInput("");
       await refreshHistory(session.id);
+      // P0-1（2026-10-09）：练习作答回写掌握度（S1 任务 1.4，尽力而为不阻塞）
+      if (session.materialBookId && session.targetNodeId && evalResult) {
+        updateKnowledgeMastery(
+          session.materialBookId,
+          session.targetNodeId,
+          "practice",
+          evalResult.score >= 60,
+        ).catch((e) => logError("PracticePage.mastery", e));
+      }
     } catch (e) {
       logError("PracticePage.evaluate", e);
       toast(t("practice.evaluateFailed"));
