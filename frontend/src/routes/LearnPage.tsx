@@ -33,6 +33,7 @@ export function LearnPage() {
   const curve = useLearnStore((s) => s.curve);
   const weakNodes = useLearnStore((s) => s.weakNodes);
   const load = useLearnStore((s) => s.load);
+  const learnError = useLearnStore((s) => s.error);
   const navigate = useNavigate();
   const openPanel = useAiStore((s) => s.openPanel);
   const mainline = useRecentLearningBook();
@@ -43,6 +44,19 @@ export function LearnPage() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-auto bg-paper px-4 pb-4 pt-3">
+      {/* S3-3.2：今日台加载失败 → 错误态 + 重试 */}
+      {learnError && (
+        <div className="flex items-center justify-between rounded-[var(--radius-lg)] border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
+          <span>{learnError}</span>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="shrink-0 rounded-full border border-danger/40 px-2 py-0.5 font-medium"
+          >
+            {t("common.retry")}
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1
           className="font-extrabold text-ink"

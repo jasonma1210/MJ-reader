@@ -14,6 +14,8 @@ export interface GraphNode {
   degree: number;
   /** 关联卡片 id（回跳原文：取首卡 cfiRange 定位，后端 knowledge_graph.rs 组装） */
   relatedCardIds?: string[];
+  /** S3-3.1：后端直接带出的首个关联卡 cfiRange（免前端二次查询） */
+  cfiRange?: string | null;
 }
 
 /** 图谱边（source/target 均为节点 id） */

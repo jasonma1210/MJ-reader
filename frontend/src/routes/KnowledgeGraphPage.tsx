@@ -163,13 +163,19 @@ export function KnowledgeGraphPage() {
         }
       }
       if (!layout) {
-        layout = forceLayout(data.nodes, data.edges, 1400, 900);
+        // S3-3.4：按视口尺寸计算布局（替代 1400×900 硬编码），窄屏自动缩放
+        const w = typeof window !== "undefined" ? window.innerWidth : 1200;
+        const h = typeof window !== "undefined" ? window.innerHeight : 900;
+        layout = forceLayout(data.nodes, data.edges, Math.min(w, 1400), Math.min(h, 900));
       }
       setRfNodes(
         data.nodes.map((n) => ({
           id: n.id,
           type: "kgNode",
-          position: { x: layout?.[n.id]?.x ?? Math.random() * 800, y: layout?.[n.id]?.y ?? Math.random() * 400 },
+          position: {
+            x: layout?.[n.id]?.x ?? Math.random() * Math.min(window.innerWidth || 800, 800),
+            y: layout?.[n.id]?.y ?? Math.random() * Math.min(window.innerHeight || 400, 400),
+          },
           data: { label: n.label, degree: n.degree } as KgNodeData,
         })),
       );
@@ -212,14 +218,17 @@ export function KnowledgeGraphPage() {
       const real = nodeOptions.find((n) => n.id === node.id);
       if (!real || !real.bookId) return;
       void (async () => {
-        let cfi: string | null = null;
-        const cardId = real.relatedCardIds?.[0];
-        if (cardId) {
-          try {
-            const cards = await cardService.listByBook(real.bookId);
-            cfi = cards.find((c) => c.id === cardId)?.cfiRange ?? null;
-          } catch (e) {
-            logError("KnowledgeGraphPage.jump", e);
+        // S3-3.1：优先用后端直接带出的 cfiRange；旧数据/无锚点时二次查询或降级跳书
+        let cfi: string | null = real.cfiRange ?? null;
+        if (!cfi) {
+          const cardId = real.relatedCardIds?.[0];
+          if (cardId) {
+            try {
+              const cards = await cardService.listByBook(real.bookId);
+              cfi = cards.find((c) => c.id === cardId)?.cfiRange ?? null;
+            } catch (e) {
+              logError("KnowledgeGraphPage.jump", e);
+            }
           }
         }
         // 有 cfi 精确定位；否则仅回到该书（阅读器恢复上次进度）
@@ -344,8 +353,8 @@ export function KnowledgeGraphPage() {
         <p className="text-xs text-ink-muted">{t("graph.edgeTip")}</p>
       </Surface>
 
-      {/* 图谱画布 */}
-      <div className="relative h-[420px] flex-1 overflow-hidden rounded-[var(--radius-lg)] border border-line bg-paper-soft sm:h-auto">
+      {/* 图谱画布：S3-3.4 视口比例高度替代 h-[420px] 硬编码 */}
+      <div className="relative min-h-[280px] flex-1 overflow-hidden rounded-[var(--radius-lg)] border border-line bg-paper-soft sm:h-[min(60vh,560px)]">
         {loading ? (
           <p className="p-6 text-sm text-ink-muted">{t("common.loading")}</p>
         ) : (!graph || graph.nodes.length === 0) ? (

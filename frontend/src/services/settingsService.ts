@@ -17,7 +17,6 @@ export const settingsService = {
         const result = await invoke<ReadingProgress | null>(CMD.getReadingProgress, {
           bookId: bookId,
         });
-        console.log("[PROGRESS-DEBUG] getReadingProgress bookId=", bookId, "result=", result);
         return result;
       } catch (e) {
         console.error("[PROGRESS-DEBUG] getReadingProgress FAILED bookId=", bookId, "error=", e);
@@ -39,9 +38,7 @@ export const settingsService = {
           cfi: p.cfi ?? null,
           anchorType: p.cfi ? "cfi" : "percentage",
         };
-        console.log("[PROGRESS-DEBUG] upsertReadingProgress CALL args=", args);
         await invoke<void>(CMD.upsertReadingProgress, args);
-        console.log("[PROGRESS-DEBUG] upsertReadingProgress OK bookId=", p.bookId);
       } catch (e) {
         console.error("[PROGRESS-DEBUG] upsertReadingProgress FAILED bookId=", p.bookId, "error=", e);
         logError("settingsService.upsertReadingProgress", e);

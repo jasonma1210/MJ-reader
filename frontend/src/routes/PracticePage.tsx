@@ -44,7 +44,8 @@ export function PracticePage() {
   const [mode, setMode] = useState<Mode>(
     modeFromQuery && MODES.some((m) => m.key === modeFromQuery) ? modeFromQuery : "feynman",
   );
-  const [targetNodeId, setTargetNodeId] = useState("");
+  // S3-3.3：薄弱点一键练习深链 —— /practice?node=<知识节点 id>，预选目标节点
+  const [targetNodeId, setTargetNodeId] = useState(searchParams.get("node") ?? "");
   const aiConfigured = useAiStore((s) => s.profileId != null);
 
   const [session, setSession] = useState<PracticeSession | null>(null);

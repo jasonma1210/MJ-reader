@@ -1155,6 +1155,7 @@ pub(crate) struct OpenAIUsage {
     #[serde(default)]
     pub(crate) completion_tokens: u32,
     #[serde(default)]
+    #[allow(dead_code)] // 保留总 token 统计字段（Debug 透传观察）
     pub(crate) total_tokens: u32,
     /// 思考链 token。推理模型（DeepSeek-R1/V4 reasoning 等）会单独上报；普通模型无此字段。
     #[serde(default)]

@@ -98,7 +98,8 @@
     "relatedQuestions": "Related questions",
     "noRelatedQuestions": "No related questions yet. Try “Quiz me” from the AI hub.",
     "answer": "Answer",
-    "material": "Weak material"
+    "material": "Weak material",
+    "practiceThis": "Practice now"
   },
   "graph": {
     "title": "Knowledge Graph",
@@ -183,7 +184,8 @@
     "emptyFirst": {
       "title": "Your shelf is empty",
       "desc": "Import your first book to start the Read → Distill → Practice → Recall loop."
-    }
+    },
+    "loadFailed": "Library failed to load"
   },
   "reader": {
     "title": "Reader",
@@ -255,7 +257,10 @@
     "noteSelectFirst": "Select text to annotate first",
     "viewMode": {
       "noPageHint": "This format has no native pages. Scroll mode only."
-    }
+    },
+    "breakdownStop": "Stop",
+    "breakdownViewProgress": "View progress",
+    "breakdownStopped": "Breakdown stopped"
   },
   "aiModel": {
     "title": "AI Models",

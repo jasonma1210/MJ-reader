@@ -7,6 +7,7 @@ import { EmptyState } from "../components/common/states";
 import { useAiStore } from "../stores/aiStore";
 import { useLibraryStore } from "../stores/libraryStore";
 import { aiService } from "../services/aiService";
+import { logError } from "../utils/logError";
 
 export function AIAssistantPage() {
   const { t } = useTranslation();
@@ -58,7 +59,9 @@ export function AIAssistantPage() {
           })),
           conversationId,
         });
-      } catch {
+      } catch (e) {
+        // 会话恢复失败：清空消息回到新会话（记录日志，不再静默）
+        logError("AIAssistantPage.restoreConversation", e);
         useAiStore.setState({ messages: [], conversationId, streaming: false });
       }
     })();

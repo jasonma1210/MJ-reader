@@ -98,7 +98,8 @@
     "relatedQuestions": "相关题目",
     "noRelatedQuestions": "暂无关联题目，可从 AI 考我发起练习。",
     "answer": "答案",
-    "material": "薄弱点素材"
+    "material": "薄弱点素材",
+    "practiceThis": "立即练习"
   },
   "graph": {
     "title": "知识图谱",
@@ -183,7 +184,8 @@
     "emptyFirst": {
       "title": "书架还是空的",
       "desc": "导入第一本书，开始「读 → 炼 → 练 → 忆」学习闭环。"
-    }
+    },
+    "loadFailed": "书架加载失败"
   },
   "reader": {
     "title": "阅读器",
@@ -255,7 +257,10 @@
     "noteSelectFirst": "请先选择要批注的文本",
     "viewMode": {
       "noPageHint": "当前格式无原生页码，仅支持滚动模式"
-    }
+    },
+    "breakdownStop": "中止",
+    "breakdownViewProgress": "查看进度",
+    "breakdownStopped": "已中止拆书"
   },
   "aiModel": {
     "title": "AI 模型",

@@ -1,3 +1,4 @@
+#![allow(dead_code)] // 能力库保留（SSRF 防护 fetch/校验脚手架，待 P1-6 网页抓取接线）
 use reqwest::{Client, Method, redirect::Policy};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};

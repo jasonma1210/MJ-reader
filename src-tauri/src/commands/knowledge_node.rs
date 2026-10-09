@@ -541,6 +541,7 @@ async fn propagate_mastery(pool: &SqlitePool, node_id: &str) {
 /// book_id 参数保留仅为兼容旧调用方；关联按 node_id 唯一解析，无需再校验书维度。
 #[tauri::command]
 #[allow(unused_variables)]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn link_question_to_knowledge_node(
     book_id: String,
     node_id: String,

@@ -754,6 +754,7 @@ pub async fn backup_delete(app: AppHandle, file_path: String) -> AppResult<()> {
 }
 
 /// 备份目录便捷解析（供后端 service 复用）
+#[allow(dead_code)] // 备份目录初始化工具（供后续定时备份接线）
 pub fn ensure_backup_dir(app: &AppHandle) -> AppResult<PathBuf> {
     backup_root(app)
 }

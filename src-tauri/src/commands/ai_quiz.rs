@@ -1311,6 +1311,7 @@ pub struct QuizGradeResult {
 }
 
 /// 生成批次标签：日期_6位随机字母数字（如 20260831_a8f3k2）
+#[allow(dead_code)] // 供批量题库生成复用（当前单题路径未调用）
 pub fn generate_quiz_tag() -> String {
     use chrono::Datelike;
     use rand::Rng;
@@ -1344,8 +1345,10 @@ pub async fn grade_quiz_answer(
     user_answer: String,
     correct_answer: String,
     options: Option<String>,
-    explanation: Option<String>,
+    _explanation: Option<String>,
 ) -> AppResult<QuizGradeResult> {
+    // 参数名保持 Tauri 契约（前端 invoke 传参依赖），question_id/options 当前仅透传记录用途
+    let _ = (&question_id, &options);
     let db = &*state.db;
     let ua = user_answer.trim().to_lowercase();
     let ca = correct_answer.trim().to_lowercase();

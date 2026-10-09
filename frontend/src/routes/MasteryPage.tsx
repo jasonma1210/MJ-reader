@@ -269,6 +269,7 @@ export function MasteryPage() {
         currentNodes={currentNodes}
         selectedBookId={selectedBookId}
         onSelectBook={selectBook}
+        onSelectNode={(n) => void openHistory(n as unknown as MasteryNode)}
         loading={bookNodesLoading && Object.keys(bookNodes).length === 0}
         t={t}
       />
@@ -342,6 +343,18 @@ export function MasteryPage() {
                 </ul>
               )}
             </div>
+            {/* S3-3.3：薄弱点一键练习 → 练习页深链（预选该节点）；与 AI 考我并列 */}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                if (!selected.id) return;
+                closeHistory();
+                navigate(`/practice?node=${encodeURIComponent(selected.id)}`);
+              }}
+            >
+              {t("mastery.practiceThis")}
+            </Button>
             {/* 薄弱点一键回中枢：AI 考我这个知识点（V2 视图串联） */}
             <Button
               size="sm"
@@ -378,6 +391,7 @@ function BookMasteryPanel({
   currentNodes,
   selectedBookId,
   onSelectBook,
+  onSelectNode,
   loading,
   t,
 }: {
@@ -388,6 +402,8 @@ function BookMasteryPanel({
   currentNodes: BookKnowledgeNode[];
   selectedBookId: string | null;
   onSelectBook: (id: string | null) => void;
+  /** S3-3.5：触屏点击格子 → 打开节点详情抽屉 */
+  onSelectNode: (n: BookKnowledgeNode) => void;
   loading: boolean;
   t: (key: string) => string;
 }) {
@@ -459,7 +475,7 @@ function BookMasteryPanel({
           t={t}
         />
       ) : currentNodes.length > 0 ? (
-        <NodeHeatmap nodes={currentNodes} t={t} />
+        <NodeHeatmap nodes={currentNodes} t={t} onSelectNode={onSelectNode} />
       ) : (
         <div className="px-4 py-6 text-center text-sm text-ink-muted">
           {t("mastery.noKnowledgeNodes")}
@@ -524,7 +540,16 @@ function AllBooksHeatmap({
   );
 }
 
-function NodeHeatmap({ nodes, t }: { nodes: BookKnowledgeNode[]; t: (key: string) => string }) {
+function NodeHeatmap({
+  nodes,
+  t,
+  onSelectNode,
+}: {
+  nodes: BookKnowledgeNode[];
+  t: (key: string) => string;
+  /** S3-3.5：触屏可达——点击格子打开节点详情抽屉（信息不再只靠 hover） */
+  onSelectNode?: (n: BookKnowledgeNode) => void;
+}) {
   const [hover, setHover] = useState<{ node: BookKnowledgeNode; x: number; y: number } | null>(null);
 
   return (
@@ -543,6 +568,7 @@ function NodeHeatmap({ nodes, t }: { nodes: BookKnowledgeNode[]; t: (key: string
               setHover({ node: n, x: rect.left, y: rect.top });
             }}
             onBlur={() => setHover(null)}
+            onClick={() => onSelectNode?.(n)}
             className="h-5 w-5 shrink-0 rounded-[3px] transition hover:scale-110 hover:ring-1 hover:ring-ink"
             style={{ backgroundColor: bucketColor(n.masteryScore) }}
             aria-label={`${n.nodeName} ${Math.round(n.masteryScore * 100)}%`}

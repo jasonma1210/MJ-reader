@@ -30,6 +30,7 @@ struct FlashcardRowData {
 ///
 /// 返回 AnkiImportReport
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn import_anki_apkg(
     state: State<'_, AppState>,
     file_path: String,
@@ -189,6 +190,7 @@ pub async fn export_anki_apkg(
 
 /// 解析 .apkg 返回预览（不写入数据库）
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn preview_anki_apkg(
     file_path: String,
     max_notes: Option<u32>,

@@ -20,6 +20,8 @@ export function LibraryPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const books = useLibraryStore((s) => s.books);
+  const storeError = useLibraryStore((s) => s.error);
+  const reload = useLibraryStore((s) => s.load);
   const query = useLibraryStore((s) => s.query);
   const filter = useLibraryStore((s) => s.filter);
   const view = useLibraryStore((s) => s.view);
@@ -104,7 +106,19 @@ export function LibraryPage() {
         <ImportEntry />
       </div>
 
-      {filtered.length === 0 ? (
+      {storeError ? (
+        /* S3-3.2：书架加载失败 → 错误态 + 重试（不再静默白屏） */
+        <EmptyState
+          title={t("library.loadFailed")}
+          description={String(storeError)}
+          icon={BookOpen}
+          action={
+            <Button size="sm" onClick={() => void reload()}>
+              {t("common.retry")}
+            </Button>
+          }
+        />
+      ) : filtered.length === 0 ? (
         books.length === 0 ? (
           /* S2-2.5：书架真空 → 「导入第一本书」冷启动引导 */
           <EmptyState

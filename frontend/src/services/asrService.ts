@@ -20,12 +20,9 @@ const EMPTY_CLOUD_VIEW: CloudAsrConfigView = {
 
 export async function listAsrModels(): Promise<AsrModel[]> {
   const tauri = isTauri();
-  console.log("[ASR] listAsrModels: isTauri =", tauri, "__TAURI_INTERNALS__ =",
-    typeof window !== "undefined" ? ("__TAURI_INTERNALS__" in window) : "N/A");
   if (!tauri) return [];
   try {
     const result = await invoke<AsrModel[]>(CMD.listAsrModels);
-    console.log("[ASR] listAsrModels: OK, count =", result?.length ?? 0, result?.map(m => m.id));
     return result;
   } catch (e) {
     console.error("[ASR] listAsrModels: INVOKE FAILED", e);

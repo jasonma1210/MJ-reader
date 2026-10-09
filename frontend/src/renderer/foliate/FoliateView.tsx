@@ -484,7 +484,6 @@ export function FoliateView({ bookId }: { bookId: string }) {
       if (!lastLocation) {
         try {
           const record = await settingsService.getReadingProgress(bookId);
-          console.log("[PROGRESS-DEBUG] openBook fetchProgress bookId=", bookId, "record=", record);
           if (record) {
             const cfi = record.cfi?.trim();
             if (cfi) lastLocation = cfi;
@@ -774,7 +773,6 @@ export function FoliateView({ bookId }: { bookId: string }) {
         currentPageTextRef.current = "";
       }
       setProgress(Math.round(fraction * 100));
-      console.log("[PROGRESS-DEBUG] handleRelocate bookId=", bookId, "fraction=", fraction, "cfi=", cfi?.slice?.(0, 40));
       // 内存位置缓存（方向/壳切换重挂载后即时恢复）
       useReaderStore.getState().setLastPosition({ bookId, fraction, cfi });
       applyContentViewport(currentDocRef.current);
@@ -960,7 +958,6 @@ export function FoliateView({ bookId }: { bookId: string }) {
       // 即使 WebView 被重建（内存缓存丢失）也能从后端恢复，不再跳回第一页。
       const flushF = currentFractionRef.current;
       const flushC = currentCfiRef.current;
-      console.log("[PROGRESS-DEBUG] unmount flush bookId=", bookId, "fraction=", flushF);
       if (flushF > 0) {
         void settingsService.upsertReadingProgress({
           bookId,
@@ -1003,7 +1000,6 @@ export function FoliateView({ bookId }: { bookId: string }) {
       if (!bid) return;
       const f = currentFractionRef.current;
       const c = currentCfiRef.current;
-      console.log("[PROGRESS-DEBUG] visibility flush bookId=", bid, "fraction=", f);
       if (f > 0) {
         void settingsService.upsertReadingProgress({
           bookId: bid,

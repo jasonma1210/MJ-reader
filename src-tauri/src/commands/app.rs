@@ -8,6 +8,7 @@
 /// 会走平台级退出流程（Android 上关闭 Activity 与进程），
 /// 比 `window.close()`（仅关闭 WebView）更可靠。
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }

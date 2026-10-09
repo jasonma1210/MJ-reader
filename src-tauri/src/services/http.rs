@@ -58,7 +58,7 @@ pub fn is_retryable(status: Option<u16>, err: Option<&reqwest::Error>) -> bool {
 ///   确定性退避更易诊断，且避免 jitter 带来测试不确定性。
 /// - 重试耗尽仍失败：返回明确错误（含已重试次数），**不静默降级**。
 pub async fn send_with_retry(
-    mut req: reqwest::RequestBuilder,
+    req: reqwest::RequestBuilder,
     max_retries: u32,
 ) -> Result<reqwest::Response, String> {
     let mut attempt = 0u32;

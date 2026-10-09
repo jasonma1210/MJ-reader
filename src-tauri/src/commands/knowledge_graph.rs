@@ -27,6 +27,9 @@ pub struct GraphNode {
     /// 关联卡片 id（回跳原文：卡 → cfiRange 定位）
     #[serde(default)]
     pub related_card_ids: Vec<String>,
+    /// 首个关联卡的 cfiRange（S3-3.1：后端直接带出，免前端二次查询）
+    #[serde(default)]
+    pub cfi_range: Option<String>,
 }
 
 /// 图谱边。
@@ -105,7 +108,7 @@ async fn load_nodes(
                 COALESCE(b.title, '已删除资料') AS book_title
          FROM knowledge_nodes kn LEFT JOIN books b ON b.id = kn.book_id AND b.deleted_at IS NULL",
     );
-    if let Some(bid) = book_id.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(_) = book_id.as_deref().filter(|s| !s.trim().is_empty()) {
         sql.push_str(" WHERE kn.book_id = ?");
     }
     let mut q = sqlx::query(&sql);
@@ -136,9 +139,48 @@ async fn load_nodes(
                 book_title: r.try_get("book_title").unwrap_or_else(|_| "已删除资料".to_string()),
                 degree,
                 related_card_ids,
+                cfi_range: None,
             },
             edges,
         ));
+    }
+    // S3-3.1：批量取关联卡 cfiRange（单次 IN 查询），回填 GraphNode.cfi_range
+    let card_ids: Vec<String> = raw
+        .iter()
+        .flat_map(|(n, _)| n.related_card_ids.iter().cloned())
+        .filter(|s| !s.trim().is_empty())
+        .collect::<std::collections::HashSet<String>>()
+        .into_iter()
+        .collect();
+    if !card_ids.is_empty() {
+        let placeholders = std::iter::repeat("?")
+            .take(card_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT id, cfi_range FROM cards WHERE id IN ({})",
+            placeholders
+        );
+        let mut q = sqlx::query(&sql);
+        for cid in &card_ids {
+            q = q.bind(cid);
+        }
+        let rows2 = q.fetch_all(pool).await?;
+        let mut cfi_by_card: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for r2 in &rows2 {
+            if let Ok(cid) = r2.try_get::<String, _>("id") {
+                let cfi: Option<String> = r2.try_get("cfi_range").unwrap_or(None);
+                if let Some(c) = cfi {
+                    cfi_by_card.insert(cid, c);
+                }
+            }
+        }
+        for (n, _) in raw.iter_mut() {
+            n.cfi_range = n
+                .related_card_ids
+                .iter()
+                .find_map(|cid| cfi_by_card.get(cid).cloned());
+        }
     }
     let edges_by_node: Vec<(String, String, Vec<serde_json::Value>)> = raw
         .iter()

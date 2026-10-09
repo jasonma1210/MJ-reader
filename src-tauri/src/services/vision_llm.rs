@@ -1,3 +1,4 @@
+#![allow(dead_code)] // 能力库保留（视觉 OCR 脚手架，待 P1-7 图文题/拍照识别接线）
 // v1.1.0 P3.1 实现：OpenAI Vision API 集成
 // 支持 gpt-4o / gpt-4-vision-preview 等多模态模型
 // 任务类型：general（通用OCR）/ table（表格→Markdown）/ formula（公式→LaTeX）/ handwriting（手写体）

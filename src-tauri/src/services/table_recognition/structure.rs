@@ -1,3 +1,4 @@
+#![allow(dead_code)] // 能力库保留（表格渲染脚手架）
 // v0.8.0 P1.3 实现：表格结构重建 + 多格式序列化
 //
 // 把 detector + extractor + OCR 三步结果合并为统一的 `TableCell` 列表，

@@ -12,6 +12,7 @@ use crate::AppState;
 /// v1.1.0 P2.6：条件思维导图筛选条件
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub struct ConditionalFilter {
     pub color: Option<String>,
     pub study_set_id: Option<String>,
@@ -240,6 +241,7 @@ pub async fn link_node_to_card(
 
 /// 将节点链接到高亮
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn link_node_to_highlight(
     node_id: String,
     highlight_id: String,
@@ -259,6 +261,7 @@ pub async fn link_node_to_highlight(
 /// v27（2026-10-09 P0-2 修复）：将脑图节点挂接到知识节点（打通「炼→忆」）。
 /// linked_node_ids 为 JSON 数组；重复挂接自动去重。
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn link_node_to_knowledge_node(
     node_id: String,
     knowledge_node_id: String,
@@ -309,6 +312,7 @@ pub async fn get_node_by_uid(
 /// 按 mindmap_id 加载所有节点，前端按 parent_id 递归构建层级树
 /// mindmap_id 规则：mindmap-{book_id}（与 MindmapPanel 一致）
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn list_outline_nodes(
     book_id: String,
     state: State<'_, AppState>,
@@ -329,6 +333,7 @@ pub async fn list_outline_nodes(
 /// v1.1.0 P2.3 实现：加载子脑图节点（根据 submap_root_id 查询）
 /// 节点双击进入子脑图时调用，返回该子图下所有节点（layer >= 1）
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn load_submap(
     submap_root_id: String,
     state: State<'_, AppState>,
@@ -348,6 +353,7 @@ pub async fn load_submap(
 /// v1.1.0 P2.3 实现：保存子脑图节点（按 submap_root_id 增量 upsert，P2 写放大优化）
 /// 子图节点复用 mindmap_nodes 表，layer 字段记录深度（>= 1），submap_root_id 指向父节点
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn save_submap(
     submap_root_id: String,
     mindmap_id: String,
@@ -428,6 +434,7 @@ pub async fn save_submap(
 /// 根据筛选条件（高亮颜色/学习集/书籍/时间范围/标签）查询卡片，返回精简结构供前端生成临时导图视图
 /// 筛选结果不破坏原导图，仅在前端渲染临时视图
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn query_cards_for_conditional_mindmap(
     filter: ConditionalFilter,
     state: State<'_, AppState>,
