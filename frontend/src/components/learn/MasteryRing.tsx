@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import { ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import type { WeakKnowledgeNode } from "../../types";
 
@@ -18,9 +19,10 @@ function bucket(mastery: number): keyof typeof MASTERY_COLORS {
   return "none";
 }
 
-/** 知识点掌握度环形图：按薄弱点分布着色 */
+/** 知识点掌握度环形图：按薄弱点分布着色。S2-2.1：整卡可点击 → /mastery（一等视图自然入口） */
 export function MasteryRing({ nodes }: { nodes: WeakKnowledgeNode[] }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
 
   const counts: Record<keyof typeof MASTERY_COLORS, number> = {
     mastered: 0,
@@ -38,9 +40,16 @@ export function MasteryRing({ nodes }: { nodes: WeakKnowledgeNode[] }) {
   ).map((k) => ({ name: k, value: counts[k] }));
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">
-      <div className="mb-2 text-[var(--fs-section-title)] font-semibold text-ink-soft">
-        {t("learn.mastery.title")}
+    <button
+      type="button"
+      onClick={() => navigate("/mastery")}
+      className="block w-full rounded-[var(--radius-lg)] border border-line bg-paper p-4 text-left shadow-sm transition active:bg-paper-soft"
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[var(--fs-section-title)] font-semibold text-ink-soft">
+          {t("learn.mastery.title")}
+        </span>
+        <span className="text-xs text-accent">{t("learn.mastery.seeAll")}</span>
       </div>
       <div className="h-40 w-full">
         {hasData ? (
@@ -66,6 +75,6 @@ export function MasteryRing({ nodes }: { nodes: WeakKnowledgeNode[] }) {
           </div>
         )}
       </div>
-    </div>
+    </button>
   );
 }

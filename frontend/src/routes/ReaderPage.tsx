@@ -381,6 +381,7 @@ export function ReaderPage() {
         open={typographyOpen}
         anchorRef={typographyBtnRef}
         format={bookInfo?.format}
+        bookId={bookId}
         onClose={() => setTypographyOpen(false)}
       />
 

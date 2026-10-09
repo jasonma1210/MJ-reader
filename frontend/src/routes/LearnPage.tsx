@@ -8,6 +8,7 @@ import { useAiStore } from "../stores/aiStore";
 import { LearnCurve } from "../components/learn/LearnCurve";
 import { MasteryRing } from "../components/learn/MasteryRing";
 import { Heatmap } from "../components/learn/Heatmap";
+import { AiVerbCoach } from "../components/onboarding/AiVerbCoach";
 import { TodaySuggestions } from "../components/learn/TodaySuggestions";
 import { cn } from "../utils/cn";
 import { useRecentLearningBook } from "../hooks/useRecentLearning";
@@ -66,6 +67,9 @@ export function LearnPage() {
           ))}
         </div>
       </div>
+
+      {/* S2-2.5：冷启动「动词教练」——尚无最近学习书时引导首个动作 */}
+      {!mainline.book && <AiVerbCoach />}
 
       {/* 今日主线：最近学习书 + 到期复习 + 问 AI */}
       <TodayMainline

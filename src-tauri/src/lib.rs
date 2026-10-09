@@ -304,7 +304,6 @@ pub fn run() {
             // v0.8.0 P0.2 实现：AI 举一反三
             ai_analysis::ai_related_knowledge,
             ai_analysis::list_knowledge_extensions,
-            ai_chat::ai_test_connection,
             ai_chat::save_ai_config,
             ai_chat::load_ai_config_cmd,
             // v1.4.0 实现：AI 多配置（权重路由）——保存/列表/删除/连接测试

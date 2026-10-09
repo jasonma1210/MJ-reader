@@ -223,3 +223,28 @@ export function saveAiConfig(config: AiConfig): Promise<void> {
     model: config.model,
   });
 }
+
+// ===== P0-1（2026-10-09）：错题 / 知识点题单 / 薄弱点素材 =====
+
+/** 按知识点关键词列出相关题目（question_trace 回溯） */
+export function listQuestionsForKnowledgePoint(
+  bookId: string,
+  keyword: string,
+): Promise<Array<{ id: string; question: string; answer: string; explanation: string; isCorrect: number | null; sourceChapter: string; relatedKnowledgePoint: string }>> {
+  guard();
+  return invoke(CMD.listQuestionsForKnowledgePoint, { bookId, keyword });
+}
+
+/** 薄弱点素材（含相关题 id），供掌握度详情展示 */
+export function getWeakNodesMaterial(
+  bookId?: string | null,
+): Promise<Array<{ id: string; bookId: string; bookTitle: string; nodeName: string; masteryScore: number; relatedQuestionIds: string[] }>> {
+  guard();
+  return invoke(CMD.getWeakNodesMaterial, { materialBookId: bookId ?? null });
+}
+
+/** 清空错题（bookId 为空则全局清空） */
+export function clearWrongQuestions(bookId?: string | null): Promise<void> {
+  guard();
+  return invoke<void>(CMD.clearWrongQuestions, { bookId: bookId ?? null });
+}

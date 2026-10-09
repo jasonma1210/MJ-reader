@@ -4,6 +4,7 @@ import type {
   ChatMessage,
 } from "../types";
 import { aiService, aiWebSearch, type ConversationSummary } from "../services/aiService";
+import { cancelAiStream } from "../services/closedLoopService";
 import { buildBookContext, type BookSource } from "../services/bookContext";
 import { searchAllBooksContent, ensureAllBookIndexes } from "../services/searchService";
 import { logError } from "../utils/logError";
@@ -60,6 +61,8 @@ interface AIState {
   /** 阅读器侧边栏：设置 book 范围对话上下文但不弹出全局 Sheet（横屏内嵌 AI 面板用） */
   setReaderScope: (bookId: string) => void;
   send: (text: string) => Promise<void>;
+  /** P0-1（2026-10-09）：停止生成。流式会话进行中 → 置位后端取消令牌 + 本地停止累积 */
+  stop: () => Promise<void>;
   setProfile: (id: string | null) => void;
   /** 打开对话面板时恢复该范围（全局/书籍）最近一次对话，使对话可持久化续接 */
   restoreRecentConversation: () => Promise<void>;
@@ -413,6 +416,17 @@ export const useAiStore = create<AIState>((set, get) => ({
       // 会话状态刷新到缓存，便于切换书籍/全局时原样恢复
       useAiStore.getState().persistSession(useAiStore.getState().scopeKey());
     }
+  },
+
+  // P0-1（2026-10-09）：停止生成。后端 ai_cancel_stream 置位取消令牌后，
+  // 读取循环立即退出（BE-32），前端同时停止累积 token。
+  stop: async () => {
+    const { streaming, conversationId } = get();
+    if (!streaming) return;
+    if (conversationId) {
+      cancelAiStream(conversationId).catch((e) => logError("aiStore.stop", e));
+    }
+    set({ streaming: false });
   },
 }));
 

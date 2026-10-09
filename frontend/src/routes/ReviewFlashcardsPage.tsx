@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, RotateCw } from "lucide-react";
 import { studySetService } from "../services/studySetService";
 import { cardService } from "../services/cardService";
@@ -48,6 +48,7 @@ export function ReviewFlashcardsPage() {
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     void (async () => {
@@ -236,11 +237,10 @@ export function ReviewFlashcardsPage() {
               {flipped ? t("review.showFront") : t("review.showBack")}
             </button>
             <button
-              onClick={() => go(1)}
-              disabled={index >= total - 1}
-              className="flex items-center gap-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-accent-fg disabled:opacity-40"
+              onClick={() => (index >= total - 1 ? navigate("/mastery") : go(1))}
+              className="flex items-center gap-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-accent-fg"
             >
-              {t("review.next")}
+              {index >= total - 1 ? t("review.viewMastery") : t("review.next")}
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>

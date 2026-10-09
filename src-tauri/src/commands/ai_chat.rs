@@ -1,8 +1,8 @@
 // v0.7.1+ AI 对话 / 配置 / 连接测试（P1-1 拆分自 ai.rs，仅搬符号不改逻辑）。
 //
-// 12 个命令：ai_cancel_stream / save_ai_profiles / list_ai_profiles / delete_ai_profile /
+// 11 个命令：ai_cancel_stream / save_ai_profiles / list_ai_profiles / delete_ai_profile /
 // test_ai_connection / list_ollama_models / save_ai_config / load_ai_config_cmd /
-// ai_chat_stream / ai_test_connection / ai_translate / ai_explain。
+// ai_chat_stream / ai_translate / ai_explain。
 //
 // 命令名与 `#[tauri::command]` 属性一律不变（前端 invoke 依赖字符串名）。
 // 共享符号来自 ai_core（ChatMessage / OpenAI* / stream_cancellations 等）。
@@ -1092,56 +1092,3 @@ pub struct TestConnectionResult {
     pub latency_ms: u64,
 }
 
-#[tauri::command]
-pub async fn ai_test_connection(
-    api_url: String,
-    api_key: String,
-    model: String,
-) -> AppResult<TestConnectionResult> {
-    let start = std::time::Instant::now();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("客户端构建失败: {}", e))?;
-
-    let url = build_chat_url(&api_url);
-
-    let body = OpenAIRequest {
-        model: model.clone(),
-        messages: vec![ChatMessage {
-            role: "user".into(),
-            content: "ping".into(),
-        }],
-        stream: None,
-        temperature: None,
-        max_tokens: Some(1),
-        response_format: None,
-    };
-
-    let response = client
-        .post(&url)
-        .bearer_auth(&api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {}", e))?;
-
-    let status_code = response.status().as_u16();
-    let success = response.status().is_success();
-    let latency_ms = start.elapsed().as_millis() as u64;
-
-    let message = if success {
-        format!("连接成功（{}ms）", latency_ms)
-    } else {
-        let body_text = response.text().await.unwrap_or_default();
-        let truncated: String = body_text.chars().take(200).collect();
-        format!("HTTP {}: {}", status_code, truncated)
-    };
-
-    Ok(TestConnectionResult {
-        success,
-        status_code,
-        message,
-        latency_ms,
-    })
-}

@@ -94,7 +94,11 @@
     "legendLearning": "巩固中 60-80%",
     "legendWeak": "薄弱 40-60%",
     "legendNone": "未掌握 <40%",
-    "quizMeThis": "考我这个知识点"
+    "quizMeThis": "考我这个知识点",
+    "relatedQuestions": "相关题目",
+    "noRelatedQuestions": "暂无关联题目，可从 AI 考我发起练习。",
+    "answer": "答案",
+    "material": "薄弱点素材"
   },
   "graph": {
     "title": "知识图谱",
@@ -171,7 +175,15 @@
     "deleteConfirm": "确认删除《{{title}}》？删除后该书进度/笔记/卡片等数据将一并清除。",
     "deletedCount": "已删除 {{count}} 本书",
     "deleteSelectedTitle": "删除所选书籍",
-    "deleteSelectedConfirm": "确认删除选中的 {{count}} 本书？相关进度/笔记/卡片数据将一并清除。"
+    "deleteSelectedConfirm": "确认删除选中的 {{count}} 本书？相关进度/笔记/卡片数据将一并清除。",
+    "recall": "回忆上次读到哪",
+    "recallHide": "收起",
+    "recallEmpty": "还没有阅读记录，从开头读起吧。",
+    "recallFailed": "回忆失败，请重试",
+    "emptyFirst": {
+      "title": "书架还是空的",
+      "desc": "导入第一本书，开始「读 → 炼 → 练 → 忆」学习闭环。"
+    }
   },
   "reader": {
     "title": "阅读器",
@@ -535,7 +547,21 @@
       "selfcheck": {
         "title": "自查理解",
         "desc": "主动验证自己是否真的理解"
-      }
+      },
+      "pageEntry": "页面入口",
+      "practiceEntry": "专项练习",
+      "practiceEntryDesc": "费曼 / 案例 / 项目 / 对比模式练习页",
+      "teachingEntry": "教学相长",
+      "teachingEntryDesc": "给 AI 当老师，教一遍加深理解"
+    },
+    "stop": "停止生成",
+    "coach": {
+      "title": "从哪个动作开始？",
+      "desc": "直接说或点一下，AI 教练带你走完「读 → 炼 → 练 → 忆」闭环。"
+    },
+    "hint": {
+      "noAi": "尚未配置 AI 服务，先配置模型即可对话与练习。",
+      "configure": "去配置"
     }
   },
   "learn": {
@@ -568,7 +594,8 @@
       "mastered": "已掌握",
       "learning": "学习中",
       "weak": "薄弱",
-      "none": "未学"
+      "none": "未学",
+      "seeAll": "掌握详情"
     },
     "heatmap": {
       "title": "行为热力图",
@@ -629,7 +656,8 @@
     "hard": "困难",
     "good": "良好",
     "easy": "简单",
-    "viewSource": "看原文"
+    "viewSource": "看原文",
+    "viewMastery": "查看掌握详情"
   },
   "notes": {
     "title": "笔记库",
@@ -916,7 +944,8 @@
       "deckName": "MJNexus-复盘",
       "cardFileName": "复盘记忆卡片-{{date}}",
       "reportFileName": "复盘报告-{{date}}",
-      "maskReveal": "揭示"
+      "maskReveal": "揭示",
+      "clearWrong": "清空"
     },
     "notes": {
       "graphTitle": "知识图谱",
@@ -1012,7 +1041,9 @@
       "scrollMode": "滚动式",
       "aiModelSub": "远程 AI 引擎 · OpenAI 兼容 / Ollama",
       "aiModelAction": "配置 >",
-      "backupAction": "管理 >"
+      "backupAction": "管理 >",
+      "outputSub": "导出 / 学习报告等产出",
+      "tagsSub": "标签管理，归拢笔记与卡片"
     },
     "readingPref": {
       "defaultView": "默认视图",
@@ -1741,7 +1772,10 @@
     "inputEmpty": "请先输入作答内容",
     "submit": "提交作答",
     "evaluating": "AI 正在点评…",
-    "evaluateFailed": "点评失败，请重试"
+    "evaluateFailed": "点评失败，请重试",
+    "fromAiHub": "由 AI 中枢发起：{{mode}}",
+    "needAi": "此功能需要配置 AI（设置 → AI 能力）。",
+    "goConfigure": "去配置"
   },
   "voicePractice": {
     "title": "语音问答",
@@ -1797,7 +1831,9 @@
     "noHistory": "暂无历史教学",
     "historyItem": "未指定主题",
     "statusDone": "已结束",
-    "statusActive": "进行中"
+    "statusActive": "进行中",
+    "fromAiHub": "由 AI 中枢发起：你当老师，AI 当学生",
+    "needAi": "此功能需要配置 AI（设置 → AI 能力）。"
   },
   "voiceCoach": {
     "title": "语音教练",

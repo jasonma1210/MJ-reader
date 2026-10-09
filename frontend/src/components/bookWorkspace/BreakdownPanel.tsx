@@ -4,6 +4,7 @@ import { Sparkles, Loader2, Layers, BookOpenCheck, Network, Tag, AlertCircle, Bo
 import { cn } from "../../utils/cn";
 import { ErrorState } from "../common/states";
 import { breakdownService } from "../../services/breakdownService";
+import { generateBookwideAggregates } from "../../services/closedLoopService";
 import { downloadOcrModel } from "../../services/ocrService";
 import { useBreakdownStore } from "../../stores/breakdownStore";
 import { trackMetric } from "../../services/telemetryService";
@@ -181,6 +182,11 @@ export function BreakdownPanel({
         }
       } else {
         breakdownComplete(bookId);
+        // P0-1（2026-10-09）：拆书完成自动触发全书聚合（考点/人物/关系 →
+        // 题库与图谱原料）。尽力而为：失败/漫画跳过不阻塞主流程。
+        void generateBookwideAggregates(bookId).catch((e) =>
+          logError("BreakdownPanel.generateBookwideAggregates", e),
+        );
       }
       setResult(r);
       if ((r.chunks?.length ?? 0) > 0) onDone?.();

@@ -10,6 +10,7 @@ import {
   type TeachingSession,
 } from "../services/practiceService";
 import { KnowledgeNodeSelect } from "../components/learn/KnowledgeNodeSelect";
+import { useAiStore } from "../stores/aiStore";
 import { VoiceInteractionRecorder } from "../components/voice/VoiceInteractionRecorder";
 import { updateKnowledgeMastery } from "../services/closedLoopService";
 import { Button } from "../components/ui/Button";
@@ -29,6 +30,7 @@ import { cn } from "../utils/cn";
 export function TeachingPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const aiConfigured = useAiStore((s) => s.profileId != null);
 
   const [targetKnowledgeId, setTargetKnowledgeId] = useState("");
   const [targetBookId, setTargetBookId] = useState<string | null>(null);
@@ -124,6 +126,23 @@ export function TeachingPage() {
     <div className="flex h-full flex-col overflow-auto bg-paper pb-6 pt-0">
       <SubBackHeader titleKey="teaching.title" onBack={() => navigate(-1)} />
       <div className="flex flex-col gap-4 px-4 pt-3">
+        {/* S2-2.2：由 AI 中枢发起的引导条（动词产物页收编） */}
+        <div className="rounded-[var(--radius-md)] border border-accent/30 bg-accent-bg px-3 py-2 text-xs text-accent">
+          {t("teaching.fromAiHub")}
+        </div>
+        {/* S2-2.6：无 AI 降级叙事 */}
+        {!aiConfigured && (
+          <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-line bg-paper-soft px-3 py-2 text-xs text-ink-muted">
+            <span className="flex-1">{t("teaching.needAi")}</span>
+            <button
+              type="button"
+              onClick={() => navigate("/ai-config")}
+              className="shrink-0 text-accent"
+            >
+              {t("practice.goConfigure")}
+            </button>
+          </div>
+        )}
         {session && (
           <div className="flex justify-end">
             <button

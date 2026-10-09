@@ -16,6 +16,8 @@ import {
 } from "../services/masteryService";
 import { useAiStore } from "../stores/aiStore";
 import { verbPrompt } from "../ai/router";
+import { listQuestionsForKnowledgePoint, getWeakNodesMaterial } from "../services/closedLoopService";
+import { logError } from "../utils/logError";
 
 function pct(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -72,10 +74,15 @@ export function MasteryPage() {
   const [selected, setSelected] = useState<MasteryNode | null>(null);
   const [history, setHistory] = useState<NodeReviewPoint[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // P0-1（2026-10-09）：知识点相关题目（list_questions_for_knowledge_point）
+  const [nodeQuestions, setNodeQuestions] = useState<Array<{ id: string; question: string; answer: string; isCorrect: number | null }>>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
 
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
   const [bookNodes, setBookNodes] = useState<Record<string, BookKnowledgeNode[]>>({});
   const [bookNodesLoading, setBookNodesLoading] = useState(false);
+  // P0-1（2026-10-09）：薄弱点素材（get_weak_nodes_material），展示关联题总量
+  const [materialCount, setMaterialCount] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,6 +91,23 @@ export function MasteryPage() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // P0-1：薄弱点素材总量（含 relatedQuestionIds 数），尽力而为
+  useEffect(() => {
+    let alive = true;
+    getWeakNodesMaterial(null)
+      .then((m) => {
+        if (alive) {
+          setMaterialCount(
+            (m ?? []).reduce((s, n) => s + (n.relatedQuestionIds?.length ?? 0), 0),
+          );
+        }
+      })
+      .catch((e) => logError("MasteryPage.material", e));
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -192,8 +216,17 @@ export function MasteryPage() {
   const openHistory = async (node: MasteryNode) => {
     setSelected(node);
     setHistoryLoading(true);
+    setNodeQuestions([]);
     try {
       setHistory(await masteryService.getNodeReviewHistory(node.id));
+      // P0-1：相关题目（list_questions_for_knowledge_point，按节点名检索题库回溯）
+      if (node.bookId) {
+        setQuestionsLoading(true);
+        listQuestionsForKnowledgePoint(node.bookId, node.nodeName)
+          .then((qs) => setNodeQuestions(qs ?? []))
+          .catch((e) => logError("MasteryPage.nodeQuestions", e))
+          .finally(() => setQuestionsLoading(false));
+      }
     } finally {
       setHistoryLoading(false);
     }
@@ -202,6 +235,7 @@ export function MasteryPage() {
   const closeHistory = () => {
     setSelected(null);
     setHistory([]);
+    setNodeQuestions([]);
   };
 
   const weakTop = dash?.weakTop ?? [];
@@ -223,7 +257,7 @@ export function MasteryPage() {
         <StatCard icon={<Gauge className="h-4 w-4" />} label={t("mastery.overall")} value={pct(overall)} />
         <StatCard icon={<TrendingDown className="h-4 w-4" />} label={t("mastery.weakNodes")} value={String(weakTop.length)} />
         <StatCard icon={<AlertTriangle className="h-4 w-4" />} label={t("mastery.forgettingNodes")} value={String(forgetting.length)} />
-        <StatCard icon={<BookOpen className="h-4 w-4" />} label={t("mastery.dependency")} value={String(depEdges.length)} />
+        <StatCard icon={<BookOpen className="h-4 w-4" />} label={t("mastery.material")} value={String(materialCount)} />
       </div>
 
       {/* 书籍掌握度概览 */}
@@ -287,6 +321,26 @@ export function MasteryPage() {
               <CurveStat label={t("mastery.totalReviews")} value={String(selected.totalReviews)} />
               <CurveStat label={t("mastery.forgettingProb")} value={pct(selected.predictedForgettingProb)} />
               <CurveStat label={t("mastery.lastReview")} value={fmtDate(selected.lastReviewAt)} />
+            </div>
+            {/* 相关题目（P0-1：list_questions_for_knowledge_point 题库回溯） */}
+            <div className="rounded-[var(--radius-md)] border border-line bg-paper-soft p-3">
+              <div className="mb-1.5 text-xs font-semibold text-ink-soft">
+                {t("mastery.relatedQuestions")}
+              </div>
+              {questionsLoading ? (
+                <p className="text-sm text-ink-muted">{t("common.loading")}</p>
+              ) : nodeQuestions.length === 0 ? (
+                <p className="text-sm text-ink-muted">{t("mastery.noRelatedQuestions")}</p>
+              ) : (
+                <ul className="space-y-2">
+                  {nodeQuestions.map((q) => (
+                    <li key={q.id} className="rounded-md border border-line bg-paper px-2.5 py-2">
+                      <div className="text-sm text-ink">{q.question}</div>
+                      <div className="mt-0.5 text-xs text-ink-muted">{t("mastery.answer")}：{q.answer}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             {/* 薄弱点一键回中枢：AI 考我这个知识点（V2 视图串联） */}
             <Button

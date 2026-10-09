@@ -11,6 +11,8 @@ import { bookService } from "../../services/bookService";
 import { useJumpToSource } from "../../hooks/useJumpToSource";
 import { whiteboardService } from "../../services/whiteboardService";
 import { toast } from "../../utils/toast";
+import { logError } from "../../utils/logError";
+import { clearWrongQuestions } from "../../services/closedLoopService";
 import { cn } from "../../utils/cn";
 import { EmptyState, LoadingState } from "../../components/common/states";
 import type { Card } from "../../types";
@@ -282,6 +284,23 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
             <span className="ml-auto rounded-full bg-danger-soft px-2 py-0.5 text-[10px] font-medium text-danger">
               {wrong.length}
             </span>
+          )}
+          {/* P0-1（2026-10-09）：清空错题（clear_wrong_questions，bookId 作用域） */}
+          {wrong.length > 0 && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await clearWrongQuestions(bookId ?? null);
+                  setWrong([]);
+                } catch (e) {
+                  logError("ReviewPanel.clearWrong", e);
+                }
+              }}
+              className="ml-2 shrink-0 rounded-full border border-line bg-paper px-2 py-0.5 text-[10px] font-medium text-ink-muted transition hover:text-danger"
+            >
+              {t("workspace.review.clearWrong")}
+            </button>
           )}
         </div>
         {wrong.length > 0 ? (

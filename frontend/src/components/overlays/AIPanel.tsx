@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Send,
@@ -135,8 +135,10 @@ export function AIPanel() {
   const { t } = useTranslation();
   const open = useAiStore((s) => s.open);
   const streaming = useAiStore((s) => s.streaming);
+  const stop = useAiStore((s) => s.stop);
   const send = useAiStore((s) => s.send);
   const closePanel = useAiStore((s) => s.closePanel);
+  const profileId = useAiStore((s) => s.profileId);
   const startNewConversation = useAiStore((s) => s.startNewConversation);
   const scope = useAiStore((s) => s.scope);
   const mode = useAiStore((s) => s.mode);
@@ -253,6 +255,7 @@ export function AIPanel() {
   // 离开 AI 路由（切底部 tab / 导航到别的页面）→ 立即停止 AI 播报。
   // 浮层常驻可能仍可见，但已不属于「AI 界面」，按用户要求必须静音。
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   useEffect(() => {
     if (!pathname.startsWith("/ai")) {
       stopTts({ owner: "ai" });
@@ -416,10 +419,35 @@ export function AIPanel() {
   // ===== 渲染 =====
   // 中枢三形态（V2）：桌读横屏=右侧抽屉；随身/平板竖屏=底部 Sheet；工作台由 ReaderAiPanel 常驻右栏
   const layout = useBreakpoint();
+  // ===== S2-2.5：未配 AI 引导条（本次会话内可关闭）=====
+  const [aiHintDismissed, setAiHintDismissed] = useState(false);
+
   return (
     <>
     <Sheet open={open} onClose={closePanel} title={t("ai.title")} variant={layout.isTabletLandscape ? "right" : "bottom"}>
       <div className={cn("flex flex-col gap-3", layout.isTabletLandscape ? "h-full" : "h-[70vh]")}>
+        {/* ==== 未配 AI 引导条（S2-2.5：未配置 AI 服务时提示，可关闭）==== */}
+        {!profileId && !aiHintDismissed && (
+          <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-accent/30 bg-accent-bg px-3 py-2 text-xs text-accent">
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1">{t("ai.hint.noAi")}</span>
+            <button
+              type="button"
+              onClick={() => navigate("/ai-config")}
+              className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold text-accent-fg"
+            >
+              {t("ai.hint.configure")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAiHintDismissed(true)}
+              className="shrink-0 p-0.5 text-accent/60 hover:text-accent"
+              aria-label={t("common.close")}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         {/* ==== 顶部：TTS ==== */}
         <div className="flex justify-end items-center gap-2 border-b border-overlay pb-2">
           {/* TTS 开关 */}
@@ -583,12 +611,12 @@ export function AIPanel() {
               />
               <button
                 type="button"
-                onClick={submit}
-                disabled={streaming || !input.trim()}
-                aria-label={t("ai.send")}
+                onClick={streaming ? () => void stop() : submit}
+                disabled={!input.trim()}
+                aria-label={streaming ? t("ai.stop") : t("ai.send")}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-accent text-accent-fg disabled:opacity-50"
               >
-                <Send className="h-5 w-5" />
+                {streaming ? <Square className="h-5 w-5" /> : <Send className="h-5 w-5" />}
               </button>
             </>
           ) : (
@@ -772,6 +800,38 @@ export function AIPanel() {
               </button>
             );
           })}
+          {/* S2-2.2：动词产物页深链 —— 练习页 / 教学页（孤儿路由收编为动词结果视图） */}
+          <div className="mt-1 border-t border-line pt-1">
+            <div className="px-2 pb-1 text-[10px] text-ink-muted">{t("ai.tools.pageEntry")}</div>
+            <button
+              type="button"
+              onClick={() => {
+                setToolsOpen(false);
+                navigate("/practice?mode=feynman");
+              }}
+              className="flex w-full items-center gap-2 rounded-md p-2 text-left transition hover:bg-paper-soft"
+            >
+              <Play className="h-4 w-4 shrink-0 text-accent" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium text-ink">{t("ai.tools.practiceEntry")}</div>
+                <div className="truncate text-[10px] text-ink-muted">{t("ai.tools.practiceEntryDesc")}</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setToolsOpen(false);
+                navigate("/teaching");
+              }}
+              className="flex w-full items-center gap-2 rounded-md p-2 text-left transition hover:bg-paper-soft"
+            >
+              <GraduationCap className="h-4 w-4 shrink-0 text-accent" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium text-ink">{t("ai.tools.teachingEntry")}</div>
+                <div className="truncate text-[10px] text-ink-muted">{t("ai.tools.teachingEntryDesc")}</div>
+              </div>
+            </button>
+          </div>
         </div>,
         document.body,
       )}

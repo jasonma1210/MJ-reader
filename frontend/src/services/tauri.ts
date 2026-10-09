@@ -283,6 +283,8 @@ export const CMD = {
   getNodeByUid: "get_node_by_uid",
   linkNodeToCard: "link_node_to_card",
   generateBookwideAggregates: "generate_bookwide_aggregates",
+  // P0-1（2026-10-09）：错题清空（其余两键已在上文定义）
+  clearWrongQuestions: "clear_wrong_questions",
   setVerticalWriting: "set_vertical_writing",
   createCardLink: "create_card_link",
   listCardLinks: "list_card_links",

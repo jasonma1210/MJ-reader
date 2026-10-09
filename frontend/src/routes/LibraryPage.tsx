@@ -1,5 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
+import { BookOpen } from "lucide-react";
 import { useLibraryStore } from "../stores/libraryStore";
 import { isTauri } from "../services/tauri";
 import { useLayoutMode } from "../hooks/useLayoutMode";
@@ -10,11 +12,13 @@ import { BookCard } from "../components/library/BookCard";
 import { ListRow } from "../components/library/ListRow";
 import { ImportEntry } from "../components/library/ImportEntry";
 import { EmptyState } from "../components/common/states";
+import { Button } from "../components/ui/Button";
 import { RecentLearning } from "../components/library/RecentLearning";
 import { useRecentLearningBook } from "../hooks/useRecentLearning";
 
 export function LibraryPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const books = useLibraryStore((s) => s.books);
   const query = useLibraryStore((s) => s.query);
   const filter = useLibraryStore((s) => s.filter);
@@ -101,7 +105,21 @@ export function LibraryPage() {
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState title={t("library.empty")} />
+        books.length === 0 ? (
+          /* S2-2.5：书架真空 → 「导入第一本书」冷启动引导 */
+          <EmptyState
+            title={t("library.emptyFirst.title")}
+            description={t("library.emptyFirst.desc")}
+            icon={BookOpen}
+            action={
+              <Button size="sm" onClick={() => navigate("/import")}>
+                {t("library.import")}
+              </Button>
+            }
+          />
+        ) : (
+          <EmptyState title={t("library.empty")} />
+        )
       ) : view === "grid" ? (
         <div
           className="grid gap-3"

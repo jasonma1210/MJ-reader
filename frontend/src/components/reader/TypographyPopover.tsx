@@ -38,12 +38,15 @@ export function TypographyPopover({
   anchorRef,
   format,
   onClose,
+  bookId,
 }: {
   open: boolean;
   anchorRef: React.RefObject<HTMLElement | null>;
   /** 当前书籍格式（用于判定是否支持排版调整；pdf/office 置灰不可点） */
   format?: string;
   onClose: () => void;
+  /** P0-1：竖排书级持久化目标（set_vertical_writing） */
+  bookId?: string;
 }) {
   const { t } = useTranslation();
   const fontSize = useReaderStore((s) => s.fontSize);
@@ -58,6 +61,8 @@ export function TypographyPopover({
   const setBgColorKey = useReaderStore((s) => s.setBgColorKey);
   const viewMode = useReaderStore((s) => s.viewMode);
   const setViewMode = useReaderStore((s) => s.setViewMode);
+  const verticalWriting = useReaderStore((s) => s.verticalWriting);
+  const setVerticalWriting = useReaderStore((s) => s.setVerticalWriting);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const [fontPickerOpen, setFontPickerOpen] = useState(false);
@@ -314,6 +319,20 @@ export function TypographyPopover({
             </button>
           ))}
         </div>
+      </section>
+
+      {/* 竖排（P0-1）：横排 / 竖排 二选一；仅流式排版可用，书级持久化 */}
+      <section className="px-5 pb-4">
+        <SegmentedRow
+          label="方向"
+          value={verticalWriting ? "vertical" : "horizontal"}
+          options={[
+            { key: "horizontal", label: "横排", mark: "横" },
+            { key: "vertical", label: "竖排", mark: "竖" },
+          ]}
+          onChange={(k) => setVerticalWriting(k === "vertical", bookId)}
+          labels={["横", "竖"]}
+        />
       </section>
       </div>
     </div>

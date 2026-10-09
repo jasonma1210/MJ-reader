@@ -94,7 +94,11 @@
     "legendLearning": "Learning 60-80%",
     "legendWeak": "Weak 40-60%",
     "legendNone": "None <40%",
-    "quizMeThis": "Quiz me on this"
+    "quizMeThis": "Quiz me on this",
+    "relatedQuestions": "Related questions",
+    "noRelatedQuestions": "No related questions yet. Try “Quiz me” from the AI hub.",
+    "answer": "Answer",
+    "material": "Weak material"
   },
   "graph": {
     "title": "Knowledge Graph",
@@ -171,7 +175,15 @@
     "deleteConfirm": "Delete \"{{title}}\"? Progress, notes and cards for this book will be removed.",
     "deletedCount": "Deleted {{count}} books",
     "deleteSelectedTitle": "Delete selected books",
-    "deleteSelectedConfirm": "Delete {{count}} selected books? Related progress/notes/card data will be cleared."
+    "deleteSelectedConfirm": "Delete {{count}} selected books? Related progress/notes/card data will be cleared.",
+    "recall": "Recall last read",
+    "recallHide": "Hide",
+    "recallEmpty": "No reading history yet, start from the beginning.",
+    "recallFailed": "Recall failed, please retry",
+    "emptyFirst": {
+      "title": "Your shelf is empty",
+      "desc": "Import your first book to start the Read → Distill → Practice → Recall loop."
+    }
   },
   "reader": {
     "title": "Reader",
@@ -535,7 +547,21 @@
       "selfcheck": {
         "title": "Self-check",
         "desc": "Verify you truly understand"
-      }
+      },
+      "pageEntry": "Pages",
+      "practiceEntry": "Practice",
+      "practiceEntryDesc": "Feynman / case / project / compare practice",
+      "teachingEntry": "Teach the AI",
+      "teachingEntryDesc": "Explain to AI to deepen understanding"
+    },
+    "stop": "Stop",
+    "coach": {
+      "title": "Where to start?",
+      "desc": "Say it or tap — the AI coach walks you through Read → Distill → Practice → Recall."
+    },
+    "hint": {
+      "noAi": "AI is not configured yet. Set up a model to chat and practice.",
+      "configure": "Set up"
     }
   },
   "learn": {
@@ -568,7 +594,8 @@
       "mastered": "Mastered",
       "learning": "Learning",
       "weak": "Weak",
-      "none": "Not started"
+      "none": "Not started",
+      "seeAll": "Mastery detail"
     },
     "heatmap": {
       "title": "Activity Chart",
@@ -629,7 +656,8 @@
     "hard": "Hard",
     "good": "Good",
     "easy": "Easy",
-    "viewSource": "View source"
+    "viewSource": "View source",
+    "viewMastery": "View mastery"
   },
   "notes": {
     "title": "Notes",
@@ -916,7 +944,8 @@
       "deckName": "MJNexus-Review",
       "cardFileName": "review-memory-cards-{{date}}",
       "reportFileName": "review-report-{{date}}",
-      "maskReveal": "Reveal"
+      "maskReveal": "Reveal",
+      "clearWrong": "Clear"
     },
     "notes": {
       "graphTitle": "Knowledge graph",
@@ -1012,7 +1041,9 @@
       "scrollMode": "Scroll Mode",
       "aiModelSub": "Remote AI engine · OpenAI-compatible / Ollama",
       "aiModelAction": "Configure >",
-      "backupAction": "Manage >"
+      "backupAction": "Manage >",
+      "outputSub": "Exports and study reports",
+      "tagsSub": "Manage tags for notes and cards"
     },
     "readingPref": {
       "defaultView": "Default View",
@@ -1741,7 +1772,10 @@
     "inputEmpty": "Enter your answer first",
     "submit": "Submit Answer",
     "evaluating": "AI is reviewing…",
-    "evaluateFailed": "Review failed, please retry"
+    "evaluateFailed": "Review failed, please retry",
+    "fromAiHub": "Started from AI hub: {{mode}}",
+    "needAi": "This needs AI to be configured (Settings → AI capabilities).",
+    "goConfigure": "Configure"
   },
   "voicePractice": {
     "title": "Voice Quiz",
@@ -1797,7 +1831,9 @@
     "noHistory": "No past sessions",
     "historyItem": "No topic",
     "statusDone": "Done",
-    "statusActive": "Active"
+    "statusActive": "Active",
+    "fromAiHub": "Started from AI hub: you teach, AI learns",
+    "needAi": "This needs AI to be configured (Settings → AI capabilities)."
   },
   "voiceCoach": {
     "title": "Voice Coach",
