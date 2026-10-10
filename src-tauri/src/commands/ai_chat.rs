@@ -589,7 +589,24 @@ pub async fn ai_chat_stream(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(format!("AI 服务返回错误 {}: {}", status, text).into());
+        // 2026-10-10 真机修复：OpenAI 兼容 provider 的 4xx 错误体是 JSON
+        // （{"error":{"message":"...","type":...}}），原样拼接会让 AI 弹窗
+        // 展示一坨 JSON（用户报障「输出是 JSON 格式」）。此处提取 error.message
+        // 精简为用户可读文案，取不到再退回原文并截断。
+        let mut readable = text.clone();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(msg) = v
+                .pointer("/error/message")
+                .and_then(|m| m.as_str())
+                .filter(|m| !m.trim().is_empty())
+            {
+                readable = msg.to_string();
+            } else if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+                readable = msg.to_string();
+            }
+        }
+        let truncated: String = readable.chars().take(200).collect();
+        return Err(format!("AI 服务返回错误 {}: {}", status, truncated).into());
     }
 
     let mut stream = response.bytes_stream();
@@ -650,10 +667,13 @@ pub async fn ai_chat_stream(
             if let Some(data) = line.strip_prefix("data: ") {
                 let data = data.trim();
                 if data == "[DONE]" {
-                    // 正文缺失但模型只给了思考链（Nemotron 等）：把思考链作为最终答案兜底发出，
-                    // 否则用户看到「还没有对话」。思考链非答案，但聊胜于无，且落库同样兜底。
+                    // 正文缺失但模型只给了思考链（Nemotron/MiMo 等推理模型）：
+                    // 2026-10-10 真机修复——不再把思考链原文当答案兜底发出。
+                    // 推理模型的思考链常为 JSON/半成品结构，用户看到的是
+                    // 「输出是 JSON 格式」而非对话正文（真机报障根因）。
+                    // 改为：只发一行明确提示，避免误导；正文正常时不受影响。
                     if full_content.trim().is_empty() && !reasoning_full.trim().is_empty() {
-                        let fallback = reasoning_full.trim().to_string();
+                        let fallback = "（模型本次仅返回了思考过程，未生成正文回复。可重试，或在 AI 配置中改用非思考/更强模型。）".to_string();
                         full_content.push_str(&fallback);
                         let _ = app.emit("ai-chat-chunk", ChatChunkEvent {
                             conversation_id: conversation_id.clone(),

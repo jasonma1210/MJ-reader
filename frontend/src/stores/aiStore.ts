@@ -64,6 +64,13 @@ interface AIState {
   /** P0-1（2026-10-09）：停止生成。流式会话进行中 → 置位后端取消令牌 + 本地停止累积 */
   stop: () => Promise<void>;
   setProfile: (id: string | null) => void;
+  /**
+   * 2026-10-10 真机修复：从后端加载生效 profile 并写入 profileId。
+   * 此前 profileId 恒为 null（setProfile 无调用点），AI 助手弹窗的
+   * 「尚未配置 AI 服务」引导条在已配置时误显示。生效 profile 判定：
+   * isPrimary 优先，否则取第一个 hasApiKey 的配置。
+   */
+  ensureProfileId: () => Promise<void>;
   /** 打开对话面板时恢复该范围（全局/书籍）最近一次对话，使对话可持久化续接 */
   restoreRecentConversation: () => Promise<void>;
   /** 新建对话：清空当前会话，下次 send 由后端生成新会话 */
@@ -214,6 +221,18 @@ export const useAiStore = create<AIState>((set, get) => ({
   closePanel: () => set({ open: false }),
 
   setProfile: (profileId) => set({ profileId }),
+  ensureProfileId: async () => {
+    if (get().profileId) return;
+    try {
+      const profiles = await aiService.listProfiles();
+      const primary =
+        profiles.find((p) => p.isPrimary) ??
+        profiles.find((p) => p.hasApiKey);
+      if (primary) set({ profileId: primary.id });
+    } catch (e) {
+      logError("aiStore.ensureProfileId", e);
+    }
+  },
 
   restoreRecentConversation: async () => {
     const { scope } = get();

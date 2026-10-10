@@ -137,6 +137,7 @@ export function AIPanel() {
   const streaming = useAiStore((s) => s.streaming);
   const stop = useAiStore((s) => s.stop);
   const send = useAiStore((s) => s.send);
+  const ensureProfileId = useAiStore((s) => s.ensureProfileId);
   const closePanel = useAiStore((s) => s.closePanel);
   const profileId = useAiStore((s) => s.profileId);
   const startNewConversation = useAiStore((s) => s.startNewConversation);
@@ -193,6 +194,12 @@ export function AIPanel() {
       setBookInfo(null);
     }
   }, [open, scope.bookId]);
+
+  // 2026-10-10 真机修复：面板打开时从后端加载生效 profile 回填 profileId，
+  // 否则「尚未配置 AI 服务」引导条在已配置时误显示（setProfile 此前无调用点）。
+  useEffect(() => {
+    if (open) void ensureProfileId();
+  }, [open, ensureProfileId]);
 
   // ===== 选区单轮（总结/翻译/解释）+ V2 动词发起位（autoSend，chat 承载） =====
   useEffect(() => {
@@ -552,6 +559,22 @@ export function AIPanel() {
               />
             )}
           </button>
+          {/* 2026-10-10 真机反馈：阅读器「问 AI」自动带入当前书，用户误以为系统私自选中。
+              此处明确解释绑定语义，并提示可随时点 × 解除（绑定本身是 v3.0 书内问答设计）。 */}
+          {scope.bookId && bookInfo && (
+            <p className="px-0.5 text-[11px] leading-4 text-ink-muted">
+              {t("ai.panel.bookScopeHint", {
+                title: bookInfo.title,
+              })}
+              <button
+                type="button"
+                onClick={() => useAiStore.getState().applyBookScope(undefined)}
+                className="ml-1 text-accent underline-offset-2 hover:underline"
+              >
+                {t("ai.panel.bookScopeClear")}
+              </button>
+            </p>
+          )}
 
           {/* 学习工具 - 第二行 */}
           <div className="relative self-start">

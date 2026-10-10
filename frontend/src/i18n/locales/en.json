@@ -293,7 +293,9 @@
     "currentActive": "Active",
     "setActive": "Set active",
     "edit": "Edit",
-    "delete": "Delete"
+    "delete": "Delete",
+    "modelNamePlaceholder": "Provider model ID, e.g. gpt-4o-mini",
+    "mimoModelHint": "Xiaomi MiMo: use mimo-v2.5-pro or mimo-v2.6-pro (no -pro suffix is invalid). Thinking mode is on by default; retry or switch model if only reasoning is returned."
   },
   "asr": {
     "modeTitle": "Speech engine",
@@ -470,7 +472,9 @@
       "scopeBook": "Book",
       "scopeSelection": "Selection",
       "allBook": "Whole book",
-      "close": "Close panel"
+      "close": "Close panel",
+      "bookScopeHint": "Answering based on “{title}”; tap × to unbind",
+      "bookScopeClear": "Unbind"
     },
     "fab": "Open AI Assistant",
     "profiles": "Model config",

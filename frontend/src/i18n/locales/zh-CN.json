@@ -293,7 +293,9 @@
     "currentActive": "当前生效",
     "setActive": "设为生效",
     "edit": "编辑",
-    "delete": "删除"
+    "delete": "删除",
+    "modelNamePlaceholder": "填写服务商提供的模型 ID，如 gpt-4o-mini",
+    "mimoModelHint": "小米 MiMo 请填写完整模型 ID：mimo-v2.5-pro 或 mimo-v2.6-pro（不带 -pro 后缀的型号无效）；推理模型默认开启思考模式，若只返回思考链请重试或改配非思考模型。"
   },
   "asr": {
     "modeTitle": "语音识别引擎",
@@ -470,7 +472,9 @@
       "scopeBook": "本书",
       "scopeSelection": "选区",
       "allBook": "全书",
-      "close": "关闭面板"
+      "close": "关闭面板",
+      "bookScopeHint": "当前将基于《{title}》的内容回答；不带书请点右侧 ×",
+      "bookScopeClear": "解除绑定"
     },
     "fab": "唤起 AI 助手",
     "profiles": "模型配置",

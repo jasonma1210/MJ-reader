@@ -4,7 +4,7 @@ import { PowerOff } from "lucide-react";
 import { SettingsPageShell } from "../../components/shell/SettingsPageShell";
 import { EngineSwitch } from "../../components/ai-config/EngineSwitch";
 import { RemoteApiTab } from "../../components/ai-config/RemoteApiTab";
-import { getActiveProvider } from "../../services/closedLoopService";
+import { getActiveProvider, setActiveProvider } from "../../services/closedLoopService";
 import { logError } from "../../utils/logError";
 
 /**
@@ -31,6 +31,12 @@ export function RemoteApiPage() {
         ? t("aiConfig.providerOllama")
         : "";
 
+  // 真机修复（2026-10-10）：locked 下点模型启用开关 → 先切回远程 API 引擎再启用模型
+  const activateRemoteApi = async () => {
+    await setActiveProvider("remote_api");
+    setProvider("remote_api");
+  };
+
   return (
     <SettingsPageShell
       title={t("aiConfig.tabRemote")}
@@ -49,7 +55,7 @@ export function RemoteApiPage() {
           </div>
         </div>
       )}
-      <RemoteApiTab locked={locked} />
+      <RemoteApiTab locked={locked} onActivate={activateRemoteApi} />
     </SettingsPageShell>
   );
 }

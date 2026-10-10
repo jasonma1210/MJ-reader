@@ -9,6 +9,12 @@ import { AIModelConfig } from "../me/AIModelConfig";
  * 2026-09-04 三源互斥：locked=true（端侧推理 / Ollama 生效中）时，
  * 所有启用开关强制呈关闭态且不可操作（配置保留，切回远程 API 自动恢复）。
  */
-export function RemoteApiTab({ locked = false }: { locked?: boolean }) {
-  return <AIModelConfig locked={locked} />;
+export function RemoteApiTab({
+  locked = false,
+  onActivate,
+}: {
+  locked?: boolean;
+  onActivate?: () => Promise<void>;
+}) {
+  return <AIModelConfig locked={locked} onActivate={onActivate} />;
 }
