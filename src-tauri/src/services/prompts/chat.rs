@@ -102,7 +102,9 @@ impl PersonaKind {
         }
     }
 
-    /// 稳定标识（settings KV 存储用）。
+    /// 稳定标识（settings KV 存储用）。2026-11-19：现仅测试引用（round-trip 契约），
+    /// 标注 cfg(test) 消除 dead_code 警告；生产序列化走 build_persona_appendix。
+    #[cfg(test)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::College => "college",

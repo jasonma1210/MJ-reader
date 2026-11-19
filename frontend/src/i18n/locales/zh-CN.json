@@ -167,6 +167,7 @@
     "chapters": "章",
     "continueCardSubtitle": "上次读到",
     "resumePreciseSubtitle": "精读续接：{{chapter}}",
+    "resumePreciseSubtitlePos": "精读续接：按进度位置",
     "focusPreset": "专注时长",
     "focusMinutes": "{{count}} 分钟",
     "recentLearning": "最近学习",

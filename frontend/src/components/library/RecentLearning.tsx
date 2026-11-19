@@ -142,7 +142,9 @@ export function RecentLearning({ book, due = 0 }: { book: Book; due?: number }) 
             {book.title}
           </div>
           <div className="truncate text-ink-muted" style={{ fontSize: "var(--fs-li-sub)" }}>
-            {t("library.resumePreciseSubtitle", { chapter: book.currentChapter ?? "—" })}
+            {book.currentChapter?.trim()
+              ? t("library.resumePreciseSubtitle", { chapter: book.currentChapter })
+              : t("library.resumePreciseSubtitlePos")}
           </div>
           <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-line-soft">
             <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />

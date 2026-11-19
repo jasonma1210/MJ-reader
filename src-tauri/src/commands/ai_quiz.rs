@@ -1282,6 +1282,9 @@ pub async fn delete_quiz_question(
 
 /// v2.2（文档 2 #10）：题库程序级查重（Rust 侧，与前端 src/utils/quizDedup.ts 同算法）。
 /// 归一化（小写+去空白+去标点）→ bigram → Dice 系数 ≥0.75 判重。
+/// 2026-11-19：生产调用点已切换为分组查重 [`is_duplicate_question_by_point`]，
+/// 本函数仅测试引用（回归契约不得改红），标注 cfg(test) 消除 dead_code 警告。
+#[cfg(test)]
 pub(crate) fn is_duplicate_question(candidate: &str, existing: &[String]) -> bool {
     let cand_grams = grams(&norm_quiz_text(candidate));
     if cand_grams.is_empty() {

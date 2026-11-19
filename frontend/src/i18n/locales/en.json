@@ -167,6 +167,7 @@
     "chapters": "ch",
     "continueCardSubtitle": "Last read",
     "resumePreciseSubtitle": "Resume: {{chapter}}",
+    "resumePreciseSubtitlePos": "Resume: by saved position",
     "focusPreset": "Focus duration",
     "focusMinutes": "{{count}} min",
     "recentLearning": "Recent Learning",

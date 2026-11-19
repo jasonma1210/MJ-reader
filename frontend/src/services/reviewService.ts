@@ -117,10 +117,12 @@ export const reviewService = {
    * 即书架「8 到期」的来源。现改走 due_counts_by_book 真实聚合。
    */
   async dueCount(bookId?: string): Promise<number> {
-    if (!bookId) return 0;
     if (!isTauri()) return 0;
     const counts = await cardService.dueCountsByBook();
-    return counts[bookId] ?? 0;
+    // 无 bookId = 全局待复习（各书到期和），供学习页统计卡使用；
+    // 有 bookId 仍返回单书计数（useRecentLearning 角标）。
+    if (bookId) return counts[bookId] ?? 0;
+    return Object.values(counts).reduce((a, b) => a + b, 0);
   },
 
   /** 本书复习历史（list_review_history） */
