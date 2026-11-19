@@ -28,6 +28,14 @@ export interface ResumeAnchor {
   title: string | null;
 }
 
+/** 续读副标题 i18n 键（空章节显式降级「按进度位置」，不显无意义破折号） */
+export type ResumeSubtitleKey = "library.resumePreciseSubtitle" | "library.resumePreciseSubtitlePos";
+
+/** 纯函数：按有无章节名选副标题键（单测锁定降级规则） */
+export function resumeSubtitleKey(chapter: string | null | undefined): ResumeSubtitleKey {
+  return chapter?.trim() ? "library.resumePreciseSubtitle" : "library.resumePreciseSubtitlePos";
+}
+
 /**
  * P2-1 纯函数：从阅读进度解析精确还原锚点。
  * - cfi 非空 → 直接用（EPUB 精确定位）；
@@ -142,8 +150,8 @@ export function RecentLearning({ book, due = 0 }: { book: Book; due?: number }) 
             {book.title}
           </div>
           <div className="truncate text-ink-muted" style={{ fontSize: "var(--fs-li-sub)" }}>
-            {book.currentChapter?.trim()
-              ? t("library.resumePreciseSubtitle", { chapter: book.currentChapter })
+            {resumeSubtitleKey(book.currentChapter) === "library.resumePreciseSubtitle"
+              ? t("library.resumePreciseSubtitle", { chapter: book.currentChapter!.trim() })
               : t("library.resumePreciseSubtitlePos")}
           </div>
           <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-line-soft">

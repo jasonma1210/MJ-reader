@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   resolveResumeAnchor,
   loadFocusPreset,
+  resumeSubtitleKey,
   FOCUS_PRESETS,
 } from "../components/library/RecentLearning";
 
@@ -74,5 +75,18 @@ describe("P2-1 loadFocusPreset", () => {
       localStorage.setItem("mjnexus.focusPreset", bad);
       expect(loadFocusPreset()).toBe(10);
     }
+  });
+});
+
+describe("P2-1 resumeSubtitleKey（空章节降级文案键，回归锁：不显无意义破折号）", () => {
+  it("⑤有章节名 → 带章节名键", () => {
+    expect(resumeSubtitleKey("第一章")).toBe("library.resumePreciseSubtitle");
+  });
+
+  it("⑥空串/纯空白/undefined/null → 按进度位置键", () => {
+    expect(resumeSubtitleKey("")).toBe("library.resumePreciseSubtitlePos");
+    expect(resumeSubtitleKey("   ")).toBe("library.resumePreciseSubtitlePos");
+    expect(resumeSubtitleKey(undefined)).toBe("library.resumePreciseSubtitlePos");
+    expect(resumeSubtitleKey(null)).toBe("library.resumePreciseSubtitlePos");
   });
 });
