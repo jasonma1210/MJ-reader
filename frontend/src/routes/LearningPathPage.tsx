@@ -100,12 +100,9 @@ export function LearningPathPage() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-auto bg-paper px-4 pb-4 pt-3">
-      {/* 二级页返回栏（2026-09-04 用户反馈：学习路径无返回键） */}
+      {/* 二级页返回栏（2026-09-04 用户反馈：学习路径无返回键）；标题只在此处渲染，下方不再重复 h1 */}
       <SubBackHeader titleKey="path.title" onBack={() => navigate(-1)} />
-      <div className="flex items-center justify-between">
-        <h1 className="font-extrabold text-ink" style={{ fontSize: "var(--fs-appbar-h1)" }}>
-          {t("path.title")}
-        </h1>
+      <div className="flex items-center justify-end">
         <Button size="sm" iconLeft={<Plus className="h-4 w-4" />} onClick={() => setGenOpen(true)}>
           {t("path.new")}
         </Button>

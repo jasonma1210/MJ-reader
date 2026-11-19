@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use tauri::State;
 
+use crate::commands::knowledge_node::update_mastery_inner;
 use crate::db::soft_delete::visible_join_books;
 use crate::error::{AppError, AppResult};
 use crate::AppState;
@@ -194,8 +195,13 @@ async fn collect_dependency_edges(pool: &SqlitePool) -> Vec<DepEdge> {
     out
 }
 
-/// 复习后增量更新节点掌握度：0.02 学习率、total_reviews+1、遗忘概率上下调。
+/// 复习后增量更新节点掌握度（P0-B：退化为薄封装）。
+///
+/// 概率由 knowledge_node::compute_prob 统一定值、mastery_score 统一到 inner 的
+/// 阶梯口径——消除本函数原有的独立概率/分数算法双真源。命令名与签名保持不变
+/// （`score` 仅为前端兼容保留，不再参与计算），前端零改动。
 #[tauri::command]
+#[allow(unused_variables)]
 pub async fn update_mastery_from_review(
     node_id: String,
     score: f64,
@@ -203,40 +209,15 @@ pub async fn update_mastery_from_review(
     state: State<'_, AppState>,
 ) -> AppResult<MasteryNode> {
     let pool = &*state.db;
-    // 锁行读取当前掌握度
-    let only_new = sqlx::query(
-        "SELECT id, mastery_score, total_reviews, predicted_forgetting_prob FROM knowledge_nodes WHERE id = ?",
-    )
-    .bind(&node_id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::General(format!("未找到知识节点 {}", node_id)))?;
-    let cur_score: f64 = only_new.try_get("mastery_score").unwrap_or(0.0);
-    let cur_reviews: i64 = only_new.try_get("total_reviews").unwrap_or(0);
-    let cur_prob: f64 = only_new.try_get("predicted_forgetting_prob").unwrap_or(0.0);
-
-    let score_percent = (score / 100.0).clamp(0.0, 1.0);
-    let new_score = (cur_score + (score_percent - cur_score) * 0.02).clamp(0.0, 1.0);
-    let new_prob = if forgot {
-        (cur_prob + 0.1).min(1.0)
-    } else {
-        (cur_prob - 0.05).max(0.0)
-    };
-    let now = chrono::Utc::now().timestamp();
-    sqlx::query(
-        "UPDATE knowledge_nodes SET
-            mastery_score = ?, total_reviews = ?,
-            predicted_forgetting_prob = ?, last_review_at = ?, updated_at = ?
-         WHERE id = ?",
-    )
-    .bind(new_score)
-    .bind(cur_reviews + 1)
-    .bind(new_prob)
-    .bind(now)
-    .bind(now)
-    .bind(&node_id)
-    .execute(pool)
-    .await?;
+    // inner 以 (book_id, node_id) 定位节点，先取出 book_id。
+    let book_id: String = sqlx::query_scalar("SELECT book_id FROM knowledge_nodes WHERE id = ?")
+        .bind(&node_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::General(format!("未找到知识节点 {}", node_id)))?;
+    // forgot 决定方向：遗忘即答错；分数仍由 inner 的阶梯 delta 口径处理。
+    let correct = !forgot;
+    update_mastery_inner(pool, &book_id, &node_id, "flashcard_review", correct, forgot).await?;
 
     // 返回更新后的整行
     let join = visible_join_books("b", "kn.book_id");

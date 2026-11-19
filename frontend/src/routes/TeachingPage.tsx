@@ -12,7 +12,10 @@ import {
 import { KnowledgeNodeSelect } from "../components/learn/KnowledgeNodeSelect";
 import { useAiStore } from "../stores/aiStore";
 import { VoiceInteractionRecorder } from "../components/voice/VoiceInteractionRecorder";
-import { updateKnowledgeMastery } from "../services/closedLoopService";
+import {
+  isTeachingMasteryCorrect,
+  updateKnowledgeMastery,
+} from "../services/closedLoopService";
 import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 import { EmptyState, ErrorState } from "../components/common/states";
@@ -99,9 +102,15 @@ export function TeachingPage() {
       const s = await teachingFinish(session.id);
       if (s) setSession(s);
       void loadHistory();
-      // P0-1（2026-10-09）：结课回写掌握度（教学成功 = 对目标知识点的正向贡献，尽力而为）
+      // P0-1（2026-10-09）：结课回写掌握度（尽力而为）。
+      // P0-E：correct 由三围评分推导，不再写死 true（低分结课不回写为「会」）。
       if (s?.status === "done" && s.targetKnowledgeId && targetBookId) {
-        updateKnowledgeMastery(targetBookId, s.targetKnowledgeId, "teaching", true).catch(
+        const correct = isTeachingMasteryCorrect({
+          clarityScore: s.clarityScore,
+          completenessScore: s.completenessScore,
+          accuracyScore: s.accuracyScore,
+        });
+        updateKnowledgeMastery(targetBookId, s.targetKnowledgeId, "teaching", correct).catch(
           (e) => logError("TeachingPage.mastery", e),
         );
       }

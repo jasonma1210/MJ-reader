@@ -15,6 +15,9 @@ use crate::commands::ai_breakdown::{assess_extracted_text_quality, TextQuality};
 use crate::error::{AppError, AppResult};
 use crate::services::ai_profiles;
 use crate::services::agent_pool::{FailureKind, MAX_AGENTS};
+use crate::services::prompts::{
+    build_persona_appendix, is_valid_local_short, ChatPersonaAppendix, PersonaKind,
+};
 use crate::services::llm_budget::{
     apply_thinking_off, budget_for_attempt, is_unknown_field_error, sanitize_max_tokens,
     strip_thinking_off, LlmBudget, ReasoningMode, MIN_MAX_TOKENS,
@@ -1334,6 +1337,96 @@ pub(crate) async fn load_system_prompt_overrides(db: &SqlitePool) -> SystemPromp
         Some(v) => serde_json::from_str(&v).unwrap_or_default(),
         None => SystemPromptOverrides::default(),
     }
+}
+
+/// P2-2（2026-11-19）：人群画像附录 settings KV 键。
+const CHAT_PERSONA_KEY: &str = "chat_persona_appendix";
+
+/// 读取人群画像附录（settings 表，JSON 形如 `{"short":"...","full":"..."}`）。
+/// fail-closed 校验：`short` 必须通过 `is_valid_local_short`（≤120 字纯文本、
+/// 禁结构化标记），不合法按无 short 处理；`full` 超 800 字截断保护。
+/// 行缺失/JSON 损坏 → None（不注入，行为与无画像一致）。
+pub(crate) async fn load_chat_persona_appendix(db: &SqlitePool) -> Option<ChatPersonaAppendix> {
+    let value: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+            .bind(CHAT_PERSONA_KEY)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+    let parsed: ChatPersonaAppendix = serde_json::from_str(&value?).ok()?;
+    let short = if is_valid_local_short(&parsed.short) {
+        parsed.short.trim().to_string()
+    } else {
+        String::new()
+    };
+    let full: String = {
+        let f = parsed.full.trim();
+        if f.is_empty() {
+            String::new()
+        } else {
+            f.chars().take(800).collect()
+        }
+    };
+    if short.is_empty() && full.is_empty() {
+        return None;
+    }
+    Some(ChatPersonaAppendix { short, full })
+}
+
+/// 保存人群画像（settings KV upsert）。`persona` 为画像标识
+/// （college/postgrad/social）；传空串或未知标识 → 清除画像。
+#[tauri::command]
+pub async fn save_chat_persona(
+    persona: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let db = &*state.db;
+    let value = match PersonaKind::parse(&persona) {
+        Some(kind) => {
+            let appendix = build_persona_appendix(kind);
+            serde_json::to_string(&appendix)
+                .map_err(|e| AppError::General(format!("序列化画像附录失败: {e}")))?
+        }
+        None => String::new(),
+    };
+    if value.is_empty() {
+        sqlx::query("DELETE FROM settings WHERE key = ?")
+            .bind(CHAT_PERSONA_KEY)
+            .execute(db)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO settings (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(CHAT_PERSONA_KEY)
+        .bind(&value)
+        .execute(db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// 查询当前画像标识（前端回显用；无画像返回空串）。
+#[tauri::command]
+pub async fn get_chat_persona(state: State<'_, AppState>) -> AppResult<String> {
+    let db = &*state.db;
+    let value: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+        .bind(CHAT_PERSONA_KEY)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+    let Some(v) = value else {
+        return Ok(String::new());
+    };
+    // 存的是附录 JSON，short 与 full 同时非空即视为已设置；具体哪一档由前端
+    // commuteStore 持久化（settings 只存生效附录，避免双向同步漂移）。
+    Ok(match serde_json::from_str::<ChatPersonaAppendix>(&v) {
+        Ok(a) if !a.short.is_empty() || !a.full.is_empty() => "custom".to_string(),
+        _ => String::new(),
+    })
 }
 
 /// v3.1：一次读取「连接参数 + 输出预算 + 推理模式 + 并发上限」。

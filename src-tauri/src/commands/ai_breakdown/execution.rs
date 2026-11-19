@@ -1705,6 +1705,52 @@ pub async fn ai_book_breakdown_inner(
             log::warn!("[ai_book_breakdown] 第 {} 章分析文本入库失败：{}", i + 1, e);
         }
 
+        // 8.3.5.1 P0-D（拆书三字段进 FSRS）：记忆点 / 考点 → 复习卡。
+        // memory_points 此前只落 book_breakdowns 供展示；exam_point 只随 extra_json 落地。
+        // 这里把二者映射成与 concept 同构的卡（cards + flashcards + card_scheduling），
+        // 使拆书完成后复习队列可观测增长；确定性 uid + 唯一索引保证重拆不重复入库。
+        let mut point_cards: Vec<(String, String, String)> =
+            Vec::with_capacity(payload.memory_points.len() + payload.exam_point.len());
+        for memory_point in &payload.memory_points {
+            let text = memory_point.trim();
+            if text.is_empty() {
+                continue;
+            }
+            point_cards.push(("memory".into(), text.to_string(), text.to_string()));
+        }
+        for exam_point in &payload.exam_point {
+            let text = exam_point.content.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let frequency = exam_point.frequency.trim();
+            let labeled = if frequency.is_empty() {
+                text.to_string()
+            } else {
+                format!("{text}（考频：{frequency}）")
+            };
+            point_cards.push(("exam".into(), labeled.clone(), labeled));
+        }
+        if !point_cards.is_empty() {
+            match mirror_breakdown_points_to_cards(
+                db,
+                &book_id,
+                Some(&study_set_id),
+                i,
+                &point_cards,
+                now2,
+            )
+            .await
+            {
+                Ok(n) => cards_created += n,
+                Err(e) => log::warn!(
+                    "[ai_book_breakdown] 第 {} 章记忆点/考点转卡失败：{}",
+                    i + 1,
+                    e
+                ),
+            }
+        }
+
         // 8.3.6 v1.6.1：章节语义知识图谱入库（方案文档——图谱不能独立看，
         // 要和拆书文本/脑图/题库联动；存 graph_json，get_book_breakdown_chunk 按章读回）
         if let Some(graph) = &payload.knowledge_graph {

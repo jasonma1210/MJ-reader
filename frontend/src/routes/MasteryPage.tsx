@@ -17,6 +17,8 @@ import {
 import { useAiStore } from "../stores/aiStore";
 import { verbPrompt } from "../ai/router";
 import { listQuestionsForKnowledgePoint, getWeakNodesMaterial } from "../services/closedLoopService";
+import { cardService } from "../services/cardService";
+import { useJumpToSource } from "../hooks/useJumpToSource";
 import { logError } from "../utils/logError";
 
 function pct(v: number | null | undefined): string {
@@ -36,6 +38,43 @@ function bucketColor(score: number): string {
   if (score >= 0.6) return "var(--mastery-learning)";
   if (score >= 0.4) return "var(--mastery-weak)";
   return "var(--mastery-none)";
+}
+
+/**
+ * P0-F：薄弱点 → 原文 cfi 反查（对齐 KnowledgeGraphPage.onNodeClick 的 relatedCardIds 反查）。
+ * MasteryNode 自身无 cfiRange / relatedCardIds，但同一 knowledge_nodes 表 id 对应的
+ * BookKnowledgeNode 携带 relatedCardIds：由 (bookId, id) 定位节点 → 取首张关联卡 →
+ * cardService.listByBook 反查其 cfiRange。任一步缺失或查询失败 → 返回 null，
+ * 调用方降级为 jumpToSource(bookId)（仅跳书，阅读器恢复上次进度）。
+ * 抽成注入 listByBook 的纯函数，便于单测覆盖反查与降级路径。
+ */
+export async function resolveMasteryCfi(
+  bookNodes: Record<string, BookKnowledgeNode[]>,
+  node: Pick<MasteryNode, "id" | "bookId">,
+  listByBook: (bookId: string) => Promise<Array<{ id: string; cfiRange?: string | null }>>,
+  log?: (context: string, error: unknown) => void,
+): Promise<string | null> {
+  if (!node.bookId || !node.id) return null;
+  const bookNode = (bookNodes[node.bookId] ?? []).find((n) => n.id === node.id);
+  if (!bookNode) return null;
+  let cardIds: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(bookNode.relatedCardIds || "[]");
+    if (Array.isArray(parsed)) {
+      cardIds = parsed.filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    return null;
+  }
+  const cardId = cardIds[0];
+  if (!cardId) return null;
+  try {
+    const cards = await listByBook(node.bookId);
+    return cards.find((c) => c.id === cardId)?.cfiRange ?? null;
+  } catch (e) {
+    log?.("MasteryPage.viewSource", e);
+    return null;
+  }
 }
 
 interface BookStat {
@@ -67,6 +106,8 @@ function computeBookStats(nodes: BookKnowledgeNode[], titleMap: Record<string, s
 export function MasteryPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  /** P0-F：薄弱点一键回原文（统一跳转入口，与复习卡 / 图谱共用） */
+  const jumpToSource = useJumpToSource();
   const { books, load: loadBooks } = useLibraryStore();
   const openPanel = useAiStore((s) => s.openPanel);
   const [dash, setDash] = useState<MasteryDashboard | null>(null);
@@ -238,6 +279,16 @@ export function MasteryPage() {
     setNodeQuestions([]);
   };
 
+  /** P0-F：薄弱点回原文——反查 cfi 精确定位；拿不到则降级为跳书恢复进度 */
+  const viewSource = () => {
+    if (!selected || !selected.bookId) return;
+    const bookId = selected.bookId;
+    void resolveMasteryCfi(bookNodes, selected, cardService.listByBook, logError).then((cfi) => {
+      jumpToSource(bookId, cfi);
+    });
+    closeHistory();
+  };
+
   const weakTop = dash?.weakTop ?? [];
   const forgetting = dash?.forgettingNodes ?? [];
   const depEdges = dash?.dependencyEdges ?? [];
@@ -374,6 +425,16 @@ export function MasteryPage() {
               }}
             >
               {t("mastery.quizMeThis")}
+            </Button>
+            {/* P0-F：一键回原文——relatedCardIds 反查 cfi 精确定位，拿不到则降级跳书 */}
+            <Button
+              size="sm"
+              variant="secondary"
+              iconLeft={<BookOpen className="h-3.5 w-3.5" />}
+              onClick={viewSource}
+              disabled={!selected.bookId}
+            >
+              {t("review.viewSource")}
             </Button>
           </div>
         </div>

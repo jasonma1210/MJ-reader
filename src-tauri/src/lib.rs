@@ -130,9 +130,8 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data_dir).ok();
 
-            // v3.4 实现：Edge TTS —— 安装 rustls ring crypto provider（幂等），
-            // 必须在首次 tts_synthesize 前的任何 TLS 握手前调用。
-            kothok_edge_tts::init_tls();
+            // Edge TTS 迁移到 edge-tts-rust（V2）：其 reqwest use_rustls_tls()
+            // 自行处理 crypto provider，无需再手动 init_tls()。
 
             // BE-02 修复（2026-08-05 审计）：初始化 Argon2id 持久化随机盐
             // （所有 AES-256-GCM 密钥派生依赖该盐，必须在首次 encrypt/decrypt 前调用）
@@ -568,6 +567,8 @@ pub fn run() {
             // T03（2026-08-14 Gaps 批次）：R11 三源单生效裁决
             ai_core::get_active_provider,
             ai_core::set_active_provider,
+            ai_core::save_chat_persona,
+            ai_core::get_chat_persona,
             // Ollama 专属配置（2026-09-04）：地址/模型持久化 + 连接测试 + /api/tags 模型列表
             ollama_config::ollama_load_config,
             ollama_config::ollama_save_config,

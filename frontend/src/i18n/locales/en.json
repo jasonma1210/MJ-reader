@@ -45,6 +45,12 @@
     "restart": "Restart",
     "loadMore": "Load more"
   },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "desc": "An error occurred while rendering. You can retry, or clear the onboarding cache and start over.",
+    "retry": "Retry",
+    "retryClearOnboarding": "Clear onboarding cache & retry"
+  },
   "tags": {
     "title": "Tags",
     "searchPlaceholder": "Search tags…",
@@ -160,6 +166,9 @@
     "empty": "Your library is empty. Import a book to start.",
     "chapters": "ch",
     "continueCardSubtitle": "Last read",
+    "resumePreciseSubtitle": "Resume: {{chapter}}",
+    "focusPreset": "Focus duration",
+    "focusMinutes": "{{count}} min",
     "recentLearning": "Recent Learning",
     "recentNotes": "Notes",
     "recentNotesHint": "Back to this book's notes",
@@ -438,9 +447,21 @@
     "boardFailed": "Failed to add to board",
     "makeCard": "Make card",
     "quizMe": "Quiz me",
-    "breakdown": "Break this",
     "cardSaved": "Saved to review queue",
-    "cardFailed": "Failed to create card, please retry"
+    "cardFailed": "Failed to create card, please retry",
+    "inline": {
+      "explain": "Inline explanation",
+      "summary": "Inline summary",
+      "translate": "Inline translation"
+    },
+    "inlineLoading": "Generating…",
+    "inlineFailed": "Generation failed",
+    "inlineClose": "Close inline result",
+    "inlineSaveNote": "Save as note",
+    "inlineAttachHl": "Attach to highlight",
+    "inlineNoteSaved": "Saved as note",
+    "inlineHlAttached": "Attached to highlight note",
+    "inlineSaveFailed": "Save failed, please retry"
   },
   "ai": {
     "title": "AI Assistant",
@@ -491,9 +512,6 @@
       "ask": {
         "label": "Ask"
       },
-      "breakdown": {
-        "label": "Break down"
-      },
       "makeCard": {
         "label": "Make card"
       },
@@ -503,15 +521,17 @@
       "quizMe": {
         "label": "Quiz me"
       },
-      "coach": {
-        "label": "Coach me"
-      },
-      "plan": {
-        "label": "Plan"
-      },
-      "diagnose": {
-        "label": "Diagnose"
-      }
+      "quizDone": "Generated {{n}} questions, added to the question bank",
+      "cardDone": "Card created and added to your review queue",
+      "quizDegrade": "No book bound or no selection — returned as AI advice. Bind a book or select text to generate with one tap.",
+      "cardDegrade": "No highlight available to turn into a card — returned as AI advice. Highlight text in the reader to create one with a tap.",
+      "commandFailed": "Command failed; the AI reply is unaffected. Please retry.",
+      "goPractice": "Practice",
+      "oneClickQuiz": "Generate quiz",
+      "oneClickCard": "Make card",
+      "adviceTitle": "AI advice: chat reply only, no learning data is written",
+      "commandTitle": "Real command: writes learning data (questions/cards)",
+      "adviceBadge": "advice"
     },
     "voice": {
       "cancelled": "Cancelled"
@@ -566,7 +586,7 @@
     "stop": "Stop",
     "coach": {
       "title": "Where to start?",
-      "desc": "Say it or tap — the AI coach walks you through Read → Distill → Practice → Recall."
+      "desc": "Start by selecting text in the book; only quiz and card actions write learning data."
     },
     "hint": {
       "noAi": "AI is not configured yet. Set up a model to chat and practice.",
@@ -666,7 +686,9 @@
     "good": "Good",
     "easy": "Easy",
     "viewSource": "View source",
-    "viewMastery": "View mastery"
+    "viewMastery": "View mastery",
+    "masteryNoBook": "Cannot write back mastery: card has no associated book",
+    "masteryNoNode": "Cannot write back mastery: no linked knowledge node found"
   },
   "notes": {
     "title": "Notes",
@@ -2026,7 +2048,26 @@
   "focus": {
     "title": "Focus Mode",
     "report": "Reading Report",
-    "exit": "Exit"
+    "exit": "Exit",
+    "timeUp": "Focus session complete"
+  },
+  "commute": {
+    "title": "Commute Mode",
+    "entry": "Commute",
+    "exit": "Exit commute mode",
+    "personaLabel": "Persona",
+    "persona": {
+      "college": "College",
+      "postgrad": "Postgrad",
+      "social": "Self-learner"
+    },
+    "startListen": "Start voice question",
+    "stopListen": "Stop recording",
+    "tapToSpeak": "Tap to speak your question",
+    "listening": "Listening…",
+    "thinking": "Thinking…",
+    "speaking": "Reading answer…",
+    "stopSpeak": "Stop speaking"
   },
   "quiz": {
     "tokenCostWarning": "Generating questions costs AI tokens (~100-200 per question). Continue?"

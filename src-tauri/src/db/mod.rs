@@ -30,7 +30,7 @@ use std::str::FromStr;
 ///   lan_file_server / local_model_runtime 四张新表（端侧推理 + 局域网文件服务器）
 ///
 /// 后续版本示例：v1.1.3 → 2，v1.2.0 → 3
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 27;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 29;
 
 /// 契约 §2 强制列清单（22 列）——所有 `INSERT INTO cards` 必须一列不少。
 ///
@@ -285,6 +285,24 @@ async fn backup_db_before_migration(pool: &SqlitePool, db_path: &Path) -> Result
 /// v1.1.2 审计修复：迁移受 schema_version 版本号控制；若已应用至目标版本则提前返回，
 /// 避免每次启动都执行 30+ 次 PRAGMA 查询（性能优化）。所有 migrate_add_column
 /// 调用本身仍为幂等（列存在则跳过），确保升级路径的可靠性。
+/// v28（P0-B 掌握度真源统一）：历史遗忘概率回填。
+///
+/// 老库里从未复习过的节点 predicted_forgetting_prob 恒为默认 0，遗忘节点看板取不到
+/// 真数据。用已达成的 mastery_score 反推初始遗忘概率（1 - score）。
+/// 幂等：只处理 (prob=0 或 NULL) 且 total_reviews=0 的行；回填后 prob=1-score，
+/// 除 score=1（1-1=0，仍命中但结果不变）外均不再命中，重复执行结果一致。
+pub(crate) async fn backfill_forgetting_prob(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE knowledge_nodes
+         SET predicted_forgetting_prob = 1.0 - mastery_score
+         WHERE (predicted_forgetting_prob = 0 OR predicted_forgetting_prob IS NULL)
+           AND total_reviews = 0",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // v1.1.2 审计修复：版本号快速路径 — 若已应用至目标版本则直接跳过
     let current_version = get_schema_version(pool).await?;
@@ -911,6 +929,26 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error>
     migrate_add_column(pool, "annotations", "context_start_page", "INTEGER").await?;
     migrate_add_column(pool, "annotations", "context_end_page", "INTEGER").await?;
     migrate_add_column(pool, "annotations", "context_excerpt", "TEXT").await?;
+
+    // ===== v28（P0-B 掌握度真源统一）：历史遗忘概率回填（幂等） =====
+    // 把「已知掌握度但 prob 仍为默认 0」的历史节点按 1-mastery_score 回填，
+    // 使遗忘节点看板首次启动即有真数据；重复执行结果一致。
+    backfill_forgetting_prob(pool).await?;
+
+    // ===== v29（P0-D 拆书三字段进 FSRS）：派生卡唯一索引兜底 =====
+    // 拆书 memory_points / exam_point 派生卡用确定性 uid（bkcard-*）+
+    // INSERT OR IGNORE 防重；本唯一索引是第二道兜底，防止清理失败或并发时
+    // 同书同章同类型同标题落两张卡。
+    // 刻意做成「部分索引」：仅覆盖带 pointKind 的拆书派生卡（既有 concept 卡
+    // 随机 uid、无 pointKind，不受约束）。这样老库升级绝不会因历史重复数据
+    // 导致 CREATE UNIQUE INDEX 失败而启动崩溃；四列组合完整保留，字段均非 NULL。
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_breakdown_point_unique \
+         ON cards(book_id, source_locator, card_type, title) \
+         WHERE book_id IS NOT NULL AND source_locator LIKE '%\"pointKind\"%'",
+    )
+    .execute(pool)
+    .await?;
 
     set_schema_version(pool, CURRENT_SCHEMA_VERSION).await?;
     log::info!(
@@ -2128,6 +2166,9 @@ mod tests {
             "DROP TABLE reader_state",
             "DROP TABLE card_scheduling",
             "DROP INDEX idx_study_sets_book",
+            // v29：本索引依赖 cards.source_locator，须先删，否则 DROP COLUMN 报
+            // "error in index ... after drop column"；run_migrations 会重建它。
+            "DROP INDEX IF EXISTS idx_cards_breakdown_point_unique",
             "ALTER TABLE reading_progress DROP COLUMN cfi",
             "ALTER TABLE reading_progress DROP COLUMN anchor_type",
             "ALTER TABLE study_sets DROP COLUMN book_id",

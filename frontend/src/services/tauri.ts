@@ -292,6 +292,8 @@ export const CMD = {
   getBookStats: "get_book_stats",
   getActiveProvider: "get_active_provider",
   setActiveProvider: "set_active_provider",
+  saveChatPersona: "save_chat_persona",
+  getChatPersona: "get_chat_persona",
   loadAiConfig: "load_ai_config_cmd",
   saveAiConfig: "save_ai_config",
   // ===== 端侧推理（2026-09-04 接线；命令随 llamacpp feature 门控，iOS 包会返回命令不存在） =====

@@ -243,6 +243,139 @@ pub async fn clear_ai_flashcards_on_rebreak(
     Ok(())
 }
 
+// ===== P0-D（拆书三字段进 FSRS）=====
+//
+// 拆书产物里的 memory_points / extra.exam_point 此前只落 `book_breakdowns`
+// （仅展示），不进复习队列。下面把二者映射成与 concept 卡同构的卡片，
+// 并复用 `mirror_concept_card_to_flashcards` 打进 flashcards，再补写
+// `card_scheduling`，使「拆完即可复习」在复习队列里可观测增长。
+//
+// 幂等双保险：
+// 1. 确定性 uid（`breakdown_point_card_uid`）——同书同章同类型同内容必得同一 uid；
+// 2. `INSERT OR IGNORE` + 唯一索引 `idx_cards_breakdown_point_unique` 兜底。
+// 重拆清理沿用现有路径：card_type 仍为 'concept'、source_locator 含
+// `"kind":"breakdown"`，故 `clear_ai_flashcards_on_rebreak` 与重拆时
+// `DELETE FROM cards ... card_type='concept' AND source_locator LIKE ...` 均能覆盖，
+// 不触碰 learner 手动卡（card_type 非 concept / 无 breakdown 锚点 / is_ai_generated=0）。
+
+/// P0-D：拆书派生卡的确定性 uid（纯函数，可单测）。
+///
+/// `bkcard-{kind}-{sha256(domain|book_id|kind|chapter|content) 前 16 字节 hex}`。
+/// 同输入恒定同输出；跨书 / 跨章 / 跨字段 / 跨内容互不碰撞。trim 内容，
+/// 避免 LLM 偶发尾随空格导致同一条记忆点生成两张卡。
+pub fn breakdown_point_card_uid(
+    book_id: &str,
+    kind: &str,
+    chapter_index: usize,
+    content: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"mjnexus-breakdown-point-v1\0");
+    hasher.update(book_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(kind.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(chapter_index.to_string().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(content.trim().as_bytes());
+    let digest = hasher.finalize();
+    let hex: String = digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{:02x}", byte))
+        .collect();
+    format!("bkcard-{kind}-{hex}")
+}
+
+/// P0-D：把一章拆出的记忆点 / 考点映射成带 breakdown 锚点的复习卡。
+///
+/// `points` 每项为 `(kind, title, content)`，kind 取 `"memory"` / `"exam"`。
+/// 三写与现有制卡路径一致：`cards` 主表 + `flashcards` 兼容表（复用 concept 镜像）
+/// + `card_scheduling` 调度表（复习队列按该表 due_date 出队）。
+/// 返回实际新建卡数；重复调用同输入返回 0，不产生重复卡 / 重复闪卡。
+pub async fn mirror_breakdown_points_to_cards(
+    db: &SqlitePool,
+    book_id: &str,
+    study_set_id: Option<&str>,
+    chapter_index: usize,
+    points: &[(String, String, String)],
+    now: i64,
+) -> Result<usize, AppError> {
+    let mut created = 0usize;
+    for (kind, title, content) in points {
+        let uid = breakdown_point_card_uid(book_id, kind, chapter_index, content);
+        // 确定性锚点：kind 固定 "breakdown" 供现有清理 LIKE 命中；
+        // pointKind 区分记忆点 / 考点，并供唯一索引限定作用域。
+        let source_locator = serde_json::json!({
+            "kind": "breakdown",
+            "chapterIndex": chapter_index,
+            "chunkIndex": chapter_index,
+            "pointKind": kind,
+        })
+        .to_string();
+
+        let card_id = uuid::Uuid::new_v4().to_string();
+        // 22 列与 concept 卡 INSERT 完全对齐；study_set_id 显式占位（可为 NULL）。
+        let inserted = sqlx::query(
+            "INSERT OR IGNORE INTO cards \
+             (id, uid, study_set_id, book_id, highlight_id, title, content, color, cfi_range, \
+              page_index, rect_x, rect_y, rect_width, rect_height, card_type, note_type, \
+              selected_text, transcript, voice_path, source_locator, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&card_id)
+        .bind(&uid)
+        .bind(study_set_id)
+        .bind(book_id)
+        .bind(None::<String>)
+        .bind(title)
+        .bind(content)
+        .bind(None::<String>)
+        .bind(None::<String>)
+        .bind(None::<i64>)
+        .bind(None::<f64>)
+        .bind(None::<f64>)
+        .bind(None::<f64>)
+        .bind(None::<f64>)
+        .bind("concept") // 复用 concept 类型：现有重拆 DELETE 已覆盖
+        .bind("extracted")
+        .bind(None::<String>)
+        .bind(None::<String>)
+        .bind(None::<String>)
+        .bind(&source_locator)
+        .bind(now)
+        .bind(now)
+        .execute(db)
+        .await?;
+
+        // 幂等：uid 或唯一索引命中 → 不重复镜像、不重复排程。
+        if inserted.rows_affected() == 0 {
+            continue;
+        }
+
+        // 复用现有 concept→flashcard 镜像（is_ai_generated=1 + card_id 回指），
+        // 使 clear_ai_flashcards_on_rebreak 能在重拆时清掉这些卡。
+        mirror_concept_card_to_flashcards(db, book_id, &card_id, title, content, now).await?;
+
+        // 真正进复习队列：与 ai_quiz.rs 制卡三写一致，due_date=now 立即可复习。
+        sqlx::query(
+            "INSERT INTO card_scheduling \
+             (card_id, ease_factor, interval_days, repetitions, due_date, last_reviewed) \
+             VALUES (?, 2.5, 0, 0, ?, 0) \
+             ON CONFLICT(card_id) DO UPDATE SET due_date = excluded.due_date, \
+             last_reviewed = excluded.last_reviewed",
+        )
+        .bind(&card_id)
+        .bind(now)
+        .execute(db)
+        .await?;
+
+        created += 1;
+    }
+    Ok(created)
+}
+
 /// 从 book_breakdowns 表恢复该书已拆解的全部章节结果。
 ///
 /// 卡片（cards）按 source_locator 里的 chapterIndex 归组回各章；

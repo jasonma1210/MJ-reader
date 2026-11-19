@@ -28,6 +28,8 @@ import {
   type PlanAction,
 } from "../../services/knowledgeService";
 import { whiteboardService, type WhiteboardSummary } from "../../services/whiteboardService";
+import { useJumpToSource } from "../../hooks/useJumpToSource";
+import { sanitizeCitationMarkers } from "../../services/sourceAnchor";
 
 type Tab = "ask" | "search" | "agent";
 
@@ -172,11 +174,16 @@ function IndexStatusStrip() {
 /* =========================== 问整库 =========================== */
 function AskTab({ onJump }: { onJump: (path: string) => void }) {
   const { t } = useTranslation();
+  const jumpToSource = useJumpToSource();
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AskResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const conv = useRef<string | null>(null);
+  const safeAnswer = useMemo(
+    () => (result ? sanitizeCitationMarkers(result.answer, result.citations.length) : ""),
+    [result],
+  );
 
   const ask = async () => {
     if (!question.trim() || loading) return;
@@ -244,7 +251,7 @@ function AskTab({ onJump }: { onJump: (path: string) => void }) {
         {result && (
           <div className="flex flex-col gap-3">
             <div className="whitespace-pre-wrap rounded-[var(--radius-md)] border border-line bg-paper-soft p-3 text-sm leading-relaxed text-ink">
-              {result.answer}
+              {safeAnswer}
             </div>
 
             {result.citations.length > 0 && (
@@ -256,7 +263,10 @@ function AskTab({ onJump }: { onJump: (path: string) => void }) {
                   <button
                     key={`${c.sourceTable}-${c.rowId}`}
                     onClick={() => {
-                      if (c.bookId) {
+                      // 有 card_cfi 的引用直接回原文；无原文坐标的来源保持旧行为（白板/笔记），不伪称原文定位。
+                      if (c.bookId && c.cardCfi) {
+                        jumpToSource(c.bookId, c.cardCfi, c.title);
+                      } else if (c.bookId) {
                         onJump(`/whiteboard/${c.bookId}`);
                       } else {
                         onJump("/notes");

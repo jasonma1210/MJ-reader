@@ -45,6 +45,12 @@
     "restart": "重新开始",
     "loadMore": "加载更多"
   },
+  "errorBoundary": {
+    "title": "应用遇到问题",
+    "desc": "页面渲染时发生错误。你可以重试，或清除引导缓存后重新开始。",
+    "retry": "重试",
+    "retryClearOnboarding": "清除引导缓存并重试"
+  },
   "tags": {
     "title": "标签体系",
     "searchPlaceholder": "搜索标签…",
@@ -160,6 +166,9 @@
     "empty": "书架空空如也，去导入一本书吧",
     "chapters": "章",
     "continueCardSubtitle": "上次读到",
+    "resumePreciseSubtitle": "精读续接：{{chapter}}",
+    "focusPreset": "专注时长",
+    "focusMinutes": "{{count}} 分钟",
     "recentLearning": "最近学习",
     "recentNotes": "笔记",
     "recentNotesHint": "回到本书做过的笔记",
@@ -438,9 +447,21 @@
     "boardFailed": "上板失败",
     "makeCard": "制卡",
     "quizMe": "考我",
-    "breakdown": "拆这段",
     "cardSaved": "已存入复习队列",
-    "cardFailed": "制卡失败，请重试"
+    "cardFailed": "制卡失败，请重试",
+    "inline": {
+      "explain": "原文旁解释",
+      "summary": "原文旁总结",
+      "translate": "原文旁翻译"
+    },
+    "inlineLoading": "正在生成…",
+    "inlineFailed": "生成失败",
+    "inlineClose": "关闭内联结果",
+    "inlineSaveNote": "存为笔记",
+    "inlineAttachHl": "附到高亮",
+    "inlineNoteSaved": "已存为笔记",
+    "inlineHlAttached": "已附到高亮备注",
+    "inlineSaveFailed": "保存失败，请重试"
   },
   "ai": {
     "title": "AI 助手",
@@ -491,9 +512,6 @@
       "ask": {
         "label": "问"
       },
-      "breakdown": {
-        "label": "拆书"
-      },
       "makeCard": {
         "label": "制卡"
       },
@@ -503,15 +521,17 @@
       "quizMe": {
         "label": "考我"
       },
-      "coach": {
-        "label": "陪我练"
-      },
-      "plan": {
-        "label": "排计划"
-      },
-      "diagnose": {
-        "label": "诊断"
-      }
+      "quizDone": "已生成 {{n}} 道题，已加入题库",
+      "cardDone": "已制卡，已加入复习集",
+      "quizDegrade": "未绑定书籍或没有选区，已转为 AI 建议；绑定书籍或划词后可一键出题。",
+      "cardDegrade": "当前没有可制卡的高亮选区，已转为 AI 建议；在阅读器划词高亮后可一键制卡。",
+      "commandFailed": "命令执行失败，AI 回复不受影响，请稍后重试。",
+      "goPractice": "去练习",
+      "oneClickQuiz": "一键出题",
+      "oneClickCard": "一键制卡",
+      "adviceTitle": "AI 建议：仅生成对话回复，不会写入学习数据",
+      "commandTitle": "真命令：会写入学习数据（题目/卡片）",
+      "adviceBadge": "建议"
     },
     "voice": {
       "cancelled": "已取消"
@@ -566,7 +586,7 @@
     "stop": "停止生成",
     "coach": {
       "title": "从哪个动作开始？",
-      "desc": "直接说或点一下，AI 教练带你走完「读 → 炼 → 练 → 忆」闭环。"
+      "desc": "从原文划词开始；只有出题和制卡会写入学习数据。"
     },
     "hint": {
       "noAi": "尚未配置 AI 服务，先配置模型即可对话与练习。",
@@ -666,7 +686,9 @@
     "good": "良好",
     "easy": "简单",
     "viewSource": "看原文",
-    "viewMastery": "查看掌握详情"
+    "viewMastery": "查看掌握详情",
+    "masteryNoBook": "无法回写掌握度：卡片未关联书籍",
+    "masteryNoNode": "无法回写掌握度：未找到关联的知识点"
   },
   "notes": {
     "title": "笔记库",
@@ -2026,7 +2048,26 @@
   "focus": {
     "title": "专注模式",
     "report": "阅读报告",
-    "exit": "退出"
+    "exit": "退出",
+    "timeUp": "本轮专注完成"
+  },
+  "commute": {
+    "title": "通勤模式",
+    "entry": "通勤",
+    "exit": "退出通勤模式",
+    "personaLabel": "人群画像",
+    "persona": {
+      "college": "大学生",
+      "postgrad": "考研",
+      "social": "社会学习"
+    },
+    "startListen": "开始语音提问",
+    "stopListen": "停止录音",
+    "tapToSpeak": "点击说出你的问题",
+    "listening": "正在聆听…",
+    "thinking": "正在思考…",
+    "speaking": "正在朗读答案…",
+    "stopSpeak": "停止朗读"
   },
   "quiz": {
     "tokenCostWarning": "生成题目将消耗一定量 AI 词元（每题约 100-200 tokens），确认继续？"

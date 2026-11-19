@@ -1,22 +1,14 @@
-// V2 中枢动词路由层（S1 §2.3 任务 9，唯一新建组件）。
-// 学习的 8 个本质动作（问/拆/制卡/出题/考我/陪我练/排计划/诊断）都是
-// 「对内容的请求」，天然对话式——本层把用户自然语言路由为对应动词行为。
-//
-// S1 MVP 策略（不依赖 NLU）：
-// - 关键词命中 + 按钮直触发；未命中动词的输入原样进入对话（即「问」）。
-// - 命中动词后转换为教练式 prompt 走对话流（LLM 承载执行）。
-// - S2 再把 制卡/拆书/排计划 升级为命令型直触发（closedLoopService 已备好通路）。
+// V2 中枢动词路由层（S1 §2.3 任务 9）。
+// 阅读者只需要「问、出题、考我、制卡」：问是默认对话行为，其余是可落库命令。
+// 2026-11-19 设计收敛：删除 breakdown/coach/plan/diagnose 四个 prompt 换皮动词，
+// 它们不写学习数据，只会稀释真命令的可信度。
 
-/** 动词标识（8 个学习动词） */
+/** 动词标识（保留默认问答 + 3 个真命令） */
 export type VerbId =
   | "ask"
-  | "breakdown"
   | "makeCard"
   | "quiz"
-  | "quizMe"
-  | "coach"
-  | "plan"
-  | "diagnose";
+  | "quizMe";
 
 /** 动词定义：关键词匹配 + prompt 模板 */
 export interface VerbDef {
@@ -35,13 +27,6 @@ const VERBS: VerbDef[] = [
     labelKey: "ai.verbs.ask.label",
     keywords: [],
     promptTemplate: (_bookTitle, rest) => rest,
-  },
-  {
-    id: "breakdown",
-    labelKey: "ai.verbs.breakdown.label",
-    keywords: ["拆书", "拆解这本书", "拆一下", "帮我拆", "总结全书", "全书结构"],
-    promptTemplate: (bookTitle, rest) =>
-      `请把${bookTitle ? `《${bookTitle}》` : "这本书"}拆解成可复习的结构：按章节梳理核心论点，提炼关键概念、人物与它们的关系，并指出最适合制成卡片和题目的 3-5 个知识点。${rest ? `\n\n补充要求：${rest}` : ""}`,
   },
   {
     id: "makeCard",
@@ -63,27 +48,6 @@ const VERBS: VerbDef[] = [
     keywords: ["考我", "考考我", "测测我", "抽查我", "提问我"],
     promptTemplate: (bookTitle, rest) =>
       `考我。基于${bookTitle ? `《${bookTitle}》` : "本书"}我已读过的内容随机提问，一次只问一题，等我回答后判分、讲评，再问下一题。答错时给出原文出处。${rest ? `\n\n重点考察：${rest}` : ""}`,
-  },
-  {
-    id: "coach",
-    labelKey: "ai.verbs.coach.label",
-    keywords: ["陪我练", "陪我复习", "带着我练", "陪我刷题", "练习模式"],
-    promptTemplate: (bookTitle, rest) =>
-      `请作为教练陪我练习${bookTitle ? `《${bookTitle}》` : "本书"}的内容：先给我 1 道热身题，根据我的作答表现动态调整难度，每 3 题小结一次我的薄弱点。${rest ? `\n\n练习范围：${rest}` : ""}`,
-  },
-  {
-    id: "plan",
-    labelKey: "ai.verbs.plan.label",
-    keywords: ["排计划", "学习计划", "做个计划", "帮我规划", "复习计划"],
-    promptTemplate: (bookTitle, rest) =>
-      `请为${bookTitle ? `《${bookTitle}》` : "本书"}排一份学习计划：按「读 → 炼 → 练 → 忆」给出每天的具体动作与预计时长，第一天从最小可行动作开始。${rest ? `\n\n我的目标/约束：${rest}` : ""}`,
-  },
-  {
-    id: "diagnose",
-    labelKey: "ai.verbs.diagnose.label",
-    keywords: ["诊断", "我哪里没掌握", "薄弱点", "掌握情况", "学得怎么样"],
-    promptTemplate: (bookTitle, rest) =>
-      `请诊断我对${bookTitle ? `《${bookTitle}》` : "本书"}的掌握情况：结合我的作答与复习记录指出薄弱知识点，按优先级排序，并给每个薄弱点一个最小补救动作。${rest ? `\n\n补充信息：${rest}` : ""}`,
   },
 ];
 
@@ -129,4 +93,129 @@ export function verbPrompt(id: VerbId, bookTitle: string | null, rest = ""): str
   const verb = VERBS.find((v) => v.id === id);
   if (!verb) return "";
   return verb.promptTemplate(bookTitle, rest);
+}
+
+// ===== P0-C 动词真命令化 =====
+
+/**
+ * 结构化选区上下文：复用 aiStore.scope 与 AIPanel 已有状态，不新增上下文系统。
+ * - bookId / bookTitle / selectionText(=content) / chapterIndex 由 AI 面板现有状态提供；
+ * - highlightId / cfiRange 由阅读器选区条产生，AI 面板通常拿不到——拿不到即走降级，绝不臆造。
+ */
+export interface VerbContext {
+  bookId?: string | null;
+  bookTitle?: string | null;
+  selectionText?: string | null;
+  /** 打字触发动词时，剥离关键词后的剩余文本（无选区时作为落库内容） */
+  literalRest?: string | null;
+  chapterIndex?: number | null;
+  chapterTitle?: string | null;
+  highlightId?: string | null;
+  cfiRange?: string | null;
+}
+
+/** 附在对话区的结构化结果卡片 */
+export interface VerbNotice {
+  kind: "quizDone" | "cardDone" | "quizDegrade" | "cardDegrade" | "commandFailed";
+  text: string;
+  /** 真命令成功后深链到练习页 */
+  goPractice?: boolean;
+  /** 降级卡片的一键重试动词 */
+  retry?: VerbId;
+}
+
+/** 动词分派依赖（由 AIPanel 注入；router 不直接依赖 service / i18next） */
+export interface VerbDeps {
+  /** 照常发起 LLM 对话（副作用后置：所有分支都会调用，不被命令拦截） */
+  send: (text: string) => void | Promise<void>;
+  /** 真出题：落 quiz_questions + 关联节点，返回生成题数；失败由调用方 try/catch 捕获 */
+  generateQuiz: (bookId: string, content: string) => Promise<number>;
+  /** 真制卡：高亮 → 闪卡；无 highlightId 时不得调用 */
+  createFlashcard: (highlightId: string) => Promise<unknown>;
+  notify: (notice: VerbNotice) => void;
+  /** i18n 翻译（router 保持纯 TS，不 import i18next） */
+  tr: (key: string, options?: Record<string, unknown>) => string;
+  logError?: (scope: string, error: unknown) => void;
+}
+
+/**
+ * 打字输入计划（P1-1）：把用户在输入框里打的字判定为「动词真命令」还是「普通对话」。
+ * 纯函数，便于单测锁定「命中动词只走 dispatchVerb、不双重 send」。
+ * - 命中非 ask 动词 → verb，rest 是剥离关键词后的范围文本（无选区时作为落库内容）；
+ * - 其余（含 ask / 未命中）→ chat，原样走 send。
+ */
+export type TypedInputPlan =
+  | { kind: "verb"; id: Exclude<VerbId, "ask">; rest: string }
+  | { kind: "chat"; text: string };
+
+export function planTypedInput(text: string): TypedInputPlan {
+  const m = matchVerb(text);
+  if (m && m.verb.id !== "ask") {
+    return { kind: "verb", id: m.verb.id, rest: m.rest };
+  }
+  return { kind: "chat", text };
+}
+
+/** R-C4：仅生成对话建议（不写学习数据）的动词；其余为「真命令或缺参降级」动词 */
+export function isAdviceVerb(id: VerbId): boolean {
+  return id !== "quiz" && id !== "quizMe" && id !== "makeCard";
+}
+
+/**
+ * P0-C 动词分派唯一入口。副作用后置（裁决 D3）：先照常 send LLM 回复，
+ * 再执行命令；命令失败只提示、不拦截输入、不改回复语气，绝不静默失败。
+ */
+export async function dispatchVerb(id: VerbId, ctx: VerbContext, deps: VerbDeps): Promise<void> {
+  // 落库内容优先级：阅读器选区 > 打字剥离关键词后的范围文本。
+  // 打字场景没有选区，必须用 literalRest，否则落库内容与 prompt 都为空。
+  const content = (ctx.selectionText ?? ctx.literalRest ?? "").trim();
+  // 选区文本必须同时进入 prompt：否则按钮直触发时 LLM 看到的提示词与落库内容脱节，
+  // promptTemplate 里的「范围/内容」占位永远为空（违背「答案永不离原文」）。
+  const prompt = verbPrompt(id, ctx.bookTitle ?? null, content);
+
+  // quiz / quizMe：齐参（选区内容 + bookId）→ 真出题落库；缺参 → 聊天 + 一键出题
+  if (id === "quiz" || id === "quizMe") {
+    void deps.send(prompt); // LLM 回复照常返回，不拦截输入、不改语气
+    if (ctx.bookId && content) {
+      try {
+        const count = await deps.generateQuiz(ctx.bookId, content);
+        if (count > 0) {
+          deps.notify({
+            kind: "quizDone",
+            text: deps.tr("ai.verbs.quizDone", { n: count }),
+            goPractice: true,
+          });
+        } else {
+          deps.notify({ kind: "commandFailed", text: deps.tr("ai.verbs.commandFailed") });
+        }
+      } catch (e) {
+        deps.logError?.("router.dispatchVerb.quiz", e);
+        deps.notify({ kind: "commandFailed", text: deps.tr("ai.verbs.commandFailed") });
+      }
+    } else {
+      deps.notify({ kind: "quizDegrade", text: deps.tr("ai.verbs.quizDegrade"), retry: id });
+    }
+    return;
+  }
+
+  // makeCard：有 highlightId → 真制卡；缺 → 聊天 + 一键制卡（AI 面板拿不到高亮 id，如实降级）
+  if (id === "makeCard") {
+    void deps.send(prompt);
+    if (ctx.highlightId) {
+      try {
+        await deps.createFlashcard(ctx.highlightId);
+        deps.notify({ kind: "cardDone", text: deps.tr("ai.verbs.cardDone") });
+      } catch (e) {
+        deps.logError?.("router.dispatchVerb.makeCard", e);
+        deps.notify({ kind: "commandFailed", text: deps.tr("ai.verbs.commandFailed") });
+      }
+    } else {
+      deps.notify({ kind: "cardDegrade", text: deps.tr("ai.verbs.cardDegrade"), retry: "makeCard" });
+    }
+    return;
+  }
+
+  // 其余动词（当前仅 ask）：保持 send(prompt) 不变，不产生学习数据。
+  // R-C4 的「AI 建议」标注在 UI 气泡（见 isAdviceVerb），不改 prompt 模板、不改回复。
+  void deps.send(prompt);
 }

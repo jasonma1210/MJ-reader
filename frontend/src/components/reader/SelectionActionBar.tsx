@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   FileText,
@@ -8,7 +8,8 @@ import {
   SquarePlus,
   Layers,
   CircleHelp,
-  Scissors,
+  Lightbulb,
+  X,
 } from "lucide-react";
 import { NoteEditorSheet } from "./NoteEditorSheet";
 import { useAiStore } from "../../stores/aiStore";
@@ -16,9 +17,11 @@ import { useReaderStore } from "../../stores/readerStore";
 import { useHighlightStore } from "../../stores/highlightStore";
 import { useReaderSelectionStore } from "../../stores/readerSelectionStore";
 import { highlightService } from "../../services/highlightService";
+import { notesService } from "../../services/notesService";
+import { aiService } from "../../services/aiService";
 import { whiteboardService } from "../../services/whiteboardService";
 import { highlightToFlashcard } from "../../services/closedLoopService";
-import { toast } from "../../utils/toast";
+import { errMsg, toast } from "../../utils/toast";
 import { cn } from "../../utils/cn";
 import { logError } from "../../utils/logError";
 import { verbPrompt } from "../../ai/router";
@@ -38,13 +41,45 @@ const HIGHLIGHT_STYLES: Array<{ key: string; labelKey: string }> = [
   { key: "underline", labelKey: "highlights.style.underline" },
 ];
 
+type InlineKind = "explain" | "summary" | "translate";
+
+interface InlineResult {
+  kind: InlineKind;
+  text: string;
+  failed?: boolean;
+}
+
+/**
+ * P1-3：内联 AI 结果存为笔记的正文（纯函数，便于单测）。
+ * 保留原文选区 + AI 结果，附前缀标明来源，不臆造。
+ */
+export function buildInlineNoteContent(kind: InlineKind, source: string, result: string): string {
+  const label: Record<InlineKind, string> = {
+    explain: "Explain",
+    summary: "Summary",
+    translate: "Translation",
+  };
+  return `[AI ${label[kind]}] ${result.trim()}\n\n---\n原文：${source.trim()}`;
+}
+
+/**
+ * P1-3：AI 解释「附到高亮备注」的补丁（纯函数）。
+ * 关键：追加而非覆盖用户手写备注——已有 note 时在其后追加，绝不丢失原文。
+ */
+export function buildInlineHighlightPatch(existingNote: string | undefined, aiText: string): { note: string } {
+  const ai = `[AI] ${aiText.trim()}`;
+  const old = (existingNote ?? "").trim();
+  return { note: old ? `${old}\n\n${ai}` : ai };
+}
+
+
 
 /**
  * 选区浮条（T12）：监听阅读器选区（文本阅读器在主文档、foliate 在 iframe 内转发到 store），
  * 浮于选区上方。聚焦「笔记 + 总结」核心动作：
  *   总结 / 翻译 —— AI 单轮即时出结果（点击即自动触发，无需再点发送）
- *   制卡 / 考我 / 拆这段 —— V2 学习动词发起位（chat 承载，动词 prompt 自动发送）
- *   高亮 / 笔记 —— 无 AI 依赖，划词即用
+ *   解释 / 总结 / 翻译 —— 原文旁内联出结果，不再跳 AI 面板、不再必经上板
+ *   制卡 / 考我 —— 真落库命令；高亮 / 笔记 —— 无 AI 依赖，划词即用
  * 挖空、AI批注等仍在书籍工作区入口使用。
  * 背景用 token（bg-paper），随亮/暗/护眼三态自动换肤。
  */
@@ -63,6 +98,15 @@ export function SelectionActionBar() {
   const [pickColor, setPickColor] = useState(false);
   // Phase2-6 划线样式：默认背景高亮，可选下划线（点「高亮」展开的色盘内切换）
   const [hlStyle, setHlStyle] = useState<string>("highlight");
+  // P1-3：解释优先在原文旁内联呈现；上板不再是必经动作。
+  const [inlineResult, setInlineResult] = useState<InlineResult | null>(null);
+  const [inlineLoading, setInlineLoading] = useState(false);
+
+  // 选区变化时清空上一次内联结果，避免旧解释挂到新原文上。
+  useEffect(() => {
+    setInlineResult(null);
+    setInlineLoading(false);
+  }, [selection?.text, selection?.cfi, selection?.start, selection?.end]);
 
   if (!selection) return null;
 
@@ -120,10 +164,91 @@ export function SelectionActionBar() {
     }
   };
 
-  // 挖空蒙版已移出浮条（书籍工作区入口），此处不再保留。
-  // 浮条动作收敛为：总结 / 翻译 / 高亮 / 笔记 / 上板（「解释」与总结/翻译职责重合，已移除，对齐 FlexNote 精简选字链路）。
+  // P1-3：选中即解释——结果内联在原文旁，不打开面板、不清空选区、不强制上板。
+  const runInline = async (kind: InlineKind) => {
+    const sel = useReaderSelectionStore.getState().selection;
+    if (!sel?.text.trim() || inlineLoading) return;
+    const bookId = useReaderStore.getState().bookId;
+    setInlineLoading(true);
+    setInlineResult({ kind, text: "" });
+    try {
+      const text =
+        kind === "explain"
+          ? await aiService.explain(sel.text)
+          : kind === "summary"
+            ? await aiService.summarize(sel.text, bookId)
+            : await aiService.translate(sel.text);
+      setInlineResult({ kind, text });
+    } catch (e) {
+      logError(`SelectionActionBar.inline.${kind}`, e);
+      setInlineResult({
+        kind,
+        text: `${t("selection.inlineFailed")}\n${errMsg(e)}`,
+        failed: true,
+      });
+    } finally {
+      setInlineLoading(false);
+    }
+  };
 
-  // M4：划线一键上板（≤2 步）。先落一条高亮真源，再把这条高亮挂到本书画布；重复上板仅提示。
+  // P1-3：把内联 AI 结果沉淀下来——存为笔记（source=ai）或附到高亮备注（追加不覆盖）。
+  // 两者都先确保有一条高亮真源（复用 makeRealCard 同款去重锚点），不臆造 id。
+  const saveInlineAsNote = async () => {
+    const sel = useReaderSelectionStore.getState().selection;
+    const bookId = useReaderStore.getState().bookId;
+    if (!sel?.text.trim() || !bookId || !inlineResult || inlineResult.failed) return;
+    const cfiRange = sel.cfi?.trim() ? sel.cfi.trim() : `${sel.start}-${sel.end}`;
+    try {
+      const hlId = await highlightService.saveHighlight({
+        bookId,
+        selectedText: sel.text,
+        cfiRange,
+        color: "yellow",
+        style: "highlight",
+        chapterIndex: 0,
+      });
+      const ok = await notesService.saveNote({
+        bookId,
+        content: buildInlineNoteContent(inlineResult.kind, sel.text, inlineResult.text),
+        linkedHighlightId: hlId,
+        noteType: "annotation",
+        source: "ai",
+      });
+      toast(ok ? t("selection.inlineNoteSaved") : t("selection.inlineSaveFailed"));
+    } catch (e) {
+      logError("SelectionActionBar.saveInlineNote", e);
+      toast(t("selection.inlineSaveFailed"));
+    }
+  };
+
+  const attachInlineToHighlight = async () => {
+    const sel = useReaderSelectionStore.getState().selection;
+    const bookId = useReaderStore.getState().bookId;
+    if (!sel?.text.trim() || !bookId || !inlineResult || inlineResult.failed) return;
+    const cfiRange = sel.cfi?.trim() ? sel.cfi.trim() : `${sel.start}-${sel.end}`;
+    try {
+      // saveHighlight 内部按 selectedText+cfiRange 去重并复用 id，保证拿到的是真源高亮。
+      const hlId = await highlightService.saveHighlight({
+        bookId,
+        selectedText: sel.text,
+        cfiRange,
+        color: "yellow",
+        style: "highlight",
+        chapterIndex: 0,
+      });
+      // 追加到高亮备注：先读现有 note，绝不覆盖用户手写内容。
+      const existing = useHighlightStore.getState().highlights.find((h) => h.id === hlId);
+      const patch = buildInlineHighlightPatch(existing?.note, inlineResult.text);
+      await highlightService.updateHighlight(hlId, patch);
+      useHighlightStore.getState().update(hlId, patch);
+      toast(t("selection.inlineHlAttached"));
+    } catch (e) {
+      logError("SelectionActionBar.attachInline", e);
+      toast(t("selection.inlineSaveFailed"));
+    }
+  };
+
+  // M4：划线一键上板（≤2 步）。现在它只是可选沉淀动作，不再是解释的必经步骤。
   const boardSelection = async () => {
     const sel = useReaderSelectionStore.getState().selection;
     const bookId = useReaderStore.getState().bookId;
@@ -205,26 +330,24 @@ export function SelectionActionBar() {
 
   const actions = [
     {
+      key: "explain",
+      label: t("selection.explain"),
+      icon: Lightbulb,
+      run: () => void runInline("explain"),
+    },
+    {
       key: "summarize",
       label: t("selection.summarize"),
       icon: FileText,
-      run: () =>
-        openPanel("summary", {
-          scope: "selection",
-          selectionText: selection.text,
-        }),
+      run: () => void runInline("summary"),
     },
     {
       key: "translate",
       label: t("selection.translate"),
       icon: Languages,
-      run: () =>
-        openPanel("translate", {
-          scope: "selection",
-          selectionText: selection.text,
-        }),
+      run: () => void runInline("translate"),
     },
-    // V2 动词发起位：制卡（真落库）/ 考我 / 拆这段（后两者 chat 承载，走书语境 grounding）
+    // 真命令发起位：制卡（真落库）/ 考我（真落库，缺选区则降级）；不再提供 prompt 换皮动词。
     {
       key: "makeCard",
       label: t("selection.makeCard"),
@@ -239,17 +362,6 @@ export function SelectionActionBar() {
         openPanel("chat", {
           scope: "selection",
           selectionText: verbPrompt("quizMe", null, selection.text),
-          autoSend: true,
-        }),
-    },
-    {
-      key: "breakdownSelection",
-      label: t("selection.breakdown"),
-      icon: Scissors,
-      run: () =>
-        openPanel("chat", {
-          scope: "selection",
-          selectionText: verbPrompt("breakdown", null, selection.text),
           autoSend: true,
         }),
     },
@@ -305,6 +417,57 @@ export function SelectionActionBar() {
           );
         })}
       </div>
+
+      {/* P1-3：原文旁内联解释。失败也留在原地展示真实错误，不静默、不跳面板。 */}
+      {inlineResult && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed z-50 max-h-56 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 overflow-auto rounded-[var(--radius-md)] border border-line bg-paper p-3 shadow-lg"
+          style={{ left: x, top: top + 48 }}
+        >
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-ink-soft">
+              {t(`selection.inline.${inlineResult.kind}`)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setInlineResult(null)}
+              aria-label={t("selection.inlineClose")}
+              className="rounded-full p-0.5 text-ink-muted transition hover:bg-line-soft"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div
+            className={cn(
+              "whitespace-pre-wrap text-xs leading-relaxed",
+              inlineResult.failed ? "text-red-500" : "text-ink",
+            )}
+          >
+            {inlineResult.text || (inlineLoading ? t("selection.inlineLoading") : "")}
+          </div>
+          {/* P1-3：结果沉淀入口——成功且非加载中才可存，失败结果不入库。 */}
+          {inlineResult.text && !inlineResult.failed && !inlineLoading && (
+            <div className="mt-2 flex items-center gap-1.5 border-t border-line-soft pt-2">
+              <button
+                type="button"
+                onClick={() => void saveInlineAsNote()}
+                className="rounded-[var(--radius-sm)] border border-line px-2 py-1 text-[11px] text-ink-soft transition hover:bg-line-soft"
+              >
+                {t("selection.inlineSaveNote")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void attachInlineToHighlight()}
+                className="rounded-[var(--radius-sm)] border border-line px-2 py-1 text-[11px] text-ink-soft transition hover:bg-line-soft"
+              >
+                {t("selection.inlineAttachHl")}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 高亮多色选色盘（2026-08-24）：点「高亮」展开，挑色即落库；含划线样式切换（Phase2-6） */}
       {pickColor && (

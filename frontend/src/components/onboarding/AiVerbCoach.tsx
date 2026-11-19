@@ -1,25 +1,15 @@
-import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Sparkles } from "lucide-react";
 import { allVerbs } from "../../ai/router";
+import { useAiStore } from "../../stores/aiStore";
 
-// S2-2.5（2026-10-09）：冷启动「动词教练」。
-// 书架为空 / 今日无学习行为时，向新用户展示可执行的 AI 学习动词（问、拆书、制卡、
-// 考我、排计划、诊断），点击直达对应产物页或打开 AI 中枢，避免新用户面对空书架不知道下一步。
-// 仅展示 6 个高价值动词，避免选择过载。
-const COACH_VERB_IDS = ["quizMe", "breakdown", "makeCard", "quiz", "plan", "diagnose"] as const;
-
-const VERB_ROUTE: Record<string, string> = {
-  breakdown: "/graph",
-  quizMe: "/practice?mode=feynman",
-  plan: "/path",
-  diagnose: "/mastery",
-  // makeCard / quiz 留在 AI 中枢对话内（打开面板即可开始），不跳页
-};
+// 2026-11-19 收敛：只展示会写学习数据的真命令（制卡 / 出题 / 考我）。
+// breakdown/coach/plan/diagnose 是 prompt 换皮，已从动词集合删除。
+const COACH_VERB_IDS = ["quizMe", "makeCard", "quiz"] as const;
 
 export function AiVerbCoach() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
+  const openPanel = useAiStore((s) => s.openPanel);
 
   const verbs = allVerbs().filter(
     (v) => (COACH_VERB_IDS as readonly string[]).includes(v.id),
@@ -35,25 +25,31 @@ export function AiVerbCoach() {
       </div>
       <p className="mb-3 text-xs leading-relaxed text-ink-muted">{t("ai.coach.desc")}</p>
       <div className="grid grid-cols-3 gap-2">
-        {verbs.map((v) => {
-          const to = VERB_ROUTE[v.id];
-          return (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => {
-                if (to) navigate(to);
-                else navigate("/learn");
-              }}
-              className="flex flex-col items-center gap-1 rounded-[var(--radius-md)] border border-accent/20 bg-paper px-2 py-2.5 text-center transition active:bg-paper-soft"
-            >
+        {verbs.map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => {
+              // P1-2：动词直达真命令。本组件只在「无最近学习书」时渲染（LearnPage.tsx:86），
+              // 因此没有 bookId 可绑——如实走 global 降级，由 dispatchVerb 的降级卡片提示先导入书籍，
+              // 不伪造绑书。verbId 由 AIPanel 一次性 effect 消费后直达 dispatchVerb。
+              openPanel(
+                "chat",
+                {
+                  scope: "global",
+                  verbId: v.id as "quiz" | "quizMe" | "makeCard",
+                },
+                true,
+              );
+            }}
+            className="flex flex-col items-center gap-1 rounded-[var(--radius-md)] border border-accent/20 bg-paper px-2 py-2.5 text-center transition active:bg-paper-soft"
+          >
               <span className="text-[11px] font-semibold text-ink">{t(v.labelKey)}</span>
               <span className="line-clamp-2 text-[10px] leading-tight text-ink-muted">
                 {v.keywords[0] ?? ""}
               </span>
-            </button>
-          );
-        })}
+          </button>
+        ))}
       </div>
     </div>
   );

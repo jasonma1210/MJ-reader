@@ -16,10 +16,149 @@ use crate::error::{AppError, AppResult};
 use crate::services::ai_profiles::{self, AiProfile};
 use crate::AppState;
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use tauri::{AppHandle, Emitter, State};
 use futures_util::StreamExt;
 use std::sync::Arc;
+
+// ==================== P0-1 学习数据注入对话（2026-11-19） ====================
+//
+// 背景：薄弱点/错题此前困在掌握度仪表盘与错题本，从不进 AI 对话——AI 每次失忆，
+// 无法针对「用户哪里没掌握」作答。本组函数把学习数据以纯文本标签注入书本 grounding。
+
+/// P0-1 纯函数：解析 source_chapters JSON（形如 `[{"chapter_index":3,...}]`），
+/// 判断节点是否覆盖指定章节。畸形 JSON 一律按不覆盖处理（不臆造归属）。
+pub(crate) fn node_covers_chapter(source_chapters_json: &str, chapter_index: i64) -> bool {
+    let parsed: serde_json::Value = match serde_json::from_str(source_chapters_json) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let Some(arr) = parsed.as_array() else {
+        return false;
+    };
+    arr.iter()
+        .any(|item| item.get("chapter_index").and_then(|v| v.as_i64()) == Some(chapter_index))
+}
+
+/// P0-1 纯函数：薄弱点/错题段格式化（纯文本标签与前 3 段一致；自封顶 1200 字）。
+/// 空数据返回空串（调用方整体省略，降级为原 grounding）。
+pub(crate) fn format_weak_learning_context(
+    weak_nodes: &[(String, f64)],
+    wrong_questions: &[(String, i64)],
+) -> String {
+    if weak_nodes.is_empty() && wrong_questions.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    if !weak_nodes.is_empty() {
+        out.push_str("【我的薄弱知识点】\n");
+        for (name, score) in weak_nodes.iter() {
+            out.push_str(&format!(
+                "- {}（掌握度 {:.0}%）\n",
+                name.trim(),
+                score * 100.0
+            ));
+        }
+    }
+    if !wrong_questions.is_empty() {
+        out.push_str("【我的错题】\n");
+        for (q, cnt) in wrong_questions.iter() {
+            let brief: String = q.trim().chars().take(60).collect();
+            out.push_str(&format!("- {}（错 {} 次）\n", brief, cnt));
+        }
+    }
+    out.chars().take(1200).collect()
+}
+
+/// P0-1：查询本书薄弱知识点（已评估里掌握度最低优先；章节聚焦按 source_chapters
+/// JSON 过滤，无命中退化「本书未掌握优先」——knowledge_nodes 无 chapter_index 列，
+/// 不依赖 SQLite JSON1，解析在 Rust 侧完成）。软删守卫：join books 可见性。
+pub(crate) async fn fetch_weak_nodes(
+    db: &SqlitePool,
+    book_id: &str,
+    chapter_index: Option<i64>,
+) -> Vec<(String, f64)> {
+    let rows = sqlx::query(
+        "SELECT kn.node_name, kn.mastery_score, kn.source_chapters
+         FROM knowledge_nodes kn
+         JOIN books b ON b.id = kn.book_id AND b.deleted_at IS NULL
+         WHERE kn.book_id = ? AND (kn.mastery_score > 0 OR kn.assessment_count > 0)
+         ORDER BY kn.mastery_score ASC LIMIT 8",
+    )
+    .bind(book_id)
+    .fetch_all(db)
+    .await;
+    let Ok(rows) = rows else {
+        return Vec::new();
+    };
+    let all: Vec<(String, f64, String)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("node_name").unwrap_or_default(),
+                r.try_get::<f64, _>("mastery_score").unwrap_or(0.0),
+                r.try_get::<String, _>("source_chapters").unwrap_or_default(),
+            )
+        })
+        .collect();
+    if let Some(idx) = chapter_index {
+        let scoped: Vec<(String, f64)> = all
+            .iter()
+            .filter(|(_, _, sc)| node_covers_chapter(sc, idx))
+            .map(|(n, s, _)| (n.clone(), *s))
+            .collect();
+        if !scoped.is_empty() {
+            return scoped.into_iter().take(5).collect();
+        }
+    }
+    all.into_iter().take(5).map(|(n, s, _)| (n, s)).collect()
+}
+
+/// P0-1：查询本书未掌握错题（错次多优先；章节聚焦经 quiz_question_id LEFT JOIN
+/// quiz_questions.chapter_index 过滤，旧数据 NULL 时退化「本书未掌握优先」）。
+/// 软删守卫：join books 可见性。
+pub(crate) async fn fetch_wrong_questions(
+    db: &SqlitePool,
+    book_id: &str,
+    chapter_index: Option<i64>,
+) -> Vec<(String, i64)> {
+    let rows = sqlx::query(
+        "SELECT wq.question, wq.wrong_count, q.chapter_index AS q_chapter
+         FROM quiz_wrong_questions wq
+         JOIN books b ON b.id = wq.book_id AND b.deleted_at IS NULL
+         LEFT JOIN quiz_questions q ON q.id = wq.quiz_question_id
+         WHERE wq.book_id = ? AND wq.mastered = 0
+         ORDER BY wq.wrong_count DESC, wq.last_wrong_at DESC LIMIT 8",
+    )
+    .bind(book_id)
+    .fetch_all(db)
+    .await;
+    let Ok(rows) = rows else {
+        return Vec::new();
+    };
+    let all: Vec<(String, i64, Option<i64>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("question").unwrap_or_default(),
+                r.try_get::<i64, _>("wrong_count").unwrap_or(0),
+                r.try_get::<Option<i64>, _>("q_chapter").unwrap_or(None),
+            )
+        })
+        .collect();
+    if let Some(idx) = chapter_index {
+        let scoped: Vec<(String, i64)> = all
+            .iter()
+            .filter(|(_, _, ch)| *ch == Some(idx))
+            .map(|(q, c, _)| (q.clone(), *c))
+            .collect();
+        if !scoped.is_empty() {
+            return scoped.into_iter().take(5).collect();
+        }
+    }
+    all.into_iter().take(5).map(|(q, c, _)| (q, c)).collect()
+}
+
 /// v3.0（用户报障「AI 对话没有对接书本内容」）：构造书本接地上下文（类知识库）。
 ///
 /// 组成（总量封顶 ~3000 字，防撑爆 prompt）：
@@ -124,11 +263,24 @@ async fn build_chat_book_grounding(
         }
     }
 
+    // 4. P0-1（2026-11-19）：我的薄弱知识点 / 我的错题——学习数据注入对话。
+    // 此前薄弱点困在掌握度仪表盘、从不进对话（AI 每次失忆）；本段让 AI 知道
+    // 用户哪里没掌握、哪里反复错，答题可针对性补强。与 user_query 无关（用户状态），
+    // 空数据返回空串整体省略；该段自封顶 1200 字。
+    let weak_nodes = fetch_weak_nodes(db, book_id, chapter_index).await;
+    let wrong_qs = fetch_wrong_questions(db, book_id, chapter_index).await;
+    let weak_ctx = format_weak_learning_context(&weak_nodes, &wrong_qs);
+    if !weak_ctx.is_empty() {
+        out.push('\n');
+        out.push_str(&weak_ctx);
+    }
+
     if out.is_empty() {
         return out;
     }
-    // 总量封顶 4200 字（章节地图 + FTS 段落 + GraphRAG 图谱；GraphRAG 自身已有 1200 字内封顶）
-    let capped: String = out.chars().take(4200).collect();
+    // 总量封顶 5000 字（章节地图 + FTS 段落 + GraphRAG 图谱 + 薄弱点/错题；
+    // GraphRAG 自身 1200 字封顶、学习数据段 1200 字封顶）
+    let capped: String = out.chars().take(5000).collect();
     format!(
         "以下是当前书籍的真实内容资料（据此回答，资料没覆盖的明确说「本书资料中未提及」）：\n\n{}",
         capped
@@ -512,16 +664,49 @@ pub async fn ai_chat_stream(
         );
     }
     // P2-14：system_prompt_overrides.chat 覆盖（settings 表可配置），追加为基础约束的补充。
-    if let Some(chat_override) = crate::commands::ai_core::load_system_prompt_overrides(db)
-        .await
-        .chat
-    {
-        if !chat_override.trim().is_empty() {
+    // P2-2 修补（2026-11-19）：此前对端侧也无条件注入——override 是自由长文本，
+    // 会打崩 1B 端侧模型（同 unbound guide 的教训）。现与 unbound guide 同口径：
+    // 仅远程强模型路径注入，端侧精简路径跳过。
+    if !is_llamacpp {
+        if let Some(chat_override) = crate::commands::ai_core::load_system_prompt_overrides(db)
+            .await
+            .chat
+        {
+            if !chat_override.trim().is_empty() {
+                messages.insert(
+                    1,
+                    ChatMessage {
+                        role: "system".into(),
+                        content: chat_override,
+                    },
+                );
+            }
+        }
+    }
+    // P2-2（2026-11-19）：人群画像附录分层注入——远程 full（≤800 字，已由加载侧截断）、
+    // 端侧仅 short（≤120 字纯文本，is_valid_local_short fail-closed 校验过）；
+    // 无画像或端侧 short 不合法 → 不注入。插入系统消息前排（index 2）。
+    if let Some(appendix) = crate::commands::ai_core::load_chat_persona_appendix(db).await {
+        let content: Option<String> = if is_llamacpp {
+            // 端侧预算为 0（Unsupported 档）时不注入，fail-closed
+            let budget = crate::services::device_tier::local_prompt_char_budget();
+            if !appendix.short.is_empty() && appendix.short.chars().count() <= budget {
+                Some(appendix.short.clone())
+            } else {
+                None
+            }
+        } else if !appendix.full.is_empty() {
+            Some(appendix.full.clone())
+        } else {
+            None
+        };
+        if let Some(content) = content {
+            let idx = std::cmp::min(2, messages.len());
             messages.insert(
-                1,
+                idx,
                 ChatMessage {
                     role: "system".into(),
-                    content: chat_override,
+                    content,
                 },
             );
         }

@@ -6,6 +6,7 @@ import ReactDOM from "react-dom/client";
 // worker 侧（pdfWorker.ts）也会各自注入一份。
 import "./utils/uint8-polyfill";
 import { App } from "./App";
+import { AppErrorBoundary } from "./components/common/AppErrorBoundary";
 import "./i18n";
 import { applyInitialTheme } from "./stores/themeStore";
 import { isAndroid, isIOS } from "./utils/platform";
@@ -26,6 +27,8 @@ if (!rootEl) throw new Error("Root element #root not found");
 
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
-    <App />
+    <AppErrorBoundary source="app">
+      <App />
+    </AppErrorBoundary>
   </React.StrictMode>,
 );

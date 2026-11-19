@@ -5,6 +5,7 @@ import { Play, MessageCircleQuestion, BookOpen } from "lucide-react";
 import { useLearnStore, type LearnRange } from "../stores/learnStore";
 import type { LearnStats } from "../types";
 import { useAiStore } from "../stores/aiStore";
+import { useCommuteStore } from "../stores/commuteStore";
 import { LearnCurve } from "../components/learn/LearnCurve";
 import { MasteryRing } from "../components/learn/MasteryRing";
 import { Heatmap } from "../components/learn/Heatmap";
@@ -79,6 +80,15 @@ export function LearnPage() {
               {t(r.labelKey)}
             </button>
           ))}
+          {/* P2-2 通勤模式入口：语音问 → 听答案的免触闭环 */}
+          <button
+            type="button"
+            onClick={() => useCommuteStore.getState().setActive(true)}
+            className="rounded-full bg-paper-soft px-2.5 py-1 text-[12px] font-medium text-ink-soft transition hover:bg-line-soft"
+            aria-label={t("commute.title")}
+          >
+            {t("commute.entry")}
+          </button>
         </div>
       </div>
 

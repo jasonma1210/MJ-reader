@@ -510,6 +510,12 @@ CREATE TABLE IF NOT EXISTS cards (
 CREATE INDEX IF NOT EXISTS idx_cards_study_set ON cards(study_set_id);
 CREATE INDEX IF NOT EXISTS idx_cards_book ON cards(book_id);
 CREATE INDEX IF NOT EXISTS idx_cards_uid ON cards(uid);
+-- v29（P0-D 拆书三字段进 FSRS）：派生卡唯一索引兜底。
+-- 仅覆盖带 pointKind 的拆书派生卡（确定性 uid + INSERT OR IGNORE 之外的第二道防重），
+-- 既有 concept 卡（随机 uid、无 pointKind）不受约束；四列均非 NULL。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_breakdown_point_unique
+    ON cards(book_id, source_locator, card_type, title)
+    WHERE book_id IS NOT NULL AND source_locator LIKE '%"pointKind"%';
 -- v15（P1-2）：软删除过滤索引
 CREATE INDEX IF NOT EXISTS idx_cards_deleted ON cards(deleted_at);
 

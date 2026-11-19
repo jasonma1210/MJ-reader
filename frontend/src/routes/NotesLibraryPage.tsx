@@ -94,13 +94,8 @@ export function NotesLibraryPage() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-auto bg-paper px-4 pb-4 pt-3">
-      <div className="flex items-center justify-between">
-        <h1
-          className="font-extrabold text-ink"
-          style={{ fontSize: "var(--fs-appbar-h1)" }}
-        >
-          {t("notes.title")}
-        </h1>
+      {/* 标题已由 Shell 的 SubBackHeader 统一渲染（notes.title），此处不再重复；仅保留导出操作 */}
+      <div className="flex items-center justify-end">
         <button
           onClick={exportNotes}
           disabled={filtered.length === 0}

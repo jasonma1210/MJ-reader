@@ -1,10 +1,11 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
 import { Bookmark } from "lucide-react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useAiStore } from "../../stores/aiStore";
+import { useJumpToSource } from "../../hooks/useJumpToSource";
+import { resolveSourceAnchor } from "../../services/sourceAnchor";
 
 /** AI 助手形象：女教师头像 */
 export function TeacherAvatar({ size = 34 }: { size?: number }) {
@@ -42,8 +43,9 @@ function MarkdownContent({ content }: { content: string }) {
 /** AI 面板内的消息列表（女教师形象 + 流式 Markdown；book/知识库消息渲染引用溯源 chips） */
 export function AIChatList() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
+  const jumpToSource = useJumpToSource();
   const messages = useAiStore((s) => s.messages);
+  const closePanel = useAiStore((s) => s.closePanel);
   const streaming = useAiStore((s) => s.streaming);
 
   if (messages.length === 0) {
@@ -54,23 +56,6 @@ export function AIChatList() {
       </div>
     );
   }
-
-  const jumpToSource = (
-    bookId: string | undefined,
-    chapterTitle: string | null,
-    sBookId?: string,
-  ) => {
-    const targetBookId = sBookId ?? bookId;
-    if (!targetBookId) return;
-    if (chapterTitle) {
-      window.dispatchEvent(
-        new CustomEvent("mjnexus:reader-scroll-to", {
-          detail: { title: chapterTitle },
-        }),
-      );
-    }
-    navigate(`/reader/${targetBookId}`);
-  };
 
   return (
     <div className="space-y-4">
@@ -100,18 +85,26 @@ export function AIChatList() {
               {/* 引用溯源 chips（⟦溯源:n·章节⟧，可点击回跳原文） */}
               {m.sources && m.sources.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
-                  {m.sources.map((s) => (
-                    <button
-                      key={s.index}
-                      onClick={() => jumpToSource(m.bookId, s.chapterTitle, s.bookId)}
-                      className="inline-flex items-center gap-1 rounded-full border border-line bg-paper px-2 py-0.5 text-[10px] font-medium text-ink-muted transition hover:border-accent hover:text-accent"
-                      title={s.snippet}
-                    >
-                      <Bookmark className="h-3 w-3" />
-                      ⟦{t("ai.citation")}:{s.index}
-                      {s.chapterTitle ? t("ai.citationChapter", { chapter: s.chapterTitle.slice(0, 12) }) : ""}⟧
-                    </button>
-                  ))}
+                  {m.sources.map((s) => {
+                    const anchor = resolveSourceAnchor(s, m.bookId);
+                    // 标不准不给角标：无 bookId、无 locator、无章节标题的来源一律不渲染。
+                    if (!anchor) return null;
+                    return (
+                      <button
+                        key={s.index}
+                        onClick={() => {
+                          closePanel();
+                          jumpToSource(anchor.bookId, anchor.locator, anchor.title);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-full border border-line bg-paper px-2 py-0.5 text-[10px] font-medium text-ink-muted transition hover:border-accent hover:text-accent"
+                        title={s.snippet}
+                      >
+                        <Bookmark className="h-3 w-3" />
+                        ⟦{t("ai.citation")}:{s.index}
+                        {anchor.title ? t("ai.citationChapter", { chapter: anchor.title.slice(0, 12) }) : ""}⟧
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>

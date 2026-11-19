@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Shell } from "./components/shell/Shell";
 import { Splash } from "./components/onboarding/Splash";
 import { Onboarding } from "./components/onboarding/Onboarding";
+import { AppErrorBoundary } from "./components/common/AppErrorBoundary";
 import {
   stopTts,
   pauseTtsAuto,
@@ -29,7 +30,8 @@ function TtsRouteGuard() {
   useEffect(() => {
     const isReader = pathname.startsWith("/reader/");
     if (wasInReaderRef.current && !isReader) {
-      if (consumeTtsExitIntent()) stopTts();
+      // 返回键退出阅读器只应停止阅读器朗读；AI 面板播报由自身 open/pathname effect 管理（P3 精确 owner）
+      if (consumeTtsExitIntent()) stopTts({ owner: "reader" });
       else pauseTtsAuto("route-leave");
     } else if (isReader && !wasInReaderRef.current) {
       resumeTtsAuto("route-leave");
@@ -52,26 +54,28 @@ export function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  if (stage === "splash") {
-    return <Splash />;
-  }
-
-  if (stage === "onboarding") {
-    return (
-      <Onboarding
-        onDone={() => {
-          localStorage.setItem(ONBOARDED_KEY, "1");
-          setStage("ready");
-        }}
-      />
-    );
-  }
-
+  // P0-A：BrowserRouter 必须包住全部启动分支——Onboarding 内部 useNavigate，
+  // 原先在 Router 外渲染会抛错导致首启白屏。
   return (
     <BrowserRouter>
-      <TtsRouteGuard />
-      {/* 单 Shell：横屏侧边栏 / 竖屏底部 Tab 在 Shell 内按 useLayoutMode 分流 */}
-      <Shell />
+      {stage === "splash" ? (
+        <Splash />
+      ) : stage === "onboarding" ? (
+        <AppErrorBoundary source="onboarding">
+          <Onboarding
+            onDone={() => {
+              localStorage.setItem(ONBOARDED_KEY, "1");
+              setStage("ready");
+            }}
+          />
+        </AppErrorBoundary>
+      ) : (
+        <>
+          <TtsRouteGuard />
+          {/* 单 Shell：横屏侧边栏 / 竖屏底部 Tab 在 Shell 内按 useLayoutMode 分流 */}
+          <Shell />
+        </>
+      )}
     </BrowserRouter>
   );
 }

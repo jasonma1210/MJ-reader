@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, AlignLeft, Type, GraduationCap, ScanEye } from "lucide-react";
 import { useLayoutMode } from "../hooks/useLayoutMode";
@@ -8,7 +8,6 @@ import { BookWorkspace } from "../components/bookWorkspace/BookWorkspace";
 import { BookView } from "../renderer/BookView";
 import { FoliateView } from "../renderer/foliate/FoliateView";
 import { ReaderFloatActions } from "../components/reader/ReaderFloatActions";
-import { SelectionActionBar } from "../components/reader/SelectionActionBar";
 import { ReaderProgressBar } from "../components/reader/ReaderProgressBar";
 import { TypographyPopover } from "../components/reader/TypographyPopover";
 import { TocModal } from "../components/reader/TocModal";
@@ -99,10 +98,54 @@ export function ReaderPage() {
 
   // —— 专注模式（F-9-001）：遮罩弱化周边 + 按段落/离开上报阅读速度 ——
   const [focusMode, setFocusMode] = useState(false);
+  // P2-1（2026-11-19）：`?focus=5|10|20` 跨组件契约——首页续读 CTA 携带时长预设，
+  // 进入阅读器自动开专注并倒计时；消费后清参（一次性，防重复触发）。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [focusEndsAt, setFocusEndsAt] = useState<number | null>(null);
+  const [focusRemainSec, setFocusRemainSec] = useState<number | null>(null);
+  const [focusTimeUp, setFocusTimeUp] = useState(false);
   const focusAreaRef = useRef<HTMLDivElement>(null);
   const focusStartRef = useRef<number | null>(null);
   const focusElapsedRef = useRef(0);
   const focusWordsRef = useRef(0);
+
+  // P2-1：一次性消费 ?focus=N（仅 5/10/20 合法），开专注 + 记录结束时刻
+  useEffect(() => {
+    const raw = Number(searchParams.get("focus"));
+    if (![5, 10, 20].includes(raw)) return;
+    setFocusMode(true);
+    setFocusEndsAt(Date.now() + raw * 60_000);
+    setFocusTimeUp(false);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete("focus");
+        return p;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  // P2-1：专注倒计时（有预设时才计时；到点提示但不强制退出，不打断阅读）
+  useEffect(() => {
+    if (focusEndsAt == null) return;
+    const tick = () => {
+      const remain = Math.max(0, Math.ceil((focusEndsAt - Date.now()) / 1000));
+      setFocusRemainSec(remain);
+      if (remain <= 0) setFocusTimeUp(true);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [focusEndsAt]);
+
+  // 退出专注时同步清掉计时（下次手动进入无倒计时）
+  useEffect(() => {
+    if (focusMode) return;
+    setFocusEndsAt(null);
+    setFocusRemainSec(null);
+    setFocusTimeUp(false);
+  }, [focusMode]);
 
   const reportFocusSpeed = () => {
     if (focusStartRef.current == null || !bookId) return;
@@ -442,7 +485,6 @@ export function ReaderPage() {
           ) : (
             <FoliateView bookId={bookId} />
           )}
-          <SelectionActionBar />
         </div>
 
         {/* 横屏：右侧 1/3 侧边栏（工作区 / 问 AI） */}
@@ -565,6 +607,15 @@ export function ReaderPage() {
           <div className="absolute left-1/2 top-[3.75rem] z-[40] flex -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-overlay px-3 py-1.5 text-[11px] font-medium text-overlay shadow-lg">
             <ScanEye className="h-3.5 w-3.5" />
             <span>{t("focus.title")}</span>
+            {/* P2-1：时长预设倒计时——到点只提示不强制退出（不打断阅读） */}
+            {focusTimeUp ? (
+              <span className="font-semibold text-accent">{t("focus.timeUp")}</span>
+            ) : focusRemainSec != null ? (
+              <span className="tabular-nums">
+                {Math.floor(focusRemainSec / 60)}:
+                {String(focusRemainSec % 60).padStart(2, "0")}
+              </span>
+            ) : null}
             <span className="mx-0.5 h-3 w-px bg-current opacity-30" />
             <button
               onClick={() => navigate(`/report/${bookId}`)}

@@ -6,6 +6,7 @@ import { MobileTabBar, TAB_PATH, type MobileTabKey } from "./MobileTabBar";
 import { AppRoutes } from "./AppRoutes";
 import { AIPanel } from "../overlays/AIPanel";
 import { SelectionActionBar } from "../reader/SelectionActionBar";
+import { CommuteMode } from "../commute/CommuteMode";
 import { ConfirmHost } from "../ui/confirmService";
 import { ExitConfirmModal } from "./ExitConfirmModal";
 import { SubBackHeader } from "./SubBackHeader";
@@ -15,11 +16,11 @@ import { isIOS } from "../../utils/platform";
 import { logError } from "../../utils/logError";
 
 const MAIN_TABS: string[] = ["/", "/ai", "/learn", "/me"];
-// 二级页标题（/notes、/review、/import 渲染 SubBackHeader 返回栏；/reader 由阅读器自身渲染全屏返回栏）
+// 二级页标题（/notes、/review 渲染 SubBackHeader 返回栏；/import 由 ImportPage 自带返回栏，避免双重标题。
+// /reader 由阅读器自身渲染全屏返回栏；/path 由 LearningPathPage 自带返回栏）
 const SUB_TITLE: Record<string, string> = {
   "/notes": "notes.title",
   "/review": "review.title",
-  "/import": "import.title",
 };
 
 function tabForPath(path: string): MobileTabKey {
@@ -102,6 +103,8 @@ export function Shell() {
       )}
       <AIPanel />
       <SelectionActionBar />
+      {/* P2-2 通勤模式：全屏语音问答闭环（active 时才渲染） */}
+      <CommuteMode />
       <ConfirmHost />
       {!isIOS() && (
         <ExitConfirmModal

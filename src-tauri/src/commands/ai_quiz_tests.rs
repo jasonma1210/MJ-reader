@@ -4,8 +4,8 @@
 // 生产代码（ai_quiz.rs）保持零 unwrap/expect，测试内的断言 unwrap 不进入棘轮计数。
 
 use crate::commands::ai_quiz::{
-    build_quiz_scope_hint, is_duplicate_question, parse_quiz_questions, plan_quiz_windows,
-    QUIZ_CHARS_PER_WINDOW, QUIZ_MAX_WINDOWS,
+    build_quiz_scope_hint, is_duplicate_question, is_duplicate_question_by_point,
+    parse_quiz_questions, plan_quiz_windows, QUIZ_CHARS_PER_WINDOW, QUIZ_MAX_WINDOWS,
 };
 
 #[cfg(test)]
@@ -197,4 +197,88 @@ mod tests {
         assert!(hint.contains("科学革命"));
     }
 
+    // ===== P0-1（2026-11-19）：知识点分组查重——同考点变式放行 =====
+
+    fn q3(q: &str, point: &str, ans: &str) -> (String, String, String) {
+        (q.to_string(), point.to_string(), ans.to_string())
+    }
+
+    #[test]
+    fn 分组查重_同考点不同表述变式放行() {
+        // 同考点、不同考查角度/表述：旧 0.75 阈值会误杀，必须放行
+        let existing = vec![q3("光合作用的场所是哪里？", "光合作用", "叶绿体")];
+        assert!(!is_duplicate_question_by_point(
+            "请说明光合作用发生的场所在哪个细胞器。",
+            "光合作用",
+            "叶绿体",
+            &existing,
+        ));
+    }
+
+    #[test]
+    fn 分组查重_同考点同题同答案判重() {
+        let existing = vec![q3("光合作用的场所是哪里？", "光合作用", "叶绿体")];
+        assert!(is_duplicate_question_by_point(
+            "光合作用的场所是哪里？",
+            "光合作用",
+            "叶绿体",
+            &existing,
+        ));
+    }
+
+    #[test]
+    fn 分组查重_同考点同题干不同答案放行() {
+        // 题干近乎相同但答案不同 → 另一道题（如选项顺序不同的辨析题），不判重
+        let existing = vec![q3("以下哪项属于光反应产物？", "光合作用", "ATP")];
+        assert!(!is_duplicate_question_by_point(
+            "以下哪项属于光反应产物？",
+            "光合作用",
+            "NADPH",
+            &existing,
+        ));
+    }
+
+    #[test]
+    fn 分组查重_跨考点原题仍拦截() {
+        // 跨考点：沿用 0.75 阈值，近似题干是真重复
+        let existing = vec![q3("光合作用的场所是哪里？", "光合作用", "叶绿体")];
+        assert!(is_duplicate_question_by_point(
+            "光合作用 的 场所是哪里",
+            "呼吸作用",
+            "线粒体",
+            &existing,
+        ));
+    }
+
+    #[test]
+    fn 分组查重_答案归一比较() {
+        // 同考点同题：答案仅大小写/标点差异视为同答案 → 判重
+        let existing = vec![q3("What Is Photosynthesis?", "photosynthesis", "A.")];
+        assert!(is_duplicate_question_by_point(
+            "what is photosynthesis",
+            "photosynthesis",
+            "a",
+            &existing,
+        ));
+    }
+
+    #[test]
+    fn 分组查重_空知识点同组走严格判重() {
+        // 双空知识点视为同组：近乎同题但答案不同 → 放行；同答案 → 判重
+        let existing = vec![q3("1+1=?", "", "2")];
+        assert!(!is_duplicate_question_by_point("1+1=?", "", "3", &existing));
+        assert!(is_duplicate_question_by_point("1+1=?", "", "2", &existing));
+    }
+
+    #[test]
+    fn 分组查重_空题干不参与() {
+        let existing = vec![q3("任意题", "p", "a")];
+        assert!(!is_duplicate_question_by_point("", "p", "a", &existing));
+        assert!(!is_duplicate_question_by_point(
+            "正常题干",
+            "p",
+            "a",
+            &[q3("", "p", "a")],
+        ));
+    }
 }

@@ -81,6 +81,16 @@ fn score_delta(confidence: f64) -> f64 {
     0.25 - 0.12 * confidence.clamp(0.0, 1.0)
 }
 
+/// 遗忘概率纯函数（P0-B 单一真源）。
+///
+/// 复习后 predicted_forgetting_prob 的唯一定值口径，供 `update_mastery_inner`
+/// 与 `update_mastery_from_review` 共用，杜绝双真源。公式与历史行为一致：
+/// 遗忘 +0.1、答对 -0.05，clamp 到 [0.0, 1.0]。
+pub(crate) fn compute_prob(cur: f64, forgot: bool) -> f64 {
+    let delta = if forgot { 0.1 } else { -0.05 };
+    (cur + delta).clamp(0.0, 1.0)
+}
+
 /// 掌握度传播：节点掌握后对依赖链的影响。
 ///
 /// 设计文档 §3.3：
@@ -370,7 +380,10 @@ pub async fn update_knowledge_mastery(
     correct: bool,
     state: State<'_, AppState>,
 ) -> AppResult<KnowledgeNodeRow> {
-    update_mastery_inner(&state.db, &book_id, &node_id, &event_type, correct).await
+    // 前端零改动：命令签名不变，forgot 由 correct 推导。
+    // 真实复习路径 correct = rating!=="again"，故 forgot = (rating==="again")。
+    let forgot = !correct;
+    update_mastery_inner(&state.db, &book_id, &node_id, &event_type, correct, forgot).await
 }
 
 /// 掌握度更新的逻辑核心（抽离以便单测）。
@@ -380,12 +393,14 @@ pub(crate) async fn update_mastery_inner(
     node_id: &str,
     event_type: &str,
     correct: bool,
+    forgot: bool,
 ) -> AppResult<KnowledgeNodeRow> {
     let row = sqlx::query(
         "SELECT id, book_id, node_name, node_type, source_chapters, source_texts,
                 edges_json, related_card_ids, related_question_ids, related_highlight_ids,
                 mastery_score, mastery_confidence, last_assessed_at, assessment_count,
-                mastery_history, needs_contrast_check, readiness_boost, created_at, updated_at
+                mastery_history, needs_contrast_check, readiness_boost, created_at, updated_at,
+                predicted_forgetting_prob, total_reviews
          FROM knowledge_nodes WHERE id = ? AND book_id = ?",
     )
     .bind(node_id)
@@ -393,6 +408,7 @@ pub(crate) async fn update_mastery_inner(
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::General(format!("未找到知识节点 {}（book {}）", node_id, book_id)))?;
+    let cur_prob: f64 = row.try_get("predicted_forgetting_prob").unwrap_or(0.0);
     let mut node = row_to_node(&row);
 
     // 1. 更新 score / confidence
@@ -427,10 +443,19 @@ pub(crate) async fn update_mastery_inner(
     }
 
     let now = chrono::Utc::now().timestamp();
+    // P0-B：概率用统一纯函数 compute_prob 定值。
+    // ai_chat_question 分支只提升 confidence —— 概率写回原值、复习计数增量 0，
+    // 与旧行为一致（该分支从不 +1）；其余评估概率随评分变化、复习计数 +1。
+    let (new_prob, reviews_delta) = if event_type == "ai_chat_question" {
+        (cur_prob, 0i64)
+    } else {
+        (compute_prob(cur_prob, forgot), 1i64)
+    };
     sqlx::query(
         "UPDATE knowledge_nodes SET
             mastery_score = ?, mastery_confidence = ?, last_assessed_at = ?,
-            assessment_count = ?, mastery_history = ?, updated_at = ?
+            assessment_count = ?, mastery_history = ?,
+            predicted_forgetting_prob = ?, total_reviews = total_reviews + ?, updated_at = ?
          WHERE id = ?",
     )
     .bind(node.mastery_score)
@@ -438,6 +463,8 @@ pub(crate) async fn update_mastery_inner(
     .bind(&node.last_assessed_at)
     .bind(node.assessment_count)
     .bind(serde_json::to_string(&history).unwrap_or_else(|_| "[]".to_string()))
+    .bind(new_prob)
+    .bind(reviews_delta)
     .bind(now)
     .bind(node_id)
     .execute(pool)
@@ -596,6 +623,174 @@ pub(crate) async fn auto_link_question_by_concept(
             log::warn!("[auto_link] 题目 {} 关联节点 {} 失败：{}", question_id, node_id, e);
         }
     }
+}
+
+// ==================== P0-2 制卡↔知识节点建链（2026-11-19） ====================
+//
+// 焊点背景：复习页 ReviewFlashcardsPage 按 knowledge_nodes.related_card_ids 反查
+// nodeId 再回写掌握度。此前 ai_highlight_to_flashcard 只写 cards/flashcards/
+// card_scheduling 三表、不建节点关联 → 反查永远失败、掌握度死水（P0-2 根因）。
+
+/// 高亮派生知识节点的确定性 id：`kn-hl-{sha256(domain|book|highlight) 前 16 字节 hex}`。
+/// 与 `breakdown_point_card_uid` 同款防重复策略：同输入重复建链得到同一 id，
+/// 配合 INSERT OR IGNORE 幂等落库，不产生重复节点。
+pub fn highlight_node_id(book_id: &str, highlight_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"mjnexus-highlight-node-v1\0");
+    hasher.update(book_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(highlight_id.as_bytes());
+    let digest = hasher.finalize();
+    // 与 persist.rs breakdown_point_card_uid 同一 hex 约定（字节→两位 hex 收集）
+    let hex: String = digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{:02x}", byte))
+        .collect();
+    format!("kn-hl-{hex}")
+}
+
+/// JSON id 数组追加（去重）。已存在返回 `None`（幂等空操作），否则返回新 JSON 数组字符串。
+/// 非法 JSON 一律按空数组处理（老库脏数据不阻断建链）。
+pub fn append_json_id(existing: &str, new_id: &str) -> Option<String> {
+    let mut ids: Vec<String> = serde_json::from_str(existing).unwrap_or_default();
+    if ids.iter().any(|x| x == new_id) {
+        return None;
+    }
+    ids.push(new_id.to_string());
+    Some(serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string()))
+}
+
+/// 从候选节点中挑出高亮应挂载的节点（纯函数，便于单测）。
+/// 候选三元组 `(id, related_highlight_ids_json, source_texts_json)`。
+/// 优先级：① `related_highlight_ids` 已含该高亮（同一条高亮的多张卡共节点）；
+/// ② `source_texts` 任一条目**包含**高亮原文（高亮是节点原文的子串）。
+/// ②刻意不做反向包含（高亮句包含短节点名会误配到错误节点）。
+pub fn pick_node_for_highlight(
+    candidates: &[(String, String, String)],
+    highlight_id: &str,
+    highlight_text: &str,
+) -> Option<String> {
+    for (id, hl_json, _src_json) in candidates {
+        let ids: Vec<String> = serde_json::from_str(hl_json).unwrap_or_default();
+        if ids.iter().any(|x| x == highlight_id) {
+            return Some(id.clone());
+        }
+    }
+    let text = highlight_text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    for (id, _hl_json, src_json) in candidates {
+        let texts: Vec<String> = serde_json::from_str(src_json).unwrap_or_default();
+        let hit = texts
+            .iter()
+            .any(|s| { let s = s.trim(); !s.is_empty() && (s == text || s.contains(text)) });
+        if hit {
+            return Some(id.clone());
+        }
+    }
+    None
+}
+
+/// P0-2：制卡后把 card_id 挂到知识节点，打通「复习评分 → 掌握度」反查链路。
+///
+/// 匹配优先级：① 同高亮已有节点 ② source_texts 匹配 ③ 新建最小节点（确定性 id）。
+/// 幂等：card_id 已在 `related_card_ids` 不重复追加；同高亮重复调用不产生重复节点。
+/// 事务：由调用方传入同一事务连接（`ai_highlight_to_flashcard` 三表落库 + 建链一次提交），
+/// 避免「卡在、链断」的孤儿卡。
+/// 返回最终挂载的节点 id。
+pub async fn link_card_to_knowledge_node(
+    conn: &mut sqlx::SqliteConnection,
+    book_id: &str,
+    highlight_id: &str,
+    card_id: &str,
+    highlight_text: &str,
+) -> AppResult<String> {
+    let now = chrono::Utc::now().timestamp();
+
+    // 1) 候选节点：全书一次取齐三列（节点量级可控）
+    let rows = sqlx::query(
+        "SELECT id, related_highlight_ids, source_texts FROM knowledge_nodes WHERE book_id = ?",
+    )
+    .bind(book_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let candidates: Vec<(String, String, String)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("id").unwrap_or_default(),
+                r.try_get::<String, _>("related_highlight_ids").unwrap_or_default(),
+                r.try_get::<String, _>("source_texts").unwrap_or_default(),
+            )
+        })
+        .collect();
+
+    // 2) 解析或创建节点
+    let node_id = match pick_node_for_highlight(&candidates, highlight_id, highlight_text) {
+        Some(id) => id,
+        None => {
+            let node_id = highlight_node_id(book_id, highlight_id);
+            let trimmed = highlight_text.trim();
+            let name: String = if trimmed.is_empty() {
+                // 空原文兜底：节点仍建（挂链优先于命名），名称用稳定短标识。
+                format!("highlight-{}", &highlight_id.chars().take(8).collect::<String>())
+            } else {
+                trimmed.chars().take(60).collect()
+            };
+            let source_texts = serde_json::json!([trimmed]).to_string();
+            sqlx::query(
+                "INSERT OR IGNORE INTO knowledge_nodes \
+                   (id, book_id, node_name, node_type, source_chapters, source_texts, \
+                    edges_json, related_card_ids, related_question_ids, related_highlight_ids, \
+                    mastery_score, mastery_confidence, last_assessed_at, assessment_count, \
+                    mastery_history, needs_contrast_check, readiness_boost, created_at, updated_at) \
+                 VALUES (?, ?, ?, 'knowledge_point', '[]', ?, \
+                         '[]', '[]', '[]', '[]', \
+                         0.0, 0.0, NULL, 0, '[]', 0, 0.0, ?, ?)",
+            )
+            .bind(&node_id)
+            .bind(book_id)
+            .bind(&name)
+            .bind(&source_texts)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *conn)
+            .await?;
+            node_id
+        }
+    };
+
+    // 3) 追加 card_id / highlight_id（双重幂等：append_json_id 去重）
+    let row = sqlx::query(
+        "SELECT related_card_ids, related_highlight_ids FROM knowledge_nodes WHERE id = ?",
+    )
+    .bind(&node_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(row) = row else {
+        return Err(AppError::General(format!("未找到知识节点 {node_id}")));
+    };
+    let card_json: String = row.try_get("related_card_ids").unwrap_or_default();
+    let hl_json: String = row.try_get("related_highlight_ids").unwrap_or_default();
+    let card_json_new = append_json_id(&card_json, card_id).unwrap_or(card_json.clone());
+    let hl_json_new = append_json_id(&hl_json, highlight_id).unwrap_or(hl_json.clone());
+    if card_json_new != card_json || hl_json_new != hl_json {
+        sqlx::query(
+            "UPDATE knowledge_nodes \
+             SET related_card_ids = ?, related_highlight_ids = ?, updated_at = ? \
+             WHERE id = ?",
+        )
+        .bind(&card_json_new)
+        .bind(&hl_json_new)
+        .bind(now)
+        .bind(&node_id)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(node_id)
 }
 
 // ==================== GraphRAG（v3.3 研习态升级） ====================

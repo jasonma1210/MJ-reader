@@ -59,6 +59,11 @@ export function generateQuizTag(): string {
   return `${date}_${rand}`;
 }
 
+/** ai_generate_quiz 返回体（只取本题所需字段；P0-C） */
+interface QuizGenerationPayload {
+  questions: unknown[];
+}
+
 export const quizService = {
   async generate(
     bookId: string,
@@ -66,22 +71,28 @@ export const quizService = {
     count = 5,
     types: string[] = ["choice", "short"],
     tag?: string,
-  ): Promise<void> {
-    if (!isTauri()) return;
+    /** P0-C R-C2：章节定位随题目记录落库（后端 sourceChapter） */
+    chapterIndex?: number | null,
+    chapterTitle?: string | null,
+  ): Promise<number> {
+    if (!isTauri()) return 0;
     const difficulty = deriveDifficulty(types);
     try {
-      await invoke(CMD.aiGenerateQuiz, {
+      const result = await invoke<QuizGenerationPayload>(CMD.aiGenerateQuiz, {
         bookId,
         content,
         questionTypes: types,
         count,
-        chapterIndex: null,
-        chapterTitle: null,
+        chapterIndex: chapterIndex ?? null,
+        chapterTitle: chapterTitle ?? null,
         difficulty,
         tag: tag ?? null,
       });
+      // 返回实际生成题数，供 AI 面板展示「已生成 N 道题」；0 题视为失败由上层提示。
+      return result?.questions?.length ?? 0;
     } catch (e) {
       logError("quizService.generate", e);
+      return 0;
     }
   },
 

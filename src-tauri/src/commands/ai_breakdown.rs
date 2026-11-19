@@ -70,9 +70,10 @@ pub(crate) use persist::{
     validate_chapter_payload,
     mirror_concept_card_to_flashcards,
     clear_ai_flashcards_on_rebreak,
+    mirror_breakdown_points_to_cards,
     parse_self_check,
     generate_bookwide_aggregates_inner,
     TextQuality,
 };
 #[allow(unused_imports)] // 供 ai_core_tests / ai_breakdown_tests 使用
-pub(crate) use persist::{BreakdownQuality, aggregate_unit_word};
+pub(crate) use persist::{BreakdownQuality, aggregate_unit_word, breakdown_point_card_uid};

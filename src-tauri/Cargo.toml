@@ -93,10 +93,11 @@ qrcode = { version = "0.14", features = ["svg"] }
 # 替代 UDP connect 8.8.8.8 探测（移动网络/无外网路由时失败 → 误返回 127.0.0.1）
 local-ip-address = "0.6"
 
-# v3.4 实现：Edge TTS（微软 Read Aloud 在线合成，多端统一神经音色）
-# 纯 Rust，复用树内 tokio-tungstenite / sha2 / rand / serde_json；无系统 TLS/音频依赖，
-# 利于 Android aarch64 / iOS aarch64 交叉编译。详见 docs/design/tts-edge-mobile-assessment.md
-kothok-edge-tts = "0.2"
+# Edge TTS（微软 Read Aloud 在线合成，多端统一神经音色）
+# 纯 Rust，无系统 TLS/音频依赖，利于 Android/iOS 交叉编译。详见 docs/design/tts-edge-mobile-assessment.md
+# 2026-11-19：微软自 2026-10-10 将 Read Aloud 迁移到 V2（Sec-MS-GEC V2 签名），
+# kothok-edge-tts 0.2.10 仍发 V1 令牌 → 全量 HTTP 403。换用已实现 V2 的 edge-tts-rust。
+edge-tts-rust = "0.1.7"
 
 # v2.0 T09 实现：云端 ASR 服务（腾讯云实时语音识别 WebSocket + 小米 MiMo ASR）
 # - tokio-tungstenite：腾讯云 wss://asr.cloud.tencent.com 流式识别客户端
