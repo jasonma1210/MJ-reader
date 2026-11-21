@@ -48,7 +48,7 @@ permissions:
 jobs:
   release-macos:
     name: Build macOS (Apple Silicon)
-    runs-on: macos-14 # Apple Silicon runner
+    runs-on: macos-latest # GitHub-hosted macOS (arm64/x64 auto)
 
     env:
       # whisper-rs-sys 的 C++（whisper.cpp / ggml-backend-reg.cpp）用了 std::filesystem，
