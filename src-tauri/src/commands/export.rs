@@ -31,9 +31,11 @@ struct MmNode {
     id: String,
     parent_id: Option<String>,
     topic: String,
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
     metadata: Option<String>,
 }
 
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 fn xml_escape(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for c in input.chars() {
@@ -65,12 +67,14 @@ fn append_outline_md(rows: &[MmNode], parent: &Option<String>, depth: usize, out
 }
 
 /// 将思维导图节点渲染为标准 OPML <outline> 树
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 fn render_mindmap_opml(rows: &[MmNode]) -> String {
     let mut out = String::new();
     append_outline_opml(rows, &None, 2, &mut out);
     out
 }
 
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 fn append_outline_opml(rows: &[MmNode], parent: &Option<String>, indent: usize, out: &mut String) {
     let pad = " ".repeat(indent);
     for row in rows.iter().filter(|r| &r.parent_id == parent) {
@@ -205,6 +209,7 @@ async fn build_markdown(pool: &SqlitePool, book_id: &str) -> AppResult<(String, 
                 id: r.try_get("id").unwrap_or_default(),
                 parent_id: r.try_get("parent_id").ok().flatten(),
                 topic: r.try_get("topic").unwrap_or_default(),
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
                 metadata: r.try_get("metadata").ok().flatten(),
             })
             .collect();
@@ -218,6 +223,7 @@ async fn build_markdown(pool: &SqlitePool, book_id: &str) -> AppResult<(String, 
 }
 
 /// 构建 OPML 内容
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 async fn build_opml(pool: &SqlitePool, mindmap_id: &str) -> AppResult<(String, usize)> {
     let title = mindmap_id.to_string();
 
@@ -231,6 +237,7 @@ async fn build_opml(pool: &SqlitePool, mindmap_id: &str) -> AppResult<(String, u
             id: r.try_get("id").unwrap_or_default(),
             parent_id: r.try_get("parent_id").ok().flatten(),
             topic: r.try_get("topic").unwrap_or_default(),
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
             metadata: r.try_get("metadata").ok().flatten(),
         })
         .collect();
@@ -283,6 +290,7 @@ pub async fn export_markdown(
 
 /// 导出思维导图为标准 OPML 文件
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn export_opml(
     mindmap_id: String,
     output_path: String,

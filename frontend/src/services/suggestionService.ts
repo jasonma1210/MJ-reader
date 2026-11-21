@@ -35,9 +35,10 @@ export const SUGGESTION_ROUTE: Record<string, string> = {
   review: "/review",
   graph: "/graph",
   tag: "/labels",
-  path: "/mastery",
+  // S2-2.4：路径建议 → 排计划页（原误指 /mastery）；练习建议 → 专项练习页（原误指 /learn）
+  path: "/path",
   read: "/",
-  practice: "/learn",
+  practice: "/practice",
 };
 
 export const suggestionService = {

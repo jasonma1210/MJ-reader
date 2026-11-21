@@ -7,6 +7,9 @@ import type {
   KnowledgePoint,
   OcrCapability,
   TextRoutes,
+  BreakdownStatus,
+  BookBreakdownChunk,
+  BreakdownQuality,
 } from "../types";
 import { logError } from "../utils/logError";
 import { errMsg } from "../utils/toast";
@@ -407,6 +410,54 @@ export const breakdownService = {
     } catch (e) {
       logError("breakdownService.getKnowledgePoints", e);
       return [];
+    }
+  },
+
+  // ===== P0-1（2026-10-09）：拆书四件套接线（此前后端已实现、前端零调用） =====
+
+  /** 查询本书是否有进行中的拆书任务（含进度）；running=false 时走 getResult 恢复结果。 */
+  async getStatus(bookId: string): Promise<BreakdownStatus | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<BreakdownStatus | null>(CMD.getBreakdownStatus, { bookId });
+    } catch (e) {
+      logError("breakdownService.getStatus", e);
+      return null;
+    }
+  },
+
+  /** 读取单章拆解分析（summary / keyPoints / meaning / 脑图节点等）。 */
+  async getChunk(bookId: string, chapterIndex: number): Promise<BookBreakdownChunk | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<BookBreakdownChunk | null>(CMD.getBookBreakdownChunk, {
+        bookId,
+        chapterIndex,
+      });
+    } catch (e) {
+      logError("breakdownService.getChunk", e);
+      return null;
+    }
+  },
+
+  /** 拆书质量自检（缺章/空摘要/重复知识点/单调性 → 质量分）。 */
+  async getSelfCheck(bookId: string): Promise<BreakdownQuality | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<BreakdownQuality | null>(CMD.getBreakdownSelfCheck, { bookId });
+    } catch (e) {
+      logError("breakdownService.getSelfCheck", e);
+      return null;
+    }
+  },
+
+  /** 强制重置拆书任务状态（卡死 / 报错遗留 running 标记时恢复可重拆）。 */
+  async forceReset(bookId: string): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      await invoke<void>(CMD.forceResetBreakdown, { bookId });
+    } catch (e) {
+      logError("breakdownService.forceReset", e);
     }
   },
 };

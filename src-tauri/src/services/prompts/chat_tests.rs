@@ -59,3 +59,56 @@ fn unbound_guide_distinguishes_book_question_from_generic_learning() {
     assert!(p.contains("直接正常回答"), "通用学习问题直接作答");
     assert!(p.contains("耐心"), "保持学习助手口吻");
 }
+
+// ===== P2-2 人群画像附录（2026-11-19） =====
+
+#[test]
+fn persona_short_端侧约束_全部画像() {
+    use crate::services::prompts::chat::{build_persona_appendix, is_valid_local_short, PersonaKind};
+    for kind in [PersonaKind::College, PersonaKind::Postgrad, PersonaKind::Social] {
+        let a = build_persona_appendix(kind);
+        // short：≤120 字、纯文本、无结构化标记（1B 端侧硬约束）
+        assert!(
+            is_valid_local_short(&a.short),
+            "画像 {:?} 的 short 不满足端侧约束：{}",
+            kind,
+            a.short
+        );
+        assert!(a.short.chars().count() <= 120, "short 超 120 字：{:?}", kind);
+        assert!(!a.short.contains('⟦') && !a.short.contains('【'), "short 含结构化标记：{:?}", kind);
+        assert!(!a.short.contains('\n'), "short 必须单段纯文本：{:?}", kind);
+        // full：≤800 字（远程注入上限）
+        assert!(a.full.chars().count() <= 800, "full 超 800 字：{:?}", kind);
+        assert!(!a.full.trim().is_empty());
+    }
+}
+
+#[test]
+fn persona_kind_解析与稳定标识() {
+    use crate::services::prompts::chat::PersonaKind;
+    assert_eq!(PersonaKind::parse("college"), Some(PersonaKind::College));
+    assert_eq!(PersonaKind::parse("postgrad"), Some(PersonaKind::Postgrad));
+    assert_eq!(PersonaKind::parse("social"), Some(PersonaKind::Social));
+    assert_eq!(PersonaKind::parse("  social  "), Some(PersonaKind::Social));
+    assert_eq!(PersonaKind::parse("other"), None);
+    assert_eq!(PersonaKind::parse(""), None);
+    assert_eq!(PersonaKind::College.as_str(), "college");
+    assert_eq!(PersonaKind::parse(PersonaKind::Postgrad.as_str()), Some(PersonaKind::Postgrad));
+}
+
+#[test]
+fn persona_short_校验器_fail_closed() {
+    use crate::services::prompts::chat::is_valid_local_short;
+    // 合法：短纯文本
+    assert!(is_valid_local_short("用户是考生，请突出考点与解题思路。"));
+    // 非法：空 / 超长 / 结构化标记 / 换行 / 表格竖线
+    assert!(!is_valid_local_short(""));
+    assert!(!is_valid_local_short("   "));
+    assert!(!is_valid_local_short(&"长".repeat(121)));
+    assert!(!is_valid_local_short("【学习者画像】带方括号"));
+    assert!(!is_valid_local_short("带溯源标记 ⟦溯源:第1章⟧ 的短句"));
+    assert!(!is_valid_local_short("第一行\n第二行"));
+    assert!(!is_valid_local_short("表格|分隔|符"));
+    // 恰好 120 字合法（边界）
+    assert!(is_valid_local_short(&"字".repeat(120)));
+}

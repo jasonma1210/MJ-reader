@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, AlignLeft, Type, GraduationCap, ScanEye } from "lucide-react";
 import { useLayoutMode } from "../hooks/useLayoutMode";
@@ -8,7 +8,6 @@ import { BookWorkspace } from "../components/bookWorkspace/BookWorkspace";
 import { BookView } from "../renderer/BookView";
 import { FoliateView } from "../renderer/foliate/FoliateView";
 import { ReaderFloatActions } from "../components/reader/ReaderFloatActions";
-import { SelectionActionBar } from "../components/reader/SelectionActionBar";
 import { ReaderProgressBar } from "../components/reader/ReaderProgressBar";
 import { TypographyPopover } from "../components/reader/TypographyPopover";
 import { TocModal } from "../components/reader/TocModal";
@@ -18,9 +17,11 @@ import { ErrorBoundary } from "../components/common/ErrorBoundary";
 import { ReaderAiPanel } from "../components/reader/ReaderAiPanel";
 import { bookService } from "../services/bookService";
 import { useBreakdownStore, initBreakdownWatcher } from "../stores/breakdownStore";
+import { breakdownService } from "../services/breakdownService";
 import { trackMetric } from "../services/telemetryService";
 import { toast } from "../utils/toast";
 import { cn } from "../utils/cn";
+import { logError } from "../utils/logError";
 import { Sheet } from "../components/ui/Sheet";
 import { useWorkspaceStore, type WorkspaceTab } from "../stores/workspaceStore";
 import { readingReportService } from "../services/readingReportService";
@@ -64,6 +65,8 @@ export function ReaderPage() {
   /** 外部一键直达时预设的工作区 tab（脑图/复盘/题库）；透传给 BookWorkspace 的 initialTab */
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("breakdown");
   const [bookInfo, setBookInfo] = useState<{ filePath: string; format: string } | null>(null);
+  /** S3-3.2：书信息加载失败（非空时渲染错误态 + 重试） */
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const mode = useLayoutMode();
   const isLandscape = mode === "tablet-landscape";
 
@@ -95,10 +98,54 @@ export function ReaderPage() {
 
   // —— 专注模式（F-9-001）：遮罩弱化周边 + 按段落/离开上报阅读速度 ——
   const [focusMode, setFocusMode] = useState(false);
+  // P2-1（2026-11-19）：`?focus=5|10|20` 跨组件契约——首页续读 CTA 携带时长预设，
+  // 进入阅读器自动开专注并倒计时；消费后清参（一次性，防重复触发）。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [focusEndsAt, setFocusEndsAt] = useState<number | null>(null);
+  const [focusRemainSec, setFocusRemainSec] = useState<number | null>(null);
+  const [focusTimeUp, setFocusTimeUp] = useState(false);
   const focusAreaRef = useRef<HTMLDivElement>(null);
   const focusStartRef = useRef<number | null>(null);
   const focusElapsedRef = useRef(0);
   const focusWordsRef = useRef(0);
+
+  // P2-1：一次性消费 ?focus=N（仅 5/10/20 合法），开专注 + 记录结束时刻
+  useEffect(() => {
+    const raw = Number(searchParams.get("focus"));
+    if (![5, 10, 20].includes(raw)) return;
+    setFocusMode(true);
+    setFocusEndsAt(Date.now() + raw * 60_000);
+    setFocusTimeUp(false);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete("focus");
+        return p;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  // P2-1：专注倒计时（有预设时才计时；到点提示但不强制退出，不打断阅读）
+  useEffect(() => {
+    if (focusEndsAt == null) return;
+    const tick = () => {
+      const remain = Math.max(0, Math.ceil((focusEndsAt - Date.now()) / 1000));
+      setFocusRemainSec(remain);
+      if (remain <= 0) setFocusTimeUp(true);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [focusEndsAt]);
+
+  // 退出专注时同步清掉计时（下次手动进入无倒计时）
+  useEffect(() => {
+    if (focusMode) return;
+    setFocusEndsAt(null);
+    setFocusRemainSec(null);
+    setFocusTimeUp(false);
+  }, [focusMode]);
 
   const reportFocusSpeed = () => {
     if (focusStartRef.current == null || !bookId) return;
@@ -185,13 +232,27 @@ export function ReaderPage() {
 
   useEffect(() => {
     if (!bookId) return;
-    void bookService.getBookById(bookId).then((b) => {
-      if (b?.filePath) {
-        setBookInfo({ filePath: b.filePath, format: b.format || "epub" });
-      }
-      if (b?.title) setBookTitle(b.title);
-      if (b?.coverPath) setBookCover(b.coverPath);
-    });
+    let alive = true;
+    setLoadErr(null);
+    void bookService
+      .getBookById(bookId)
+      .then((b) => {
+        if (!alive) return;
+        if (b?.filePath) {
+          setBookInfo({ filePath: b.filePath, format: b.format || "epub" });
+        }
+        if (b?.title) setBookTitle(b.title);
+        if (b?.coverPath) setBookCover(b.coverPath);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        // S3-3.2：书信息加载失败 → 错误态（不再静默降级）
+        logError("ReaderPage.loadBook", e);
+        setLoadErr("书籍信息加载失败");
+      });
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId]);
 
@@ -381,6 +442,7 @@ export function ReaderPage() {
         open={typographyOpen}
         anchorRef={typographyBtnRef}
         format={bookInfo?.format}
+        bookId={bookId}
         onClose={() => setTypographyOpen(false)}
       />
 
@@ -392,7 +454,29 @@ export function ReaderPage() {
           className="relative flex-1 overflow-hidden"
           onClick={onReaderAreaClick}
         >
-          {bookInfo ? (
+          {loadErr ? (
+            /* S3-3.2：书信息加载失败 → 错误态 + 重试（不再静默降级） */
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+              <p className="text-sm text-danger">{loadErr}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!bookId) return;
+                  setLoadErr(null);
+                  void bookService.getBookById(bookId).then((b) => {
+                    if (b?.filePath) {
+                      setBookInfo({ filePath: b.filePath, format: b.format || "epub" });
+                    }
+                    if (b?.title) setBookTitle(b.title);
+                    if (b?.coverPath) setBookCover(b.coverPath);
+                  });
+                }}
+                className="rounded-full border border-line bg-paper px-4 py-1.5 text-sm font-medium text-ink shadow-sm transition hover:border-accent"
+              >
+                {t("common.retry")}
+              </button>
+            </div>
+          ) : bookInfo ? (
             <BookView
               bookId={bookId}
               bookPath={bookInfo.filePath}
@@ -401,7 +485,6 @@ export function ReaderPage() {
           ) : (
             <FoliateView bookId={bookId} />
           )}
-          <SelectionActionBar />
         </div>
 
         {/* 横屏：右侧 1/3 侧边栏（工作区 / 问 AI） */}
@@ -428,22 +511,41 @@ export function ReaderPage() {
         )}
       </div>
 
-      {/* 后台拆书浮层：运行中显示百分比；点击回到工作区（仅当前书） */}
+      {/* 后台拆书浮层：运行中显示百分比；点击回到工作区；可强制结束（S3-3.6） */}
       {bdRunning && bdBookId === bookId && (
-        <button
-          onClick={openWorkspace}
-          className="absolute bottom-24 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-overlay px-3 py-1.5 text-[11px] text-overlay shadow-lg"
-        >
-          <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent" />
-          <span>{t("reader.breakdownInProgress")}</span>
-          <span className="tabular-nums">
-            {bdProgress && bdProgress.total > 0
-              ? t("reader.breakdownPercent", {
-                  percent: Math.min(100, Math.round((bdProgress.current / bdProgress.total) * 100)),
+        <div className="absolute bottom-24 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border border-line bg-overlay px-2 py-1.5 text-[11px] text-overlay shadow-lg">
+          <button
+            onClick={openWorkspace}
+            className="flex items-center gap-2 rounded-full px-2"
+            aria-label={t("reader.breakdownViewProgress")}
+          >
+            <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent" />
+            <span>{t("reader.breakdownInProgress")}</span>
+            <span className="tabular-nums">
+              {bdProgress && bdProgress.total > 0
+                ? t("reader.breakdownPercent", {
+                    percent: Math.min(100, Math.round((bdProgress.current / bdProgress.total) * 100)),
+                  })
+                : ""}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void breakdownService
+                .forceReset(bdBookId)
+                .then(() => {
+                  useBreakdownStore.getState().reset();
+                  toast(t("reader.breakdownStopped"));
                 })
-              : ""}
-          </span>
-        </button>
+                .catch((e) => logError("ReaderPage.forceResetBreakdown", e));
+            }}
+            className="shrink-0 rounded-full border border-danger/40 px-2 py-0.5 font-medium text-danger transition hover:bg-danger/10"
+            aria-label={t("reader.breakdownStop")}
+          >
+            {t("reader.breakdownStop")}
+          </button>
+        </div>
       )}
 
       {/* 底部工具栏：右下角悬浮按钮 + 进度条（覆盖于内容之上）
@@ -505,6 +607,15 @@ export function ReaderPage() {
           <div className="absolute left-1/2 top-[3.75rem] z-[40] flex -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-overlay px-3 py-1.5 text-[11px] font-medium text-overlay shadow-lg">
             <ScanEye className="h-3.5 w-3.5" />
             <span>{t("focus.title")}</span>
+            {/* P2-1：时长预设倒计时——到点只提示不强制退出（不打断阅读） */}
+            {focusTimeUp ? (
+              <span className="font-semibold text-accent">{t("focus.timeUp")}</span>
+            ) : focusRemainSec != null ? (
+              <span className="tabular-nums">
+                {Math.floor(focusRemainSec / 60)}:
+                {String(focusRemainSec % 60).padStart(2, "0")}
+              </span>
+            ) : null}
             <span className="mx-0.5 h-3 w-px bg-current opacity-30" />
             <button
               onClick={() => navigate(`/report/${bookId}`)}

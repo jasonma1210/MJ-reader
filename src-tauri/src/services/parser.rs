@@ -1,3 +1,4 @@
+#![allow(dead_code)] // 能力库保留（JSONPath/CSS/XPath 抽取脚手架，待 P1-6 接线）
 use scraper::{Html, Selector};
 use sxd_document::parser as xml_parser;
 use sxd_xpath::evaluate_xpath;

@@ -32,6 +32,7 @@ pub async fn get_sync_status(
 
 /// 获取同步配置
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn get_sync_config(state: State<'_, AppState>) -> AppResult<SyncConfig> {
     let manager = SyncManager::new(state.db.as_ref().clone());
     manager.load_config().await.map_err(AppError::from)
@@ -39,6 +40,7 @@ pub async fn get_sync_config(state: State<'_, AppState>) -> AppResult<SyncConfig
 
 /// 保存同步配置
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn save_sync_config(
     state: State<'_, AppState>,
     config: SyncConfig,
@@ -62,6 +64,7 @@ pub async fn set_sync_enabled(
 
 /// 测试同步连接
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn test_sync_connection(state: State<'_, AppState>) -> AppResult<()> {
     let manager = SyncManager::new(state.db.as_ref().clone());
     let config = manager.load_config().await.map_err(AppError::from)?;
@@ -74,6 +77,7 @@ pub async fn test_sync_connection(state: State<'_, AppState>) -> AppResult<()> {
 
 /// 列出未解决的冲突
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn list_sync_conflicts(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<conflict::ConflictInfo>> {
@@ -84,6 +88,7 @@ pub async fn list_sync_conflicts(
 
 /// 手动解决冲突
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn resolve_sync_conflict(
     state: State<'_, AppState>,
     conflict_id: String,
@@ -96,6 +101,7 @@ pub async fn resolve_sync_conflict(
 
 /// 自动解决所有冲突（last-write-wins）
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn auto_resolve_conflicts(state: State<'_, AppState>) -> AppResult<usize> {
     conflict::auto_resolve_conflicts(&state.db)
         .await
@@ -104,6 +110,7 @@ pub async fn auto_resolve_conflicts(state: State<'_, AppState>) -> AppResult<usi
 
 /// 获取设备 ID
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn get_device_id(state: State<'_, AppState>) -> AppResult<String> {
     crate::services::sync::get_or_create_device_id(&state.db)
         .await
@@ -112,6 +119,7 @@ pub async fn get_device_id(state: State<'_, AppState>) -> AppResult<String> {
 
 /// 获取支持的同步提供方列表
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn list_sync_providers() -> AppResult<Vec<ProviderInfo>> {
     Ok(vec![
         ProviderInfo {
@@ -147,6 +155,7 @@ pub async fn list_sync_providers() -> AppResult<Vec<ProviderInfo>> {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub struct ProviderInfo {
     pub id: String,
     pub name: String,
@@ -156,6 +165,7 @@ pub struct ProviderInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub struct FieldInfo {
     pub key: String,
     pub label: String,
@@ -168,6 +178,7 @@ pub struct FieldInfo {
 /// 检测多设备同步冲突
 /// 返回当前未解决的冲突列表（按 LWW 推断的本地 vs 远程版本对）
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn detect_sync_conflicts(
     state: State<'_, AppState>,
     book_id: Option<String>,
@@ -180,6 +191,7 @@ pub async fn detect_sync_conflicts(
 /// 三方合并冲突
 /// 接受一个冲突记录和策略，返回合并结果（已写入主表）
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn resolve_conflict_3way_merge(
     state: State<'_, AppState>,
     conflict: ConflictRecord,
@@ -196,6 +208,7 @@ pub async fn resolve_conflict_3way_merge(
 
 /// 获取某条记录的同步历史
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn get_sync_history(
     state: State<'_, AppState>,
     entity_id: String,
@@ -207,6 +220,7 @@ pub async fn get_sync_history(
 
 /// 清理超过 30 天的 tombstone 记录
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn purge_expired_tombstones(state: State<'_, AppState>) -> AppResult<usize> {
     crdt_store::purge_expired_tombstones(&state.db)
         .await

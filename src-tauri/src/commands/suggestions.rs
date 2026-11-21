@@ -192,11 +192,9 @@ pub async fn dashboard_suggestions(state: State<'_, AppState>) -> AppResult<Dash
     let week_read_sec = week_read_seconds(pool).await;
     let last_review = last_review_epoch(pool).await
         .map(|t| {
-            chrono::NaiveDateTime::from_timestamp_opt(t, 0)
+            chrono::DateTime::<chrono::Utc>::from_timestamp(t, 0)
                 .map(|dt| {
-                    chrono::DateTime::<chrono::Utc>::from_utc(dt, chrono::Utc)
-                        .with_timezone(&chrono::Local)
-                        .format("%Y-%m-%d")
+                    dt.with_timezone(&chrono::Local).format("%Y-%m-%d")
                         .to_string()
                 })
                 .unwrap_or_else(|| "—".to_string())

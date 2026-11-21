@@ -7,7 +7,7 @@ mod services;
 // 在真机上脱离 Tauri 上下文做端到端验证。生产路径仍走 commands::ocr 的 AppHandle 版本。
 pub use crate::services::ocr_pp::pp_ocr_recognize_from_dir;
 
-use commands::{ai_core, ai_chat, ai_analysis, ai_quiz, ai_breakdown, ai_extended, anki, annotation, app, backup, book, book_fts, bookmark, card, chapter_check, cloud_asr, comparison, directory, export, file, knowledge_graph, know_agent, knowledge_node, lan_file_server, learning_path, mask, mastery, metrics, mindmap_node, ocr, output, practice, quiz_link, reading, review, settings, stats, study_note, study_set, suggestions, sync as sync_commands, tags, teaching, tts, voice_coach, whiteboard};
+use commands::{ai_core, ai_chat, ai_analysis, ai_quiz, ai_breakdown, ai_extended, anki, annotation, backup, book, book_fts, bookmark, card, chapter_check, cloud_asr, comparison, directory, export, file, knowledge_graph, know_agent, knowledge_node, lan_file_server, learning_path, mask, mastery, metrics, mindmap_node, ocr, output, practice, quiz_link, reading, review, settings, stats, study_note, study_set, suggestions, sync as sync_commands, tags, teaching, tts, voice_coach, whiteboard};
 // v3.0（3-Tab IA 重构）：端侧本地模型命令——2026-09-04 起搜索/下载/管理全平台注册，
 // 仅推理/卸载命令保留 llamacpp 门控（见 invoke_handler 内标注）。
 use commands::local_model;
@@ -130,9 +130,8 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data_dir).ok();
 
-            // v3.4 实现：Edge TTS —— 安装 rustls ring crypto provider（幂等），
-            // 必须在首次 tts_synthesize 前的任何 TLS 握手前调用。
-            kothok_edge_tts::init_tls();
+            // Edge TTS 迁移到 edge-tts-rust（V2）：其 reqwest use_rustls_tls()
+            // 自行处理 crypto provider，无需再手动 init_tls()。
 
             // BE-02 修复（2026-08-05 审计）：初始化 Argon2id 持久化随机盐
             // （所有 AES-256-GCM 密钥派生依赖该盐，必须在首次 encrypt/decrypt 前调用）
@@ -201,11 +200,20 @@ pub fn run() {
                 }
             }
 
+            // 2026-11-20：Android SAF 目录批量扫描导入桥——缓存 JavaVM 供 JNI 调用。
+            // 仅 android-folder-picker feature 启用时生效；内部 catch_unwind 保证不崩 App。
+            #[cfg(all(target_os = "android", feature = "android-folder-picker"))]
+            {
+                if let Err(e) = commands::folder_picker::setup_android_folder_picker(app) {
+                    log::warn!("[FolderPicker] JNI 桥接初始化失败: {}", e);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             // v1.7.0 修订 6：书库页手势退出
-            app::exit_app,
+                        // [S4-4.7 下线] app::exit_app,
             // v2.1（批注设计文档）：AI 智能批注
             annotation::generate_ai_annotation,
             annotation::save_highlight_annotation,
@@ -229,7 +237,7 @@ pub fn run() {
     commands::knowledge_store::get_knowledge_points,
             knowledge_node::find_weak_knowledge_nodes,
             knowledge_node::update_knowledge_mastery,
-            knowledge_node::link_question_to_knowledge_node,
+                        // [S4-4.7 下线] knowledge_node::link_question_to_knowledge_node,
             book::get_books,
             book::delete_book,
             book::get_book_by_id,
@@ -239,11 +247,11 @@ pub fn run() {
             book::process_book_metadata,
             book::save_book_cover,
             // v0.9.0 实现：异步导入（避免 5MB+ 文件阻塞 UI 5-10 秒）
-            book::start_import_book,
-            book::import_book_bytes,
+            book::import::start_import_book,
+            book::import::import_book_bytes,
             // v1.4.2 实现：零 IPC 流式导入（Android SAF content:// 由 Rust 直接读取，
             // 不再经 JS Array.from + JSON 序列化，MOBI/EPUB 等大文件秒级导入）
-            book::import_book_from_uri,
+            book::import::import_book_from_uri,
             book::cancel_import,
             file::read_file_bytes,
             file::read_txt,
@@ -304,7 +312,6 @@ pub fn run() {
             // v0.8.0 P0.2 实现：AI 举一反三
             ai_analysis::ai_related_knowledge,
             ai_analysis::list_knowledge_extensions,
-            ai_chat::ai_test_connection,
             ai_chat::save_ai_config,
             ai_chat::load_ai_config_cmd,
             // v1.4.0 实现：AI 多配置（权重路由）——保存/列表/删除/连接测试
@@ -333,23 +340,23 @@ pub fn run() {
             ai_analysis::list_image_gen_providers,
             ai_analysis::configure_image_gen,
             // v1.1.0 P2.1 实现：AI 拆书（按章节批量生成卡片 + 思维导图节点）
-            ai_breakdown::ai_book_breakdown,
+            ai_breakdown::execution::ai_book_breakdown,
             // v1.5.1（用户报障 #2）：从 book_breakdowns 恢复已拆解章节结果
-            ai_breakdown::get_book_breakdown,
+            ai_breakdown::persist::get_book_breakdown,
             // v1.5.2（用户报障 #4）：按章分批拉取完整拆书结果 + 取消进行中的拆书
-            ai_breakdown::get_book_breakdown_chunk,
-            ai_breakdown::ai_book_breakdown_cancel,
+            ai_breakdown::persist::get_book_breakdown_chunk,
+            ai_breakdown::events::ai_book_breakdown_cancel,
             // v1.6.10（用户报障：100% 卡死根治）：强制结束卡死的拆书任务（清 running_map + 发 done）
-            ai_breakdown::force_reset_breakdown,
+            ai_breakdown::events::force_reset_breakdown,
             // v1.6（用户报障 #1）：拆书任务状态查询（退出面板再进恢复进度显示）
-            ai_breakdown::get_breakdown_status,
+            ai_breakdown::events::get_breakdown_status,
             // v2.2（Better Harness G2）：解析质量自检报告查询
-            ai_breakdown::get_breakdown_self_check,
+            ai_breakdown::persist::get_breakdown_self_check,
             // v2.2（Better Harness G3）：学习者纠正内容大类
-            ai_breakdown::correct_content_category,
+            ai_breakdown::persist::correct_content_category,
             // v2.1（方案文档全书级扩展）：novel 人物/关系图/脚本；textbook 考点/规划/自检
-            ai_breakdown::generate_bookwide_aggregates,
-            ai_breakdown::get_bookwide_aggregates,
+            ai_breakdown::persist::generate_bookwide_aggregates,
+            ai_breakdown::persist::get_bookwide_aggregates,
             // v1.6.1（方案文档「举一反三题库」）：题库查询与删除
             ai_quiz::list_quiz_questions,
             ai_quiz::delete_quiz_question,
@@ -372,7 +379,7 @@ pub fn run() {
             asr::transcribe_audio,
             // v0.8.0 P2.3：实时 ASR 流式识别（v2.0 T02: 新增 iOS 分支）
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
-            asr::transcribe_streaming,
+                        // [S4-4.7 下线] asr::transcribe_streaming,
             // v2.0 T05 实现：Android 系统 SpeechRecognizer JNI 桥接命令
             // （未启用 android-asr feature 时为降级 stub，保持 invoke 兼容）
             //
@@ -380,22 +387,22 @@ pub fn run() {
             // Linux 上这 8 个路径会解析不到模块，报 E0433 `cannot find module or crate asr`
             // （ubuntu CI 的 cargo check 必挂）。新增 ASR 命令请沿用同一 cfg。
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
-            asr::android_speech_recognizer_start,
+                        // [S4-4.7 下线] asr::android_speech_recognizer_start,
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
-            asr::android_speech_recognizer_stop,
+                        // [S4-4.7 下线] asr::android_speech_recognizer_stop,
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
             asr::android_speech_recognizer_check_auth,
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
-            asr::android_speech_recognizer_request_auth,
+                        // [S4-4.7 下线] asr::android_speech_recognizer_request_auth,
             // v2.0 T02 实现：iOS SFSpeechRecognizer 原生 ASR 命令（流式 + 权限）
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
-            asr::ios_speech_recognizer_start,
+                        // [S4-4.7 下线] asr::ios_speech_recognizer_start,
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
-            asr::ios_speech_recognizer_stop,
+                        // [S4-4.7 下线] asr::ios_speech_recognizer_stop,
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
-            asr::ios_speech_recognizer_check_auth,
+                        // [S4-4.7 下线] asr::ios_speech_recognizer_check_auth,
             #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
-            asr::ios_speech_recognizer_request_auth,
+                        // [S4-4.7 下线] asr::ios_speech_recognizer_request_auth,
             settings::get_cache_info,
             settings::clear_app_cache,
             settings::get_storage_info,
@@ -420,55 +427,59 @@ pub fn run() {
             // v0.5.0 实现：跨设备同步命令
             sync_commands::sync_now,
             sync_commands::get_sync_status,
-            sync_commands::get_sync_config,
-            sync_commands::save_sync_config,
+                        // [S4-4.7 下线] sync_commands::get_sync_config,
+                        // [S4-4.7 下线] sync_commands::save_sync_config,
             // v2.x（S4 补全）：仅切换同步总开关
             sync_commands::set_sync_enabled,
-            sync_commands::test_sync_connection,
-            sync_commands::list_sync_conflicts,
-            sync_commands::resolve_sync_conflict,
-            sync_commands::auto_resolve_conflicts,
-            sync_commands::get_device_id,
-            sync_commands::list_sync_providers,
+                        // [S4-4.7 下线] sync_commands::test_sync_connection,
+                        // [S4-4.7 下线] sync_commands::list_sync_conflicts,
+                        // [S4-4.7 下线] sync_commands::resolve_sync_conflict,
+                        // [S4-4.7 下线] sync_commands::auto_resolve_conflicts,
+                        // [S4-4.7 下线] sync_commands::get_device_id,
+                        // [S4-4.7 下线] sync_commands::list_sync_providers,
             // v0.8.0 P2.4 实现：CRDT 多设备高亮冲突合并
-            sync_commands::detect_sync_conflicts,
-            sync_commands::resolve_conflict_3way_merge,
-            sync_commands::get_sync_history,
-            sync_commands::purge_expired_tombstones,
+                        // [S4-4.7 下线] sync_commands::detect_sync_conflicts,
+                        // [S4-4.7 下线] sync_commands::resolve_conflict_3way_merge,
+                        // [S4-4.7 下线] sync_commands::get_sync_history,
+                        // [S4-4.7 下线] sync_commands::purge_expired_tombstones,
             // v0.5.0 实现：书库目录管理
-            directory::create_directory,
+                        // [S4-4.7 下线] directory::create_directory,
             directory::list_directories,
-            directory::rename_directory,
-            directory::delete_directory,
-            directory::move_book_to_directory,
-            directory::list_library_dirs,
-            directory::add_library_dir,
-            directory::remove_library_dir,
-            directory::scan_library_dir,
+                        // [S4-4.7 下线] directory::rename_directory,
+                        // [S4-4.7 下线] directory::delete_directory,
+                        // [S4-4.7 下线] directory::move_book_to_directory,
+                        // [S4-4.7 下线] directory::list_library_dirs,
+                        // [S4-4.7 下线] directory::add_library_dir,
+                        // [S4-4.7 下线] directory::remove_library_dir,
+                        // [S4-4.7 下线] directory::scan_library_dir,
             // v1.3.0 实现：直接选择文件夹深度扫描导入
+            // 2026-11-20 解冻：目录批量扫描导入（导入页选项）；scan_dirs_into_library 递归+
+            // SHA256 去重+软删过滤均已对齐单文件口径，仅恢复注册即可用。
             directory::import_folders,
+            // 2026-11-20：Android SAF 目录选择（JNI；未启用 feature 时返回降级 status）
+            commands::folder_picker::pick_android_folder,
             // v0.8.0 P2.1 实现：Anki .apkg 导入导出
-            anki::import_anki_apkg,
+                        // [S4-4.7 下线] anki::import_anki_apkg,
             anki::export_anki_apkg,
-            anki::preview_anki_apkg,
+                        // [S4-4.7 下线] anki::preview_anki_apkg,
             // v1.1.0 P0.2 实现：卡片轴心架构 — 卡片 CRUD + 双向链接
             card::create_card,
-            card::get_card_by_id,
-            card::get_card_by_uid,
-            card::update_card,
-            card::delete_card,
+                        // [S4-4.7 下线] card::get_card_by_id,
+                        // [S4-4.7 下线] card::get_card_by_uid,
+                        // [S4-4.7 下线] card::update_card,
+                        // [S4-4.7 下线] card::delete_card,
             card::list_cards_by_book,
             card::list_cards_by_study_set,
             card::create_card_link,
             card::list_card_links,
             card::list_card_links_by_book,
-            card::list_reverse_links,
-            card::delete_card_link,
+                        // [S4-4.7 下线] card::list_reverse_links,
+                        // [S4-4.7 下线] card::delete_card_link,
             // v1.1.0 P2.1：标题链接自动反转引擎
-            card::scan_title_links,
-            card::list_title_links_for_book,
+                        // [S4-4.7 下线] card::scan_title_links,
+                        // [S4-4.7 下线] card::list_title_links_for_book,
             // v1.1.0 P4.1：卡片全文检索
-            card::search_cards,
+                        // [S4-4.7 下线] card::search_cards,
             // v2.x（FSRS/SM-2 复习）：记录卡片复习评级，更新 card_scheduling 调度
             card::record_card_review,
             // v3.8（到期提示按书分组）：各书到期数聚合 + 按书到期卡清单
@@ -477,8 +488,8 @@ pub fn run() {
             // v1.1.0 P0.2 实现：学习集容器（Study Set）CRUD
             study_set::create_study_set,
             study_set::list_study_sets,
-            study_set::update_study_set,
-            study_set::delete_study_set,
+                        // [S4-4.7 下线] study_set::update_study_set,
+                        // [S4-4.7 下线] study_set::delete_study_set,
             study_set::add_book_to_study_set,
             study_set::add_card_to_study_set,
             // v1.1.0 P1.2：根据 book_id 查询所属学习集（学习集专属色）
@@ -487,18 +498,20 @@ pub fn run() {
             mindmap_node::save_mindmap_nodes,
             mindmap_node::load_mindmap_nodes,
             mindmap_node::link_node_to_card,
-            mindmap_node::link_node_to_highlight,
+                        // [S4-4.7 下线] mindmap_node::link_node_to_highlight,
+            // v27（P0-2）：脑图节点挂接知识节点
+                        // [S4-4.7 下线] mindmap_node::link_node_to_knowledge_node,
             mindmap_node::get_node_by_uid,
             // v1.1.0 P1.4：大纲视图节点加载
-            mindmap_node::list_outline_nodes,
+                        // [S4-4.7 下线] mindmap_node::list_outline_nodes,
             // v1.1.0 P2.3：多层子脑图加载/保存
-            mindmap_node::load_submap,
-            mindmap_node::save_submap,
+                        // [S4-4.7 下线] mindmap_node::load_submap,
+                        // [S4-4.7 下线] mindmap_node::save_submap,
             // v1.1.0 P2.6：条件思维导图查询
-            mindmap_node::query_cards_for_conditional_mindmap,
+                        // [S4-4.7 下线] mindmap_node::query_cards_for_conditional_mindmap,
             // P1 导出闭环：Markdown / OPML 导出
             export::export_markdown,
-            export::export_opml,
+                        // [S4-4.7 下线] export::export_opml,
             // v1.1.7 实现：阶段九 AI 扩展命令
             ai_extended::ai_generate_toc,
             // 2026-08-07：补 ai_toc 读路径，此前该表只写不读
@@ -567,6 +580,8 @@ pub fn run() {
             // T03（2026-08-14 Gaps 批次）：R11 三源单生效裁决
             ai_core::get_active_provider,
             ai_core::set_active_provider,
+            ai_core::save_chat_persona,
+            ai_core::get_chat_persona,
             // Ollama 专属配置（2026-09-04）：地址/模型持久化 + 连接测试 + /api/tags 模型列表
             ollama_config::ollama_load_config,
             ollama_config::ollama_save_config,
@@ -815,9 +830,50 @@ mod command_registration_tests {
         names
     }
 
+    /// S4-4.7 显式下线命令（冻结能力，前端零引用）。
+    /// 与 `scripts/reconcile_commands.mjs` 的 `DOWNGRADED_COMMANDS` 保持一一对应；
+    /// 恢复接线时：1) 取消 lib.rs `// [S4-4.7 下线]` 注释；2) 移除本清单与 mjs 清单；3) 前端接 CMD 后重跑回归。
+    const DOWNGRADED: &[&str] = &[
+        "exit_app",
+        "link_question_to_knowledge_node",
+        "export_opml",
+        // 同步（冻结）
+        "get_sync_config", "save_sync_config", "test_sync_connection", "list_sync_conflicts",
+        "resolve_sync_conflict", "auto_resolve_conflicts", "get_device_id", "list_sync_providers",
+        "detect_sync_conflicts", "resolve_conflict_3way_merge", "get_sync_history",
+        "purge_expired_tombstones",
+        // 目录管理（冻结）
+        "create_directory", "rename_directory", "delete_directory", "move_book_to_directory",
+        "list_library_dirs", "add_library_dir", "remove_library_dir", "scan_library_dir",
+        // 2026-11-20: import_folders 已解冻（目录批量扫描导入），从冻结清单移除。
+        // Anki（冻结）
+        "import_anki_apkg", "preview_anki_apkg",
+        // 卡片部分命令（冻结）
+        "get_card_by_id", "get_card_by_uid", "update_card", "delete_card", "list_reverse_links",
+        "delete_card_link", "scan_title_links", "list_title_links_for_book", "search_cards",
+        // ASR 移动端（冻结）
+        "transcribe_streaming", "android_speech_recognizer_start", "android_speech_recognizer_stop",
+        "android_speech_recognizer_request_auth", "ios_speech_recognizer_start",
+        "ios_speech_recognizer_stop", "ios_speech_recognizer_check_auth",
+        "ios_speech_recognizer_request_auth",
+        // 子脑图 / 选集 / 图谱链接（冻结）
+        "link_node_to_highlight", "link_node_to_knowledge_node", "list_outline_nodes",
+        "load_submap", "save_submap", "query_cards_for_conditional_mindmap",
+        "update_study_set", "delete_study_set",
+    ];
+
+    /// 有效命令集 = 已定义 − 显式下线（冻结命令不要求注册）
+    fn active_defined_names() -> BTreeSet<String> {
+        let mut set = defined_command_names();
+        for d in DOWNGRADED {
+            set.remove(*d);
+        }
+        set
+    }
+
     #[test]
     fn every_defined_command_is_registered() {
-        let defined = defined_command_names();
+        let defined = active_defined_names();
         let registered = registered_command_names();
 
         let unregistered: Vec<_> = defined.difference(&registered).cloned().collect();
@@ -855,7 +911,7 @@ mod command_registration_tests {
                 .count();
         }
 
-        let unique = defined_command_names().len();
+        let unique = active_defined_names().len();
         assert!(
             attr_count >= unique,
             "属性数 {attr_count} 不应小于唯一命令名数 {unique}"

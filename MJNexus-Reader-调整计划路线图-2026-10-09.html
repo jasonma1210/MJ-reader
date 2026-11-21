@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN" style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MJNexus-Reader 产品调整计划路线图</title>
+<style>
+  :root { --ink:#1f2937; --mut:#6b7280; --ok:#059669; --warn:#d97706; --bad:#dc2626; --line:#e5e7eb; --paper:#fff; --soft:#f3f4f6; --blue:#2563eb; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:#f8fafc; color:var(--ink); }
+  .wrap { max-width:1020px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--mut); font-size:13px; margin-bottom:20px; }
+  .card { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }
+  .card h2 { font-size:16px; margin:0 0 14px; }
+  /* sprint 时间线 */
+  .sprints { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .sp { border:2px solid; border-radius:12px; padding:14px; position:relative; }
+  .sp .st { font-size:13px; font-weight:800; margin-bottom:2px; }
+  .sp .tt { font-size:15px; font-weight:700; margin-bottom:6px; }
+  .sp .tm { font-size:12px; color:var(--mut); margin-bottom:8px; }
+  .sp ul { margin:0; padding-left:16px; font-size:12.5px; line-height:1.7; }
+  .sp .dod { margin-top:8px; font-size:11.5px; background:var(--soft); border-radius:6px; padding:6px 8px; color:#374151; }
+  .sp1 { border-color:var(--bad); } .sp2 { border-color:var(--warn); } .sp3 { border-color:var(--blue); } .sp4 { border-color:var(--ok); }
+  .rail { position:relative; }
+  .rail::before { content:""; position:absolute; top:14px; left:2%; right:2%; height:4px; background:var(--line); border-radius:2px; }
+  .nodes { display:flex; justify-content:space-between; position:relative; }
+  .node { width:26px; height:26px; border-radius:50%; background:var(--paper); border:3px solid; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; }
+  .n1 { border-color:var(--bad); } .n2 { border-color:var(--warn); } .n3 { border-color:var(--blue); } .n4 { border-color:var(--ok); }
+  .nlab { text-align:center; font-size:12px; margin-top:6px; }
+  /* 北极星链路 */
+  .loop { display:flex; flex-wrap:wrap; gap:6px; align-items:center; justify-content:center; margin:6px 0 4px; }
+  .lp { border:2px solid var(--line); border-radius:10px; padding:8px 12px; text-align:center; min-width:118px; }
+  .lp .t { font-weight:700; font-size:13.5px; }
+  .lp .w { font-size:11px; color:var(--mut); margin-top:2px; }
+  .lp .s { display:inline-block; margin-top:4px; font-size:10.5px; padding:1px 8px; border-radius:999px; background:var(--soft); color:#374151; }
+  .lp .s.s1 { background:#fee2e2; color:#b91c1c; } .lp .s.s2 { background:#fef3c7; color:#b45309; } .lp .s.s3 { background:#dbeafe; color:#1d4ed8; } .lp .s.s4 { background:#d1fae5; color:#047857; }
+  .arw { font-size:18px; color:#9ca3af; font-weight:700; }
+  /* 度量 */
+  .mtr { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:8px; }
+  .mm { border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12.5px; display:flex; justify-content:space-between; align-items:center; }
+  .mm .k { color:var(--mut); }
+  .mm .v { font-weight:800; }
+  .mm .v.g { color:var(--ok); } .mm .v.b { color:var(--bad); }
+  .verdict { display:flex; flex-wrap:wrap; gap:6px; }
+  .vd { font-size:12px; border:1px solid var(--line); border-radius:999px; padding:3px 10px; background:var(--soft); }
+  .note { background:#eef2ff; border:1px solid #c7d2fe; border-radius:10px; padding:12px; font-size:13.5px; line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>MJNexus-Reader 产品调整计划路线图</h1>
+  <div class="sub">2026-10-09 · 字节产品团队头脑风暴收敛 · 配套《MJNexus-Reader-产品调整计划-2026-10-09.md》</div>
+
+  <!-- 北极星 -->
+  <div class="card">
+    <h2>北极星场景（1.1.0 发布即验证）</h2>
+    <div class="loop">
+      <div class="lp"><div class="t">读</div><div class="w">沉浸阅读 · 划词</div><span class="s s1">S1 制卡落库</span></div>
+      <div class="arw">→</div>
+      <div class="lp"><div class="t">炼</div><div class="w">AI 拆书 · 图谱</div><span class="s s3">S3 图谱回跳</span></div>
+      <div class="arw">→</div>
+      <div class="lp"><div class="t">练</div><div class="w">10 分钟到期复习</div><span class="s s1">S1 掌握度回写</span></div>
+      <div class="arw">→</div>
+      <div class="lp"><div class="t">忆</div><div class="w">看板薄弱点</div><span class="s s2">S2 看板入口</span></div>
+      <div class="arw">→</div>
+      <div class="lp"><div class="t">回原文</div><div class="w">一点回到知识点</div><span class="s s3">S3 打通</span></div>
+    </div>
+    <div class="sub" style="margin:8px 0 0;">目标留存指标：周留存 ≥ 30% · 到期复习完成率 ≥ 60%</div>
+  </div>
+
+  <!-- 4 Sprint -->
+  <div class="card">
+    <h2>四 Sprint 执行路线（每 Sprint 结束 = 安全暂停点）</h2>
+    <div class="sprints">
+      <div class="sp sp1">
+        <div class="st">Sprint 1 · 5–7 天</div>
+        <div class="tt">闭环止损</div>
+        <div class="tm">断链修复 + 闭环命令接线 + AI 配置生效</div>
+        <ul>
+          <li>P0-1 题目↔知识节点（related_question_ids 落值）</li>
+          <li>P0-2 脑图↔知识节点（linked_node_ids 字段）</li>
+          <li>划词「存为闪卡」真落库 → 复习队列</li>
+          <li>掌握度回写补全（练习/教学）</li>
+          <li>拆书四件套 + 停止生成 + AI 配置三源</li>
+          <li>今日台 stats 渲染</li>
+        </ul>
+        <div class="dod">DoD：断链 4→0 · 缺口 106→≤85 · AI 配置页真实生效</div>
+      </div>
+      <div class="sp sp2">
+        <div class="st">Sprint 2 · 5–7 天</div>
+        <div class="tt">入口与心智</div>
+        <div class="tm">孤儿路由清零 + 冷启动引导（唯一新建）</div>
+        <ul>
+          <li>/graph /mastery 一等视图自然入口（不建网格）</li>
+          <li>practice/teaching 收编为动词产物页</li>
+          <li>output/labels 收编进 Me / 资产视图</li>
+          <li>修正 SUGGESTION_ROUTE 映射错位</li>
+          <li>冷启动：8 动词示例气泡 + 空态行动按钮</li>
+          <li>无 AI 降级叙事（阅读器/复习完整可用）</li>
+        </ul>
+        <div class="dod">DoD：孤儿路由 6→0 · 新用户 3 分钟触发动词 · 无 AI 不白屏</div>
+      </div>
+      <div class="sp sp3">
+        <div class="st">Sprint 3 · 4–6 天</div>
+        <div class="tt">体验与移动端</div>
+        <div class="tm">状态覆盖 + 回跳 + 响应式收口</div>
+        <ul>
+          <li>图谱节点回跳原文（差异化载体）</li>
+          <li>核心 8 页加载/错误态 100% + 消灭静默 catch</li>
+          <li>薄弱点 → 立即练习（携带 nodeId 深链）</li>
+          <li>画布/图表硬编码改容器尺寸与令牌</li>
+          <li>触屏可达（hover → 点击/长按）</li>
+          <li>拆书进度浮层常驻阅读器</li>
+        </ul>
+        <div class="dod">DoD：回跳真机跑通 · 状态覆盖 100% · 四形态无破版</div>
+      </div>
+      <div class="sp sp4">
+        <div class="st">Sprint 4 · 5–7 天</div>
+        <div class="tt">质量还债与发布</div>
+        <div class="tm">拆分 + 测试基线 + 分包 + 文档治理 → 1.1.0</div>
+        <ul>
+          <li>拆分 ai_breakdown(225KB) / book(119KB)</li>
+          <li>前端核心链路冒烟 4 条 + E2E 1 条进 CI</li>
+          <li>路由级分包：主包 1.97MB → ≤1.2MB</li>
+          <li>Rust 63 警告清零 + 棘轮脚本回归</li>
+          <li>死代码 / 过期 i18n 四语言处置</li>
+          <li>docs「当前真源」制度 + 发布 1.1.0</li>
+        </ul>
+        <div class="dod">DoD：门禁全绿 · 五步闭环端到端 · 留存开始观测</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 度量 -->
+  <div class="card">
+    <h2>关键度量（10-09 基线 → 1.1.0 目标）</h2>
+    <div class="mtr">
+      <div class="mm"><span class="k">数据断链</span><span class="v b">4 处 → <span class="g">0</span></span></div>
+      <div class="mm"><span class="k">孤儿路由</span><span class="v b">6 条 → <span class="g">0</span></span></div>
+      <div class="mm"><span class="k">命令缺口</span><span class="v b">106 → <span class="g">≤60</span></span></div>
+      <div class="mm"><span class="k">幽灵命令</span><span class="v g">0 → 0</span></div>
+      <div class="mm"><span class="k">主包体积</span><span class="v b">1.97MB → <span class="g">≤1.2MB</span></span></div>
+      <div class="mm"><span class="k">前端单测</span><span class="v b">55 → <span class="g">70+</span></span></div>
+      <div class="mm"><span class="k">Rust 警告</span><span class="v b">63 → <span class="g">0</span></span></div>
+      <div class="mm"><span class="k">状态覆盖</span><span class="v b">约 2/8 → <span class="g">8/8</span></span></div>
+      <div class="mm"><span class="k">图谱回跳</span><span class="v b">断 → <span class="g">通</span></span></div>
+      <div class="mm"><span class="k">AI 配置三源</span><span class="v b">壳 → <span class="g">生效</span></span></div>
+    </div>
+  </div>
+
+  <!-- 8 裁决 -->
+  <div class="card">
+    <h2>八条核心裁决（头脑风暴收敛）</h2>
+    <div class="verdict">
+      <span class="vd">R1 北极星 = 教材/技术书 → 拆知识点 → 10 分钟复习 → 薄弱点回原文</span>
+      <span class="vd">R2 孤儿路由不建网格：一等视图入口 + 动词收编</span>
+      <span class="vd">R3 划词制卡必须真落库</span>
+      <span class="vd">R4 先断链 → 再体验 → 后还债；S1–3 零新功能</span>
+      <span class="vd">R5 AI 配置为 P0，产品必须可无 AI 降级</span>
+      <span class="vd">R6 掌握度算法不动，只补回写</span>
+      <span class="vd">R7 命令缺口四象限处置（接/收编/冻结/清理）</span>
+      <span class="vd">R8 每 Sprint 是安全暂停点</span>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>开工第一天 10 件事：</b>建 STATUS/BACKLOG 双文档 → 修 P0-1（1–2h）→ 修 P0-2（1h）→ 接划词制卡（30min）→ 补掌握度回写（2h）→ 接 AI 配置三源（2h）→ 接 force_reset（2h）→ 渲染 stats（30min）→ 真机冒烟「炼→练」→ 绿色提交。
+  </div>
+
+</div>
+</body>
+</html>

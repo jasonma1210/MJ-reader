@@ -3,6 +3,8 @@
 // 各命令签名对应 src-tauri/src/commands/ 下的同名函数。
 
 import { CMD, invoke, isTauri } from "./tauri";
+import { logError } from "../utils/logError";
+import { toast } from "../utils/toast";
 
 /** 卡片/节点双向链接记录（card_links 表行，camelCase） */
 export interface CardLink {
@@ -118,6 +120,114 @@ export function catchMeUp(bookId: string): Promise<string> {
 
 // ===== 忆：掌握度回写 / 图谱回跳 =====
 
+// ===== P0-E：复习回写去二值化（掌握度回写决策，纯函数便于单测） =====
+
+export type ReviewRating = "again" | "hard" | "good" | "easy";
+
+/**
+ * 四档评分 → 掌握度变化方向。
+ *
+ * 后端真实能力核实（2026-11-19，读源码）：
+ *  - `update_knowledge_mastery(book_id, node_id, event_type, correct: bool)`：
+ *    `correct` 只决定 mastery_score 的 ±delta（`mastery.rs::update_mastery_inner`），
+ *    无 neutral / 无 graded 幅度；
+ *  - `update_mastery_from_review(node_id, score: f64, forgot: bool)`：
+ *    `score` 标注 `#[allow(unused_variables)]`，注释明确「不再参与计算」，
+ *    方向仍由 `forgot: bool` 决定。故传数值 score 无法区分四档。
+ *
+ * 结论：掌握度回写契约是 boolean-only，「平」无法表达，hard 只能与 good/easy
+ * 同取 "up"（诚实降级，非假装四档全映射）。四档真正的区分在
+ * `record_card_review` 的 SM-2 质量分（again=0/hard=3/good=4/easy=5），该链路不变。
+ */
+const RATING_TO_MASTERY: Record<ReviewRating, "down" | "up"> = {
+  again: "down",
+  hard: "up", // 后端无 neutral，hard 无法表达「平」→ 降级为「升」
+  good: "up",
+  easy: "up",
+};
+
+/** 未知评分按 good 兜底，与后端 record_card_review 默认 quality=4 一致。 */
+export function ratingToMasteryDirection(rating: string): "down" | "up" {
+  return rating in RATING_TO_MASTERY
+    ? RATING_TO_MASTERY[rating as ReviewRating]
+    : "up";
+}
+
+/**
+ * 掌握度回写计划（纯函数）：关联失败产出 issue（由调用方 logError + toast），
+ * 关联成功产出 correct boolean 供 updateKnowledgeMastery 使用。
+ */
+export type MasteryWritebackPlan =
+  | { kind: "write"; bookId: string; nodeId: string; correct: boolean }
+  | {
+      kind: "issue";
+      reason: "no-book" | "no-node";
+      logContext: string;
+      toastKey: string;
+    };
+
+export function planMasteryWriteback(
+  bookId: string | null | undefined,
+  nodeId: string | null | undefined,
+  rating: string,
+): MasteryWritebackPlan {
+  if (!bookId) {
+    return {
+      kind: "issue",
+      reason: "no-book",
+      logContext: "ReviewFlashcardsPage.noBookId",
+      toastKey: "review.masteryNoBook",
+    };
+  }
+  if (!nodeId) {
+    return {
+      kind: "issue",
+      reason: "no-node",
+      logContext: "ReviewFlashcardsPage.noNodeId",
+      toastKey: "review.masteryNoNode",
+    };
+  }
+  return {
+    kind: "write",
+    bookId,
+    nodeId,
+    correct: ratingToMasteryDirection(rating) === "up",
+  };
+}
+
+/** 通知依赖可注入，便于单测断言「有日志 + 有 UI 提示」。 */
+export interface MasteryNotifyDeps {
+  logError: (context: string, error: unknown) => void;
+  toast: (message: string) => void;
+}
+
+const defaultNotifyDeps: MasteryNotifyDeps = { logError, toast };
+
+/** 关联失败：logError + toast，不静默。 */
+export function reportMasteryWritebackIssue(
+  issue: Extract<MasteryWritebackPlan, { kind: "issue" }>,
+  t: (key: string) => string,
+  deps: MasteryNotifyDeps = defaultNotifyDeps,
+): void {
+  deps.logError(issue.logContext, new Error(`mastery writeback skipped: ${issue.reason}`));
+  deps.toast(t(issue.toastKey));
+}
+
+/**
+ * 教学结课三围评分 → correct（非恒 true）。
+ * 阈值 60 = 通行及格线；三围等权（与报告三行等权展示一致），均值 >= 60 视为掌握。
+ */
+export const TEACHING_PASS_SCORE = 60;
+
+export function isTeachingMasteryCorrect(scores: {
+  clarityScore: number;
+  completenessScore: number;
+  accuracyScore: number;
+}): boolean {
+  const { clarityScore, completenessScore, accuracyScore } = scores;
+  return (clarityScore + completenessScore + accuracyScore) / 3 >= TEACHING_PASS_SCORE;
+}
+
 /** 学习行为回写掌握度（event_type: quiz | flashcard | review 等） */
 export function updateKnowledgeMastery(
   bookId: string,
@@ -222,4 +332,29 @@ export function saveAiConfig(config: AiConfig): Promise<void> {
     apiKey: config.apiKey,
     model: config.model,
   });
+}
+
+// ===== P0-1（2026-10-09）：错题 / 知识点题单 / 薄弱点素材 =====
+
+/** 按知识点关键词列出相关题目（question_trace 回溯） */
+export function listQuestionsForKnowledgePoint(
+  bookId: string,
+  keyword: string,
+): Promise<Array<{ id: string; question: string; answer: string; explanation: string; isCorrect: number | null; sourceChapter: string; relatedKnowledgePoint: string }>> {
+  guard();
+  return invoke(CMD.listQuestionsForKnowledgePoint, { bookId, keyword });
+}
+
+/** 薄弱点素材（含相关题 id），供掌握度详情展示 */
+export function getWeakNodesMaterial(
+  bookId?: string | null,
+): Promise<Array<{ id: string; bookId: string; bookTitle: string; nodeName: string; masteryScore: number; relatedQuestionIds: string[] }>> {
+  guard();
+  return invoke(CMD.getWeakNodesMaterial, { materialBookId: bookId ?? null });
+}
+
+/** 清空错题（bookId 为空则全局清空） */
+export function clearWrongQuestions(bookId?: string | null): Promise<void> {
+  guard();
+  return invoke<void>(CMD.clearWrongQuestions, { bookId: bookId ?? null });
 }

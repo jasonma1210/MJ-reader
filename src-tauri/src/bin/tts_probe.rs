@@ -1,8 +1,8 @@
-//! Edge TTS 合成探针：脱离 Tauri 上下文，直接调 `kothok-edge-tts` 合成一段真实 MP3，
+//! Edge TTS 合成探针：脱离 Tauri 上下文，直接调 `edge-tts-rust`（V2）合成真实 MP3，
 //! 验证「覆盖桌面 / Android / iOS 的 Edge 语音」确实能拉到可播放音频。
 //!
-//! 与 `commands::tts::tts_synthesize` 走同一引擎（`EdgeTts.synthesize` + `init_tls`），
-//! 仅把文本/音色/语速参数化，用于端到端验证：WebSocket 握手 → SEC_MS_GEC 令牌 → 流式音频。
+//! 与 `commands::tts::tts_synthesize` 走同一引擎（V2 Sec-MS-GEC 签名），
+//! 仅把文本/音色/语速参数化，用于端到端验证：WebSocket 握手 → V2 令牌 → 流式音频。
 //!
 //! 用法（host macOS，需联网）：
 //! ```text
@@ -63,8 +63,6 @@ fn rate_to_percent(rate: f64) -> String {
 
 #[tokio::main]
 async fn main() {
-    kothok_edge_tts::init_tls();
-
     let (text, voice, rate, out) = parse_args();
     let lang: String = voice.chars().take(5).collect(); // "zh-CN-XiaoxiaoNeural" → "zh-CN"
 
@@ -73,16 +71,28 @@ async fn main() {
     println!("[tts_probe] 目标文件: {}", out.display());
 
     let started = Instant::now();
-    match EdgeTts.synthesize(&text, &voice, &rate_to_percent(rate), &lang).await {
-        Ok(events) => {
-            let mut audio: Vec<u8> = Vec::new();
-            for ev in events {
-                match ev {
-                    TtsEvent::Audio(bytes) => audio.extend_from_slice(&bytes),
-                    TtsEvent::TurnEnd => break,
-                    TtsEvent::WordBoundary { .. } => {}
-                }
-            }
+    let client = match EdgeTtsClient::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[tts_probe] 失败：Edge TTS 客户端初始化错误: {e}");
+            std::process::exit(1);
+        }
+    };
+    let result = client
+        .synthesize(
+            &text,
+            edge_tts_rust::SpeakOptions {
+                voice: voice.clone(),
+                rate: rate_to_percent(rate),
+                output_format: "audio-24khz-48kbitrate-mono-mp3".to_string(),
+                ..edge_tts_rust::SpeakOptions::default()
+            },
+        )
+        .await;
+
+    match result {
+        Ok(result) => {
+            let audio = result.audio;
             let elapsed = started.elapsed().as_millis();
             if audio.is_empty() {
                 eprintln!("[tts_probe] 失败：未返回任何音频字节（服务临时不可用？）");
@@ -107,5 +117,4 @@ async fn main() {
     }
 }
 
-// 从 kothok_edge_tts 导入（避免在 bin 里重复声明类型名；Engine trait 提供 synthesize）
-use kothok_edge_tts::{EdgeTts, Engine, TtsEvent};
+use edge_tts_rust::EdgeTtsClient;

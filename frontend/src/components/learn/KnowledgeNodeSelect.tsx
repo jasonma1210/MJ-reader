@@ -18,6 +18,8 @@ interface KnowledgeNodeSelectProps {
   allowEmpty?: boolean;
   label?: string;
   className?: string;
+  /** 选中节点时同步回调其所属书 id（掌握度回写需要 bookId） */
+  onBookChange?: (bookId: string | null) => void;
 }
 
 export function KnowledgeNodeSelect({
@@ -26,6 +28,7 @@ export function KnowledgeNodeSelect({
   allowEmpty = true,
   label,
   className,
+  onBookChange,
 }: KnowledgeNodeSelectProps) {
   const { t } = useTranslation();
   const [nodes, setNodes] = useState<GraphNode[] | null>(null);
@@ -72,7 +75,11 @@ export function KnowledgeNodeSelect({
           <>
             <select
               value={value}
-              onChange={(e) => onChange(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                onChange(v);
+                onBookChange?.(nodes?.find((n) => n.id === v)?.bookId ?? null);
+              }}
               aria-label={label ?? t("practice.targetNode")}
               className="h-10 w-full appearance-none rounded-[var(--radius-md)] border border-line bg-paper px-3 pr-9 text-sm text-ink outline-none transition focus-visible:ring-2 focus-visible:ring-accent/40"
             >

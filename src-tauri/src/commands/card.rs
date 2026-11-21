@@ -216,6 +216,7 @@ pub async fn create_card(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn get_card_by_id(
     id: String,
     state: State<'_, AppState>,
@@ -232,6 +233,7 @@ pub async fn get_card_by_id(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn get_card_by_uid(
     uid: String,
     state: State<'_, AppState>,
@@ -248,6 +250,7 @@ pub async fn get_card_by_uid(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn update_card(
     id: String,
     title: Option<String>,
@@ -307,6 +310,7 @@ pub async fn update_card(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn delete_card(
     id: String,
     app: AppHandle,
@@ -445,6 +449,7 @@ pub async fn list_card_links(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn list_reverse_links(
     target_type: String,
     target_id: String,
@@ -497,6 +502,7 @@ pub async fn list_card_links_by_book(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn delete_card_link(id: String, state: State<'_, AppState>) -> AppResult<()> {
     let pool: &SqlitePool = &*state.db;
     sqlx::query("DELETE FROM card_links WHERE id = ?")
@@ -511,6 +517,7 @@ pub async fn delete_card_link(id: String, state: State<'_, AppState>) -> AppResu
 /// 扫描文档全文，匹配卡片标题，自动创建 card_links 记录
 /// 返回创建的链接数
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn scan_title_links(
     book_id: String,
     content: String,
@@ -522,6 +529,7 @@ pub async fn scan_title_links(
 
 /// 查询书籍的标题链接列表（用于前端装饰文档中的标题文本）
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn list_title_links_for_book(
     book_id: String,
     state: State<'_, AppState>,
@@ -538,6 +546,7 @@ pub async fn list_title_links_for_book(
 /// v1.1.0 P4.1：搜索过滤条件
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub struct CardSearchFilter {
     /// 搜索关键词（匹配 title / content，None 或空表示不限）
     pub query: Option<String>,
@@ -559,6 +568,7 @@ pub struct CardSearchFilter {
 
 /// v1.1.0 P4.1：卡片全文检索命令
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn search_cards(
     filter: CardSearchFilter,
     state: State<'_, AppState>,

@@ -9,8 +9,8 @@
 use sqlx::SqlitePool;
 
 use crate::commands::ai_breakdown::{
-    clear_ai_flashcards_on_rebreak, mirror_concept_card_to_flashcards, parse_self_check,
-    should_use_fast_path, BreakdownQuality,
+    breakdown_point_card_uid, clear_ai_flashcards_on_rebreak, mirror_breakdown_points_to_cards,
+    mirror_concept_card_to_flashcards, parse_self_check, should_use_fast_path, BreakdownQuality,
 };
 use crate::db::schema::CREATE_TABLES_SQL;
 use crate::services::breakdown_prompt::{build_chapter_prompt, ChapterPromptCtx, ContentClass};
@@ -505,4 +505,240 @@ fn test_should_use_fast_path_full_matrix() {
         !should_use_fast_path(FAST_PATH_CHARS + 1, FAST_PATH_MAX_CHAPTERS + 1, true),
         "字符数与章节数同时越界且已降级 → 必然逐章"
     );
+}
+
+// ===== P0-D（拆书三字段进 FSRS）单测 =====
+
+/// ①确定性 uid：同输入同输出，且书/章/类型/内容任一维度不同都不得碰撞。
+#[test]
+fn test_breakdown_point_card_uid_is_deterministic() {
+    let uid = breakdown_point_card_uid("b1", "memory", 2, "  艾宾浩斯遗忘曲线  ");
+    // trim 后同内容 → 同 uid（防 LLM 偶发尾随空格造成重复卡）
+    assert_eq!(
+        uid,
+        breakdown_point_card_uid("b1", "memory", 2, "艾宾浩斯遗忘曲线")
+    );
+    assert_eq!(uid, breakdown_point_card_uid("b1", "memory", 2, "艾宾浩斯遗忘曲线"));
+    assert!(uid.starts_with("bkcard-memory-"));
+
+    // 四个维度任一变化都产生不同 uid
+    assert_ne!(uid, breakdown_point_card_uid("b1", "exam", 2, "艾宾浩斯遗忘曲线"));
+    assert_ne!(uid, breakdown_point_card_uid("b1", "memory", 3, "艾宾浩斯遗忘曲线"));
+    assert_ne!(uid, breakdown_point_card_uid("b2", "memory", 2, "艾宾浩斯遗忘曲线"));
+    assert_ne!(uid, breakdown_point_card_uid("b1", "memory", 2, "另一条记忆点"));
+}
+
+/// ②同章重复入库幂等 + 真进复习队列：重复调用不新增卡/闪卡/调度行，
+/// 且派生卡满足复习队列出队谓词（card_scheduling.due_date <= now）。
+#[tokio::test]
+async fn test_breakdown_points_insert_is_idempotent_and_due() {
+    let pool = test_pool().await;
+    let now = 1_700_000_000_i64;
+    let points = vec![
+        ("memory".into(), "记忆点A".into(), "记忆点A".into()),
+        ("memory".into(), "记忆点B".into(), "记忆点B".into()),
+        (
+            "exam".into(),
+            "考点A（考频：高频）".into(),
+            "考点A（考频：高频）".into(),
+        ),
+    ];
+
+    let created = mirror_breakdown_points_to_cards(&pool, "b1", None, 0, &points, now)
+        .await
+        .unwrap();
+    assert_eq!(created, 3, "首次应新建 3 张派生卡");
+
+    let card_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM cards WHERE book_id = 'b1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let flash_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM flashcards WHERE book_id = 'b1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let sched_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM card_scheduling")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(card_count, 3);
+    assert_eq!(flash_count, 3, "每张派生卡应镜像一条 flashcards");
+    assert_eq!(sched_count, 3, "每张派生卡应写一条 card_scheduling");
+
+    // 复习队列出队谓词（与 card.rs due_counts_by_book 一致）
+    let due: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM cards c \
+         LEFT JOIN card_scheduling s ON s.card_id = c.id \
+         WHERE c.deleted_at IS NULL AND c.book_id = 'b1' \
+           AND (s.due_date IS NULL OR s.due_date <= ?)",
+    )
+    .bind(now)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(due, 3, "三张派生卡应全部进入复习队列（立即可复习）");
+
+    // 同章同输入再跑一次：uid + 唯一索引应挡住重复
+    let created_again = mirror_breakdown_points_to_cards(&pool, "b1", None, 0, &points, now)
+        .await
+        .unwrap();
+    assert_eq!(created_again, 0, "重复入库不得新建卡");
+
+    let card_count2: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM cards WHERE book_id = 'b1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let flash_count2: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM flashcards WHERE book_id = 'b1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let sched_count2: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM card_scheduling")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(card_count2, 3, "cards 不得重复");
+    assert_eq!(flash_count2, 3, "flashcards 不得重复镜像");
+    assert_eq!(sched_count2, 3, "card_scheduling 不得重复排程");
+}
+
+/// ③重拆只清 AI 卡不动 learner 手动卡：派生卡的 flashcards 被清、
+/// cards 被重拆 DELETE 清掉，手动卡/手动闪卡全部留存。
+#[tokio::test]
+async fn test_rebreak_clears_only_ai_point_cards_not_manual() {
+    let pool = test_pool().await;
+    let now = 1_700_000_000_i64;
+    let points = vec![
+        ("memory".into(), "AI记忆点".into(), "AI记忆点".into()),
+        ("exam".into(), "AI考点".into(), "AI考点".into()),
+    ];
+    mirror_breakdown_points_to_cards(&pool, "b1", None, 0, &points, now)
+        .await
+        .unwrap();
+
+    // learner 手动卡（card_type='general'、无 breakdown 锚点）及其手动闪卡
+    sqlx::query(
+        "INSERT INTO cards \
+         (id, uid, study_set_id, book_id, highlight_id, title, content, color, cfi_range, \
+          page_index, rect_x, rect_y, rect_width, rect_height, card_type, note_type, \
+          selected_text, transcript, voice_path, source_locator, created_at, updated_at) \
+         VALUES ('manual-card', 'manual-uid', NULL, 'b1', NULL, '手动卡', '手动内容', \
+                 NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'general', NULL, \
+                 NULL, NULL, NULL, NULL, ?, ?)",
+    )
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO flashcards \
+         (id, book_id, highlight_id, card_id, front, back, tags, ease_factor, \
+          interval_days, repetitions, due_date, is_ai_generated, created_at, updated_at) \
+         VALUES ('manual-fc', 'b1', NULL, 'manual-card', '手动卡', '手动内容', \
+                 NULL, 2.5, 0, 0, ?, 0, ?, ?)",
+    )
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // 重拆 pre-clear：先清 AI 闪卡，再删 AI 概念卡（与 execution.rs 顺序一致）
+    clear_ai_flashcards_on_rebreak(&pool, "b1").await.unwrap();
+    sqlx::query(
+        "DELETE FROM cards WHERE book_id = ? AND card_type = 'concept' \
+         AND source_locator LIKE ?",
+    )
+    .bind("b1")
+    .bind("%\"kind\":\"breakdown\"%")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AI 派生卡的 flashcards 应被清空，仅剩手动闪卡
+    let ai_flash_left: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM flashcards \
+         WHERE is_ai_generated = 1 AND front IN ('AI记忆点', 'AI考点')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(ai_flash_left, 0, "AI 派生卡的闪卡应被重拆清理删除");
+
+    // AI 派生卡（breakdown concept 卡）应被删除
+    let ai_cards_left: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM cards WHERE book_id = 'b1' \
+         AND card_type = 'concept' AND source_locator LIKE '%\"kind\":\"breakdown\"%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(ai_cards_left, 0, "AI 派生卡应被重拆 DELETE 清掉");
+
+    // learner 手动卡与手动闪卡必须留存（C3 安全红线）
+    let manual_card_left: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM cards WHERE id = 'manual-card'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let manual_flash_left: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM flashcards WHERE id = 'manual-fc' AND is_ai_generated = 0",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(manual_card_left, 1, "learner 手动卡不得被删");
+    assert_eq!(manual_flash_left, 1, "learner 手动闪卡不得被删");
+}
+
+/// ④concept 镜像行为不变：仍只写 flashcards（is_ai_generated=1、due_date=now+1天），
+/// 不写 card_scheduling——三字段转化不得改变既有 concept→flashcard 镜像语义。
+#[tokio::test]
+async fn test_concept_mirror_behavior_unchanged() {
+    let pool = test_pool().await;
+    let now = 1_700_000_000_i64;
+    sqlx::query(
+        "INSERT INTO cards \
+         (id, uid, study_set_id, book_id, highlight_id, title, content, color, cfi_range, \
+          page_index, rect_x, rect_y, rect_width, rect_height, card_type, note_type, \
+          selected_text, transcript, voice_path, source_locator, created_at, updated_at) \
+         VALUES ('concept-only', 'cu-only', NULL, 'b1', NULL, '原概念', '原概念内容', \
+                 NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'concept', NULL, \
+                 NULL, NULL, NULL, '{\"kind\":\"breakdown\",\"chapterIndex\":0,\"chunkIndex\":0}', \
+                 ?, ?)",
+    )
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    mirror_concept_card_to_flashcards(&pool, "b1", "concept-only", "原概念", "原概念内容", now)
+        .await
+        .unwrap();
+
+    let row: (String, String, i64, i64, i64) = sqlx::query_as(
+        "SELECT front, back, due_date, is_ai_generated, card_id IS NOT NULL \
+         FROM flashcards WHERE card_id = 'concept-only'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "原概念", "front 仍取 title");
+    assert_eq!(row.1, "原概念内容", "back 仍取 content");
+    assert_eq!(row.2, now + 86_400, "due_date 仍为 now + 1 天");
+    assert_eq!(row.3, 1, "仍标记 is_ai_generated=1");
+    assert_eq!(row.4, 1, "仍回指 card_id");
+
+    // 既有 concept 镜像不写 card_scheduling（三字段派生卡才写）——行为保持不变
+    let sched: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM card_scheduling")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sched, 0, "concept 镜像不应写 card_scheduling");
 }

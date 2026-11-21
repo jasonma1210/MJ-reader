@@ -441,17 +441,14 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
         // 恢复上次阅读进度 → 定位页码（内存缓存优先）
         let targetPage = 1;
         const cached = useReaderStore.getState().lastPosition;
-        console.log("[PROGRESS-DEBUG] PdfView.loadPdf restore bookId=", bookId, "cached=", cached, "totalPages=", pdf.numPages);
         if (cached && cached.bookId === bookId && cached.fraction > 0) {
           targetPage = Math.min(
             pdf.numPages,
             Math.max(1, Math.round(cached.fraction * pdf.numPages)),
           );
-          console.log("[PROGRESS-DEBUG] PdfView.loadPdf restore FROM_MEMORY targetPage=", targetPage);
         } else {
           try {
             const record = await settingsService.getReadingProgress(bookId);
-            console.log("[PROGRESS-DEBUG] PdfView.loadPdf restore FROM_DB record=", record);
             if (record && record.percentage > 0) {
               targetPage = Math.min(
                 pdf.numPages,
@@ -462,7 +459,6 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
             logError("PdfView.fetchProgress", e);
           }
         }
-        console.log("[PROGRESS-DEBUG] PdfView.loadPdf final targetPage=", targetPage);
         await renderPageInternal(targetPage);
         setLoading(false);
       } catch (e) {
@@ -492,7 +488,6 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
       // 卸载前立即落库（旋转/壳切换重挂载），保证后端进度最新
       const flushPage = currentPageRef.current;
       const totalP = pdfRef.current?.numPages ?? 1;
-      console.log("[PROGRESS-DEBUG] PdfView cleanUp flush bookId=", bookId, "page=", flushPage, "total=", totalP);
       if (flushPage > 0) {
         void settingsService.upsertReadingProgress({
           bookId,

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { logError } from "../utils/logError";
+import { setVerticalWriting as setVerticalWritingCmd } from "../services/closedLoopService";
 
 // 字号单一真源（2026-08-21「收主路径」）：工具栏 A-/A+ 步进与设置页细粒度滑杆共用同一边界，
 // 避免两端各自写一段字号范围、改一处漏一处的割裂。
@@ -130,6 +131,8 @@ interface ReaderState {
   bgColorKey: string;
   /** 阅读效果：滚动（默认）/ 分页 */
   viewMode: ViewMode;
+  /** P0-1（2026-10-09）：竖排阅读（写作方向），书级持久化到 reader_state */
+  verticalWriting: boolean;
   /**
    * 内存位置缓存：横竖屏/壳切换导致渲染器重挂载时，用此即时恢复（避免跳回第一页）。
    * 同时镜像到 localStorage——某些 ROM 在旋转时会重建 WebView（JS 状态全丢），
@@ -149,6 +152,8 @@ interface ReaderState {
   setTextColorKey: (k: string) => void;
   setBgColorKey: (k: string) => void;
   setViewMode: (v: ViewMode) => void;
+  /** 竖排开关：本地持久化 + 书级写库（set_vertical_writing，尽力而为） */
+  setVerticalWriting: (enabled: boolean, bookId?: string | null) => void;
   setLastPosition: (p: { bookId: string; fraction: number; cfi?: string } | null) => void;
 }
 
@@ -162,6 +167,7 @@ interface PersistedPrefs {
   textColorKey?: string;
   bgColorKey?: string;
   viewMode?: ViewMode;
+  verticalWriting?: boolean;
   lastPosition?: { bookId: string; fraction: number; cfi?: string } | null;
 }
 
@@ -209,6 +215,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   bgColorKey: initBgColorKey,
   // 阅读效果默认「滚动」
   viewMode: initial.prefs.viewMode ?? "scroll",
+  verticalWriting: initial.prefs.verticalWriting ?? false,
   lastPosition: initial.lastPosition,
   pageInfo: null,
   setBookId: (bookId) => set({ bookId }),
@@ -245,6 +252,14 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     set({ viewMode });
     persistAll(snapshot(get()));
   },
+  setVerticalWriting: (enabled, bookId) => {
+    set({ verticalWriting: enabled });
+    persistAll(snapshot(get()));
+    // 书级持久化（reader_state）：尽力而为，写库失败不阻塞阅读
+    if (bookId) {
+      setVerticalWritingCmd(bookId, enabled).catch((e) => logError("readerStore.setVerticalWriting", e));
+    }
+  },
   setLastPosition: (lastPosition) => {
     persistAll({ ...snapshot(get(), { skipLastPosition: true }), lastPosition });
     set({ lastPosition });
@@ -263,6 +278,7 @@ function snapshot(
     textColorKey: s.textColorKey,
     bgColorKey: s.bgColorKey,
     viewMode: s.viewMode,
+    verticalWriting: s.verticalWriting,
   };
   if (!opts.skipLastPosition) out.lastPosition = s.lastPosition;
   return out;

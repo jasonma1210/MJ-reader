@@ -9,6 +9,7 @@
 
 use crate::commands::ai_breakdown::load_book_type;
 use crate::commands::ai_core::{call_openai_complete, extract_json_payload, ChatMessage};
+use crate::commands::knowledge_node::link_card_to_knowledge_node;
 use crate::error::{AppError, AppResult};
 use crate::services::breakdown_prompt::{build_chapter_quiz_prompt, BookGenre};
 use crate::services::prompts::build_flashcard_prompt;
@@ -376,8 +377,10 @@ pub async fn ai_generate_quiz(
     let now = chrono::Utc::now().timestamp();
     // v2.2（文档 2 #10）：程序级查重——加载该书已有题 + 本次已生成题，
     // 与生成结果逐题比对，Dice bigram 相似度 ≥0.75 判重跳过（不再只靠 prompt 变式）。
-    let mut known_questions: Vec<String> = sqlx::query_scalar(
-        "SELECT question FROM quiz_questions WHERE book_id = ?",
+    // P0-1（2026-11-19）：知识点分组查重——同考点变式放行（0.92+答案归一），
+    // 跨考点原题拦截（0.75）；取三列 question / related_knowledge_point / answer。
+    let mut known_questions: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT question, COALESCE(related_knowledge_point, ''), COALESCE(answer, '') FROM quiz_questions WHERE book_id = ?",
     )
     .bind(&book_id)
     .fetch_all(db)
@@ -385,11 +388,16 @@ pub async fn ai_generate_quiz(
     .unwrap_or_default();
     let mut skipped_count: u32 = 0;
     for q in &questions {
-        if is_duplicate_question(&q.question, &known_questions) {
+        if is_duplicate_question_by_point(
+            &q.question,
+            &structured_concept,
+            &q.answer,
+            &known_questions,
+        ) {
             skipped_count += 1;
             continue;
         }
-        known_questions.push(q.question.clone());
+        known_questions.push((q.question.clone(), structured_concept.clone(), q.answer.clone()));
         let id = uuid::Uuid::new_v4().to_string();
         // T03 连线题：matching 题型把结构化载荷序列化到 options 字段（错题本复用）
         let options_json = if q.question_type == "matching" {
@@ -438,6 +446,9 @@ pub async fn ai_generate_quiz(
         {
             // 入库失败不影响本次答题（题目已在内存里），但错题本会缺这一题，必须留痕
             log::warn!("[ai_generate_quiz] 题目入库失败：{}", e);
+        } else {
+            // P0-1：入库成功后按概念名关联知识节点，错题才能回溯到薄弱点
+            super::knowledge_node::auto_link_question_by_concept(db, &book_id, &structured_concept, &id).await;
         }
     }
 
@@ -681,10 +692,49 @@ pub async fn ai_highlight_to_flashcard(
     let result: FlashcardResult =
         serde_json::from_str(&json_str).map_err(|e| AppError::General(format!("解析闪卡 JSON 失败: {}", e)))?;
 
-    // 入库到 flashcards 表
-    let id = uuid::Uuid::new_v4().to_string();
+    // 入库（P0-1 修复 2026-10-09）：复习队列读 cards 单一数据源，必须写 cards 主表；
+    // flashcards 表保留兼容写入（旧查询/迁移回填仍读它）。
     let now = chrono::Utc::now().timestamp();
     let due_date = now; // 立即可复习
+
+    // P0-2 事务边界：三表落库 + 知识节点建链一次提交，避免「卡在、链断」孤儿卡
+    // （孤儿卡使复习页反查 related_card_ids 永远失败、掌握度死水）。
+    let mut tx = db.begin().await?;
+
+    // 1) cards 主表（title=front, content=back，与 ReviewFlashcardsPage 渲染契约一致）
+    let card_id = uuid::Uuid::new_v4().to_string();
+    let card_uid = format!("card-{}", uuid::Uuid::new_v4());
+    sqlx::query(
+        "INSERT INTO cards (id, uid, study_set_id, book_id, highlight_id, title, content, color, cfi_range, page_index, rect_x, rect_y, rect_width, rect_height, card_type, note_type, selected_text, transcript, voice_path, source_locator, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&card_id)
+    .bind(&card_uid)
+    .bind(Option::<String>::None)
+    .bind(&book_id)
+    .bind(&highlight_id)
+    .bind(&result.front)
+    .bind(&result.back)
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(Option::<i64>::None)
+    .bind(Option::<f64>::None)
+    .bind(Option::<f64>::None)
+    .bind(Option::<f64>::None)
+    .bind(Option::<f64>::None)
+    .bind("flashcard")
+    .bind("text")
+    .bind(&text) // selected_text = 高亮原文
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    // 2) flashcards 兼容表（旧查询/回填路径仍读它）
+    let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO flashcards (id, book_id, highlight_id, front, back, due_date, is_ai_generated, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
     )
@@ -696,8 +746,35 @@ pub async fn ai_highlight_to_flashcard(
     .bind(due_date)
     .bind(now)
     .bind(now)
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
+
+    // 3) 调度：立即可复习（review 队列按 card_scheduling.due_date 出队）
+    sqlx::query(
+        "INSERT INTO card_scheduling (card_id, ease_factor, interval_days, repetitions, due_date, last_reviewed)
+         VALUES (?, 2.5, 0, 0, ?, ?)
+         ON CONFLICT(card_id) DO UPDATE SET due_date = excluded.due_date, last_reviewed = excluded.last_reviewed",
+    )
+    .bind(&card_id)
+    .bind(due_date)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    // 4) P0-2：卡片↔知识节点建链——复习评分后 writeBackMastery 按 related_card_ids
+    //    反查 nodeId 回写掌握度，此处即焊点（返回值暂不外用，日志留痕便于排查）。
+    match link_card_to_knowledge_node(&mut tx, &book_id, &highlight_id, &card_id, &text).await {
+        Ok(node_id) => {
+            log::debug!("[ai_highlight_to_flashcard] card {} → node {}", card_id, node_id);
+        }
+        Err(e) => {
+            // 建链失败不吞：记日志并让整单回滚（卡与链同生共死，绝不留孤儿卡）。
+            log::error!("[ai_highlight_to_flashcard] 建链失败，回滚本次制卡：{}", e);
+            return Err(e);
+        }
+    }
+
+    tx.commit().await?;
 
     Ok((result.front, result.back))
 }
@@ -950,8 +1027,10 @@ pub async fn ai_extract_questions(
     let mut results: Vec<ExtractedQuestion> = Vec::with_capacity(raw_questions.len());
     // v2.2（文档 2 #10）：程序级查重——该书已有题 + 本次已抽取题，Dice bigram ≥0.75 判重跳过
     // （卡片与错题本记录都不建，避免同一知识点反复出同一题）
-    let mut known_questions: Vec<String> = sqlx::query_scalar(
-        "SELECT question FROM quiz_questions WHERE book_id = ?",
+    // P0-1（2026-11-19）：知识点分组查重——同考点变式放行（0.92+答案归一），
+    // 跨考点原题拦截（0.75）；取三列 question / related_knowledge_point / answer。
+    let mut known_questions: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT question, COALESCE(related_knowledge_point, ''), COALESCE(answer, '') FROM quiz_questions WHERE book_id = ?",
     )
     .bind(&book_id)
     .fetch_all(db)
@@ -960,11 +1039,16 @@ pub async fn ai_extract_questions(
     let mut dedup_skipped: usize = 0;
 
     for (question_index, q) in raw_questions.iter().enumerate() {
-        if is_duplicate_question(&q.question, &known_questions) {
+        if is_duplicate_question_by_point(
+            &q.question,
+            &source_concept,
+            &q.answer,
+            &known_questions,
+        ) {
             dedup_skipped += 1;
             continue;
         }
-        known_questions.push(q.question.clone());
+        known_questions.push((q.question.clone(), source_concept.clone(), q.answer.clone()));
         // v2.2：trace_json 存结构化溯源（unit_index/lesson_index/source_concept_id）；
         // source_chapter 填章节标题，related_knowledge_point 填首个概念名（结构化出题时）
         let trace_json = serde_json::json!({
@@ -1071,6 +1155,9 @@ pub async fn ai_extract_questions(
         {
             // 卡片已建成，题目本身可用；缺的是错题本里的这一条记录，必须留痕
             log::warn!("[ai_extract_questions] quiz_questions 入库失败：{}", e);
+        } else {
+            // P0-1：入库成功后按概念名关联知识节点，错题才能回溯到薄弱点
+            super::knowledge_node::auto_link_question_by_concept(db, &book_id, &source_concept, &quiz_id).await;
         }
 
         // 3. 发射 card_updated 事件
@@ -1195,46 +1282,96 @@ pub async fn delete_quiz_question(
 
 /// v2.2（文档 2 #10）：题库程序级查重（Rust 侧，与前端 src/utils/quizDedup.ts 同算法）。
 /// 归一化（小写+去空白+去标点）→ bigram → Dice 系数 ≥0.75 判重。
+/// 2026-11-19：生产调用点已切换为分组查重 [`is_duplicate_question_by_point`]，
+/// 本函数仅测试引用（回归契约不得改红），标注 cfg(test) 消除 dead_code 警告。
+#[cfg(test)]
 pub(crate) fn is_duplicate_question(candidate: &str, existing: &[String]) -> bool {
-    // Rust char 没有 Unicode is_punctuation（仅 ascii 版），手写中英常见标点集合，
-    // 与前端 src/utils/quizDedup.ts 的 \p{P}\p{S} 保持行为一致
-    fn norm(q: &str) -> String {
-        q.chars()
-            .filter(|c| {
-                !c.is_whitespace()
-                    && !matches!(
-                        c,
-                        '，' | '。' | '？' | '！' | '、' | '；' | '：' | '“' | '”' | '‘' | '’'
-                            | '（' | '）' | '《' | '》' | '【' | '】' | '…' | '—' | '·' | '～'
-                            | '?' | '!' | ',' | '.' | ';' | ':' | '(' | ')' | '"' | '\'' | '-' | '_'
-                    )
-            })
-            .flat_map(|c| c.to_lowercase())
-            .collect()
-    }
-    fn grams(s: &str) -> std::collections::HashSet<String> {
-        let mut out = std::collections::HashSet::new();
-        let chars: Vec<char> = s.chars().collect();
-        if chars.len() < 2 {
-            return out;
-        }
-        for w in chars.windows(2) {
-            out.insert(w.iter().collect::<String>());
-        }
-        out
-    }
-    let cand_grams = grams(&norm(candidate));
+    let cand_grams = grams(&norm_quiz_text(candidate));
     if cand_grams.is_empty() {
         return false;
     }
     for ex in existing {
-        let ex_grams = grams(&norm(ex));
+        let ex_grams = grams(&norm_quiz_text(ex));
         if ex_grams.is_empty() {
             continue;
         }
-        let inter = cand_grams.intersection(&ex_grams).count();
-        let dice = (2.0 * inter as f64) / (cand_grams.len() + ex_grams.len()) as f64;
-        if dice >= 0.75 {
+        if dice_similarity(&cand_grams, &ex_grams) >= 0.75 {
+            return true;
+        }
+    }
+    false
+}
+
+// Rust char 没有 Unicode is_punctuation（仅 ascii 版），手写中英常见标点集合，
+// 与前端 src/utils/quizDedup.ts 的 \p{P}\p{S} 保持行为一致
+fn norm_quiz_text(q: &str) -> String {
+    q.chars()
+        .filter(|c| {
+            !c.is_whitespace()
+                && !matches!(
+                    c,
+                    '，' | '。' | '？' | '！' | '、' | '；' | '：' | '“' | '”' | '‘' | '’'
+                        | '（' | '）' | '《' | '》' | '【' | '】' | '…' | '—' | '·' | '～'
+                        | '?' | '!' | ',' | '.' | ';' | ':' | '(' | ')' | '"' | '\'' | '-' | '_'
+                )
+        })
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn grams(s: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() < 2 {
+        return out;
+    }
+    for w in chars.windows(2) {
+        out.insert(w.iter().collect::<String>());
+    }
+    out
+}
+
+fn dice_similarity(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<String>) -> f64 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let inter = a.intersection(b).count();
+    (2.0 * inter as f64) / (a.len() + b.len()) as f64
+}
+
+/// P0-1（2026-11-19）：知识点分组查重——放行同考点变式题，跨考点原题仍拦截。
+///
+/// 算法（与实现方案 §批次E 一致）：
+/// - 同 `related_knowledge_point`：Dice ≥ 0.92 **且** 答案归一相同才判重
+///   （同考点的不同考查角度/表述是合法变式，旧 0.75 阈值会误杀成「生成 0 题」）；
+/// - 跨考点：沿用 Dice ≥ 0.75（不同考点的近似题干是真重复）。
+///
+/// `existing` 为 `(question, related_knowledge_point, answer)` 三元组；
+/// 知识点字段为空串与空串视为同组（无分组信息时走严格判重，答案必须一致）。
+pub(crate) fn is_duplicate_question_by_point(
+    candidate: &str,
+    candidate_point: &str,
+    candidate_answer: &str,
+    existing: &[(String, String, String)],
+) -> bool {
+    let cand_grams = grams(&norm_quiz_text(candidate));
+    if cand_grams.is_empty() {
+        return false;
+    }
+    let cand_ans_norm = norm_quiz_text(candidate_answer);
+    for (q, point, answer) in existing {
+        let ex_grams = grams(&norm_quiz_text(q));
+        if ex_grams.is_empty() {
+            continue;
+        }
+        let dice = dice_similarity(&cand_grams, &ex_grams);
+        let same_point = point.trim() == candidate_point.trim();
+        if same_point {
+            // 同考点：近乎同题（≥0.92）且答案归一相同才算重复；答案不同是另一道题
+            if dice >= 0.92 && norm_quiz_text(answer) == cand_ans_norm {
+                return true;
+            }
+        } else if dice >= 0.75 {
             return true;
         }
     }
@@ -1258,6 +1395,7 @@ pub struct QuizGradeResult {
 }
 
 /// 生成批次标签：日期_6位随机字母数字（如 20260831_a8f3k2）
+#[allow(dead_code)] // 供批量题库生成复用（当前单题路径未调用）
 pub fn generate_quiz_tag() -> String {
     use chrono::Datelike;
     use rand::Rng;
@@ -1291,8 +1429,10 @@ pub async fn grade_quiz_answer(
     user_answer: String,
     correct_answer: String,
     options: Option<String>,
-    explanation: Option<String>,
+    _explanation: Option<String>,
 ) -> AppResult<QuizGradeResult> {
+    // 参数名保持 Tauri 契约（前端 invoke 传参依赖），question_id/options 当前仅透传记录用途
+    let _ = (&question_id, &options);
     let db = &*state.db;
     let ua = user_answer.trim().to_lowercase();
     let ca = correct_answer.trim().to_lowercase();

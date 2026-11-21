@@ -45,6 +45,12 @@
     "restart": "重新开始",
     "loadMore": "加载更多"
   },
+  "errorBoundary": {
+    "title": "应用遇到问题",
+    "desc": "页面渲染时发生错误。你可以重试，或清除引导缓存后重新开始。",
+    "retry": "重试",
+    "retryClearOnboarding": "清除引导缓存并重试"
+  },
   "tags": {
     "title": "标签体系",
     "searchPlaceholder": "搜索标签…",
@@ -94,7 +100,12 @@
     "legendLearning": "巩固中 60-80%",
     "legendWeak": "薄弱 40-60%",
     "legendNone": "未掌握 <40%",
-    "quizMeThis": "考我这个知识点"
+    "quizMeThis": "考我这个知识点",
+    "relatedQuestions": "相关题目",
+    "noRelatedQuestions": "暂无关联题目，可从 AI 考我发起练习。",
+    "answer": "答案",
+    "material": "薄弱点素材",
+    "practiceThis": "立即练习"
   },
   "graph": {
     "title": "知识图谱",
@@ -155,6 +166,10 @@
     "empty": "书架空空如也，去导入一本书吧",
     "chapters": "章",
     "continueCardSubtitle": "上次读到",
+    "resumePreciseSubtitle": "精读续接：{{chapter}}",
+    "resumePreciseSubtitlePos": "精读续接：按进度位置",
+    "focusPreset": "专注时长",
+    "focusMinutes": "{{count}} 分钟",
     "recentLearning": "最近学习",
     "recentNotes": "笔记",
     "recentNotesHint": "回到本书做过的笔记",
@@ -171,7 +186,16 @@
     "deleteConfirm": "确认删除《{{title}}》？删除后该书进度/笔记/卡片等数据将一并清除。",
     "deletedCount": "已删除 {{count}} 本书",
     "deleteSelectedTitle": "删除所选书籍",
-    "deleteSelectedConfirm": "确认删除选中的 {{count}} 本书？相关进度/笔记/卡片数据将一并清除。"
+    "deleteSelectedConfirm": "确认删除选中的 {{count}} 本书？相关进度/笔记/卡片数据将一并清除。",
+    "recall": "回忆上次读到哪",
+    "recallHide": "收起",
+    "recallEmpty": "还没有阅读记录，从开头读起吧。",
+    "recallFailed": "回忆失败，请重试",
+    "emptyFirst": {
+      "title": "书架还是空的",
+      "desc": "导入第一本书，开始「读 → 炼 → 练 → 忆」学习闭环。"
+    },
+    "loadFailed": "书架加载失败"
   },
   "reader": {
     "title": "阅读器",
@@ -243,7 +267,10 @@
     "noteSelectFirst": "请先选择要批注的文本",
     "viewMode": {
       "noPageHint": "当前格式无原生页码，仅支持滚动模式"
-    }
+    },
+    "breakdownStop": "中止",
+    "breakdownViewProgress": "查看进度",
+    "breakdownStopped": "已中止拆书"
   },
   "aiModel": {
     "title": "AI 模型",
@@ -276,7 +303,9 @@
     "currentActive": "当前生效",
     "setActive": "设为生效",
     "edit": "编辑",
-    "delete": "删除"
+    "delete": "删除",
+    "modelNamePlaceholder": "填写服务商提供的模型 ID，如 gpt-4o-mini",
+    "mimoModelHint": "小米 MiMo 请填写完整模型 ID：mimo-v2.5-pro 或 mimo-v2.6-pro（不带 -pro 后缀的型号无效）；推理模型默认开启思考模式，若只返回思考链请重试或改配非思考模型。"
   },
   "asr": {
     "modeTitle": "语音识别引擎",
@@ -419,7 +448,21 @@
     "boardFailed": "上板失败",
     "makeCard": "制卡",
     "quizMe": "考我",
-    "breakdown": "拆这段"
+    "cardSaved": "已存入复习队列",
+    "cardFailed": "制卡失败，请重试",
+    "inline": {
+      "explain": "原文旁解释",
+      "summary": "原文旁总结",
+      "translate": "原文旁翻译"
+    },
+    "inlineLoading": "正在生成…",
+    "inlineFailed": "生成失败",
+    "inlineClose": "关闭内联结果",
+    "inlineSaveNote": "存为笔记",
+    "inlineAttachHl": "附到高亮",
+    "inlineNoteSaved": "已存为笔记",
+    "inlineHlAttached": "已附到高亮备注",
+    "inlineSaveFailed": "保存失败，请重试"
   },
   "ai": {
     "title": "AI 助手",
@@ -451,7 +494,9 @@
       "scopeBook": "本书",
       "scopeSelection": "选区",
       "allBook": "全书",
-      "close": "关闭面板"
+      "close": "关闭面板",
+      "bookScopeHint": "当前将基于《{title}》的内容回答；不带书请点右侧 ×",
+      "bookScopeClear": "解除绑定"
     },
     "fab": "唤起 AI 助手",
     "profiles": "模型配置",
@@ -468,9 +513,6 @@
       "ask": {
         "label": "问"
       },
-      "breakdown": {
-        "label": "拆书"
-      },
       "makeCard": {
         "label": "制卡"
       },
@@ -480,15 +522,17 @@
       "quizMe": {
         "label": "考我"
       },
-      "coach": {
-        "label": "陪我练"
-      },
-      "plan": {
-        "label": "排计划"
-      },
-      "diagnose": {
-        "label": "诊断"
-      }
+      "quizDone": "已生成 {{n}} 道题，已加入题库",
+      "cardDone": "已制卡，已加入复习集",
+      "quizDegrade": "未绑定书籍或没有选区，已转为 AI 建议；绑定书籍或划词后可一键出题。",
+      "cardDegrade": "当前没有可制卡的高亮选区，已转为 AI 建议；在阅读器划词高亮后可一键制卡。",
+      "commandFailed": "命令执行失败，AI 回复不受影响，请稍后重试。",
+      "goPractice": "去练习",
+      "oneClickQuiz": "一键出题",
+      "oneClickCard": "一键制卡",
+      "adviceTitle": "AI 建议：仅生成对话回复，不会写入学习数据",
+      "commandTitle": "真命令：会写入学习数据（题目/卡片）",
+      "adviceBadge": "建议"
     },
     "voice": {
       "cancelled": "已取消"
@@ -533,7 +577,21 @@
       "selfcheck": {
         "title": "自查理解",
         "desc": "主动验证自己是否真的理解"
-      }
+      },
+      "pageEntry": "页面入口",
+      "practiceEntry": "专项练习",
+      "practiceEntryDesc": "费曼 / 案例 / 项目 / 对比模式练习页",
+      "teachingEntry": "教学相长",
+      "teachingEntryDesc": "给 AI 当老师，教一遍加深理解"
+    },
+    "stop": "停止生成",
+    "coach": {
+      "title": "从哪个动作开始？",
+      "desc": "从原文划词开始；只有出题和制卡会写入学习数据。"
+    },
+    "hint": {
+      "noAi": "尚未配置 AI 服务，先配置模型即可对话与练习。",
+      "configure": "去配置"
     }
   },
   "learn": {
@@ -566,7 +624,8 @@
       "mastered": "已掌握",
       "learning": "学习中",
       "weak": "薄弱",
-      "none": "未学"
+      "none": "未学",
+      "seeAll": "掌握详情"
     },
     "heatmap": {
       "title": "行为热力图",
@@ -585,7 +644,14 @@
       "emptyDesc": "去书架挑一本，开始今天的学习",
       "reviewCta": "复习 {{count}} 张到期卡",
       "reviewDesc": "到期就练，不靠意志力",
-      "askAi": "问 AI"
+      "askAi": "问 AI",
+      "stats": {
+        "streak": "连续学习",
+        "days": "天",
+        "todayTime": "今日时长",
+        "due": "待复习",
+        "monthTime": "本月时长"
+      }
     },
     "todayDue": "今天要复习 {{count}} 张",
     "todayRead": "今日已读 {{min}} 分钟",
@@ -620,7 +686,10 @@
     "hard": "困难",
     "good": "良好",
     "easy": "简单",
-    "viewSource": "看原文"
+    "viewSource": "看原文",
+    "viewMastery": "查看掌握详情",
+    "masteryNoBook": "无法回写掌握度：卡片未关联书籍",
+    "masteryNoNode": "无法回写掌握度：未找到关联的知识点"
   },
   "notes": {
     "title": "笔记库",
@@ -716,7 +785,14 @@
     "serverStartFailedMsg": "本地文件服务启动失败：{{msg}}",
     "skippedDuplicate": "已跳过重复",
     "unknownError": "未知错误",
-    "useFileButton": "请使用文件按钮选择"
+    "useFileButton": "请使用文件按钮选择",
+    "browseFolder": "从目录导入",
+    "folderHint": "选择目录后自动扫描其子目录中的全部图书，无需逐本添加。",
+    "scanning": "正在扫描目录…",
+    "scanSummary": "扫描完成：新增 {{imported}} 本 · 跳过重复 {{skipped}} 本 · 失败 {{failed}} 本（共发现 {{total}} 本）",
+    "scanNoBook": "该目录下未发现可导入的图书",
+    "folderUnavailable": "当前平台暂不支持目录选择，请改用「选择文件」或局域网上传。",
+    "scanFailed": "目录扫描失败：{{msg}}"
   },
   "workspace": {
     "title": "书籍工作区",
@@ -766,7 +842,7 @@
       "mindmap": "脑图节点",
       "chapterLabel": "第 {{index}} 章 · {{title}}",
       "noChunks": "暂无拆书结果",
-      "selfCheck": "自检",
+      "selfCheck": "质量自检",
       "viewChapter": "章节视图",
       "viewUnit": "单元视图",
       "loadingUnits": "加载知识单元…",
@@ -816,7 +892,19 @@
       "categoryTitle": "内容大类识别",
       "knowledgeTitle": "全书必知知识点（{{count}}）",
       "memoryTitle": "全书必掌握记忆点（{{count}}）",
-      "examTitle": "全书考点/易错点（{{count}}）"
+      "examTitle": "全书考点/易错点（{{count}}）",
+      "analyzeChapter": "分析",
+      "meaning": "深度解读",
+      "chunkKnowledgePoints": "本章知识点",
+      "chunkCards": "本章概念卡 {{count}} 张",
+      "selfCheckHide": "收起自检",
+      "qualityScore": "拆书质量分 {{score}}/100",
+      "qualityMissingChapters": "缺 {{count}} 章解析",
+      "qualityEmptySummary": "{{count}} 章摘要为空",
+      "qualityDuplicateKnowledge": "{{count}} 个重复知识点",
+      "qualityPositionNonMonotonic": "章节位置顺序异常",
+      "qualityMissingSource": "{{count}} 个知识点缺原文来源",
+      "qualityAllGood": "未发现问题，质量达标"
     },
     "quiz": {
       "title": "题库",
@@ -895,7 +983,8 @@
       "deckName": "MJNexus-复盘",
       "cardFileName": "复盘记忆卡片-{{date}}",
       "reportFileName": "复盘报告-{{date}}",
-      "maskReveal": "揭示"
+      "maskReveal": "揭示",
+      "clearWrong": "清空"
     },
     "notes": {
       "graphTitle": "知识图谱",
@@ -991,7 +1080,9 @@
       "scrollMode": "滚动式",
       "aiModelSub": "远程 AI 引擎 · OpenAI 兼容 / Ollama",
       "aiModelAction": "配置 >",
-      "backupAction": "管理 >"
+      "backupAction": "管理 >",
+      "outputSub": "导出 / 学习报告等产出",
+      "tagsSub": "标签管理，归拢笔记与卡片"
     },
     "readingPref": {
       "defaultView": "默认视图",
@@ -1720,7 +1811,10 @@
     "inputEmpty": "请先输入作答内容",
     "submit": "提交作答",
     "evaluating": "AI 正在点评…",
-    "evaluateFailed": "点评失败，请重试"
+    "evaluateFailed": "点评失败，请重试",
+    "fromAiHub": "由 AI 中枢发起：{{mode}}",
+    "needAi": "此功能需要配置 AI（设置 → AI 能力）。",
+    "goConfigure": "去配置"
   },
   "voicePractice": {
     "title": "语音问答",
@@ -1776,7 +1870,9 @@
     "noHistory": "暂无历史教学",
     "historyItem": "未指定主题",
     "statusDone": "已结束",
-    "statusActive": "进行中"
+    "statusActive": "进行中",
+    "fromAiHub": "由 AI 中枢发起：你当老师，AI 当学生",
+    "needAi": "此功能需要配置 AI（设置 → AI 能力）。"
   },
   "voiceCoach": {
     "title": "语音教练",
@@ -1960,7 +2056,26 @@
   "focus": {
     "title": "专注模式",
     "report": "阅读报告",
-    "exit": "退出"
+    "exit": "退出",
+    "timeUp": "本轮专注完成"
+  },
+  "commute": {
+    "title": "通勤模式",
+    "entry": "通勤",
+    "exit": "退出通勤模式",
+    "personaLabel": "人群画像",
+    "persona": {
+      "college": "大学生",
+      "postgrad": "考研",
+      "social": "社会学习"
+    },
+    "startListen": "开始语音提问",
+    "stopListen": "停止录音",
+    "tapToSpeak": "点击说出你的问题",
+    "listening": "正在聆听…",
+    "thinking": "正在思考…",
+    "speaking": "正在朗读答案…",
+    "stopSpeak": "停止朗读"
   },
   "quiz": {
     "tokenCostWarning": "生成题目将消耗一定量 AI 词元（每题约 100-200 tokens），确认继续？"

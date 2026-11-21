@@ -100,6 +100,7 @@ pub async fn list_study_sets(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn update_study_set(
     id: String,
     title: Option<String>,
@@ -149,6 +150,7 @@ pub async fn update_study_set(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn delete_study_set(id: String, state: State<'_, AppState>) -> AppResult<()> {
     let pool: &SqlitePool = &*state.db;
     // P1-2 软删除：不真删，打标 deleted_at（回收站语义）。

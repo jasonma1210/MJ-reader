@@ -1019,6 +1019,7 @@ async fn transcribe_with_sensevoice(
 /// 前端通过 `listen('asr-partial', ...)` 监听实时转录结果
 #[cfg(target_os = "ios")]
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn ios_speech_recognizer_start(
     _app: AppHandle,
     _language: Option<String>,
@@ -1031,6 +1032,7 @@ pub async fn ios_speech_recognizer_start(
 /// iOS SFSpeechRecognizer 停止流式识别命令
 #[cfg(target_os = "ios")]
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn ios_speech_recognizer_stop(_app: AppHandle) -> AppResult<String> {
     Err(AppError::General(
         "iOS 原生语音识别（SFSpeechRecognizer）暂不可用，v2.0 版本降级处理中".into(),
@@ -1040,6 +1042,7 @@ pub async fn ios_speech_recognizer_stop(_app: AppHandle) -> AppResult<String> {
 /// iOS SFSpeechRecognizer 权限检查命令
 #[cfg(target_os = "ios")]
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn ios_speech_recognizer_check_auth() -> AppResult<String> {
     Ok("unsupported_platform".into())
 }
@@ -1047,6 +1050,7 @@ pub async fn ios_speech_recognizer_check_auth() -> AppResult<String> {
 /// iOS SFSpeechRecognizer 权限请求命令
 #[cfg(target_os = "ios")]
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn ios_speech_recognizer_request_auth() -> AppResult<String> {
     Ok("unsupported_platform".into())
 }
@@ -1054,6 +1058,7 @@ pub async fn ios_speech_recognizer_request_auth() -> AppResult<String> {
 // 非 iOS 平台的 iOS 命令占位（保持 invoke_handler 注册兼容）
 #[cfg(not(target_os = "ios"))]
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn ios_speech_recognizer_start(
     _language: Option<String>,
 ) -> AppResult<()> {
@@ -1064,6 +1069,7 @@ pub async fn ios_speech_recognizer_start(
 
 #[cfg(not(target_os = "ios"))]
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn ios_speech_recognizer_stop() -> AppResult<String> {
     Err(AppError::General(
         "iOS SFSpeechRecognizer 仅在 iOS 平台可用".into(),
@@ -1072,12 +1078,14 @@ pub async fn ios_speech_recognizer_stop() -> AppResult<String> {
 
 #[cfg(not(target_os = "ios"))]
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn ios_speech_recognizer_check_auth() -> AppResult<String> {
     Ok("unsupported_platform".into())
 }
 
 #[cfg(not(target_os = "ios"))]
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn ios_speech_recognizer_request_auth() -> AppResult<String> {
     Ok("unsupported_platform".into())
 }
@@ -1125,6 +1133,7 @@ fn num_cpu_threads() -> i32 {
 //   仍按 2 秒增量返回部分结果以保持与 sherpa-onnx 相同接口。
 // - Android 端（sherpa-onnx）后续接入 streaming recognizer 后，只需替换函数体。
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn transcribe_streaming(
     app: AppHandle,
     state: State<'_, AppState>,

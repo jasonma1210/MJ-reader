@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Loader2, Send, RotateCcw } from "lucide-react";
 import {
@@ -10,6 +10,7 @@ import {
   type PracticeSession,
 } from "../services/practiceService";
 import { KnowledgeNodeSelect } from "../components/learn/KnowledgeNodeSelect";
+import { useAiStore } from "../stores/aiStore";
 import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 import { EmptyState, ErrorState } from "../components/common/states";
@@ -17,6 +18,7 @@ import { SubBackHeader } from "../components/shell/SubBackHeader";
 import { toast } from "../utils/toast";
 import { logError } from "../utils/logError";
 import { cn } from "../utils/cn";
+import { updateKnowledgeMastery } from "../services/closedLoopService";
 
 type Mode = "feynman" | "case" | "project" | "compare";
 
@@ -36,8 +38,15 @@ const MODES: { key: Mode; labelKey: string; descKey: string }[] = [
 export function PracticePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<Mode>("feynman");
-  const [targetNodeId, setTargetNodeId] = useState("");
+  const [searchParams] = useSearchParams();
+  // S2-2.2：动词产物页深链 —— /practice?mode=feynman|case|project|compare
+  const modeFromQuery = searchParams.get("mode") as Mode | null;
+  const [mode, setMode] = useState<Mode>(
+    modeFromQuery && MODES.some((m) => m.key === modeFromQuery) ? modeFromQuery : "feynman",
+  );
+  // S3-3.3：薄弱点一键练习深链 —— /practice?node=<知识节点 id>，预选目标节点
+  const [targetNodeId, setTargetNodeId] = useState(searchParams.get("node") ?? "");
+  const aiConfigured = useAiStore((s) => s.profileId != null);
 
   const [session, setSession] = useState<PracticeSession | null>(null);
   const [history, setHistory] = useState<PracticeEval[]>([]);
@@ -87,9 +96,18 @@ export function PracticePage() {
     setEvaluating(true);
     setError(null);
     try {
-      await practiceScenarioEvaluate(session.id, text);
+      const evalResult = await practiceScenarioEvaluate(session.id, text);
       setInput("");
       await refreshHistory(session.id);
+      // P0-1（2026-10-09）：练习作答回写掌握度（S1 任务 1.4，尽力而为不阻塞）
+      if (session.materialBookId && session.targetNodeId && evalResult) {
+        updateKnowledgeMastery(
+          session.materialBookId,
+          session.targetNodeId,
+          "practice",
+          evalResult.score >= 60,
+        ).catch((e) => logError("PracticePage.mastery", e));
+      }
     } catch (e) {
       logError("PracticePage.evaluate", e);
       toast(t("practice.evaluateFailed"));
@@ -113,6 +131,25 @@ export function PracticePage() {
       <div className="flex h-full flex-col overflow-auto bg-paper pb-6 pt-0">
         <SubBackHeader titleKey="practice.title" onBack={() => navigate(-1)} />
         <div className="flex flex-col gap-4 px-4 pt-3">
+        {/* S2-2.2：由 AI 中枢发起的引导条（深链进入时提示） */}
+        {modeFromQuery && MODES.some((m) => m.key === modeFromQuery) && (
+          <div className="rounded-[var(--radius-md)] border border-accent/30 bg-accent-bg px-3 py-2 text-xs text-accent">
+            {t("practice.fromAiHub", { mode: t(`practice.mode.${modeFromQuery}`) })}
+          </div>
+        )}
+        {/* S2-2.6：无 AI 降级叙事 —— 未配置模型时提示去设置 */}
+        {!aiConfigured && (
+          <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-line bg-paper-soft px-3 py-2 text-xs text-ink-muted">
+            <span className="flex-1">{t("practice.needAi")}</span>
+            <button
+              type="button"
+              onClick={() => navigate("/ai-config")}
+              className="shrink-0 text-accent"
+            >
+              {t("practice.goConfigure")}
+            </button>
+          </div>
+        )}
         {error ? (
           <ErrorState message={error} />
         ) : (

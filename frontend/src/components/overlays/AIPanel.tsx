@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Send,
@@ -32,7 +32,18 @@ import { bookService } from "../../services/bookService";
 import { playTts, stopTts, getTtsState, subscribeTts } from "../../services/ttsEngine";
 import type { BreakdownChunk, Book } from "../../types";
 import { cn } from "../../utils/cn";
-import { routeInput, allVerbs, verbPrompt, type VerbId } from "../../ai/router";
+import {
+  routeInput,
+  planTypedInput,
+  allVerbs,
+  dispatchVerb,
+  isAdviceVerb,
+  type VerbId,
+  type VerbContext,
+  type VerbNotice,
+} from "../../ai/router";
+import { quizService } from "../../services/quizService";
+import { highlightToFlashcard } from "../../services/closedLoopService";
 import { logError } from "../../utils/logError";
 import { useBreakpoint } from "../../hooks/useLayoutMode";
 
@@ -123,7 +134,7 @@ const LEARNING_TOOLS = [
   },
 ];
 
-/** V2 动词快捷触发清单：「问」是默认对话行为不单列，其余 7 动词按钮直触发 */
+/** 快捷触发清单：仅保留会写学习数据的真命令（问是默认对话行为不单列） */
 const QUICK_VERBS = allVerbs().filter((v) => v.id !== "ask");
 
 /**
@@ -135,8 +146,11 @@ export function AIPanel() {
   const { t } = useTranslation();
   const open = useAiStore((s) => s.open);
   const streaming = useAiStore((s) => s.streaming);
+  const stop = useAiStore((s) => s.stop);
   const send = useAiStore((s) => s.send);
+  const ensureProfileId = useAiStore((s) => s.ensureProfileId);
   const closePanel = useAiStore((s) => s.closePanel);
+  const profileId = useAiStore((s) => s.profileId);
   const startNewConversation = useAiStore((s) => s.startNewConversation);
   const scope = useAiStore((s) => s.scope);
   const mode = useAiStore((s) => s.mode);
@@ -146,6 +160,8 @@ export function AIPanel() {
   const [input, setInput] = useState("");
   const [chapters, setChapters] = useState<BreakdownChunk[]>([]);
   const [bookInfo, setBookInfo] = useState<Book | null>(null);
+  // P0-C：动词命令的结构化结果卡片（真落库成功 / 缺参降级 / 失败提示），附在对话区
+  const [actionNotice, setActionNotice] = useState<VerbNotice | null>(null);
   // 微信式输入：textMode=false → 语音输入模式
   const [textMode, setTextMode] = useState(true);
   // TTS 自动播放开关（默认开启）
@@ -192,6 +208,12 @@ export function AIPanel() {
     }
   }, [open, scope.bookId]);
 
+  // 2026-10-10 真机修复：面板打开时从后端加载生效 profile 回填 profileId，
+  // 否则「尚未配置 AI 服务」引导条在已配置时误显示（setProfile 此前无调用点）。
+  useEffect(() => {
+    if (open) void ensureProfileId();
+  }, [open, ensureProfileId]);
+
   // ===== 选区单轮（总结/翻译/解释）+ V2 动词发起位（autoSend，chat 承载） =====
   useEffect(() => {
     if (!open) {
@@ -233,9 +255,12 @@ export function AIPanel() {
     const text = lastAiTextRef.current.trim();
     if (text.length <= 20) return;
     if (autoSpokenRef.current === text) return;
-    // 延迟 500ms 让 UI 稳定；期间面板可能已被关闭，起播前再次确认。
+    // 延迟 500ms 让 UI 稳定；期间面板可能已被关闭或用户已切走路由，起播前再次确认。
+    // 切路由（底部 Tab / 返回）后不再朗读——面板常驻，open 可能仍为 true，只靠 open 判断会在离开 AI 界面后重新起播。
+    const pathAtSchedule = window.location.pathname;
     const timer = setTimeout(() => {
       if (!useAiStore.getState().open) return;
+      if (window.location.pathname !== pathAtSchedule) return;
       autoSpokenRef.current = text;
       playTts(text, { owner: "ai" });
     }, 500);
@@ -253,6 +278,7 @@ export function AIPanel() {
   // 离开 AI 路由（切底部 tab / 导航到别的页面）→ 立即停止 AI 播报。
   // 浮层常驻可能仍可见，但已不属于「AI 界面」，按用户要求必须静音。
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   useEffect(() => {
     if (!pathname.startsWith("/ai")) {
       stopTts({ owner: "ai" });
@@ -300,7 +326,15 @@ export function AIPanel() {
     // 发新提问时停止上一条回复的播报
     stopTts({ owner: "ai" });
     setTtsPlaying(false);
-    // V2 动词路由：命中学习动词（考我/拆书/制卡…）时转换为教练式 prompt，否则原样对话
+    // P1-1：打字命中「出题/考我/制卡」→ 走真命令落库。dispatchVerb 内部已 send，
+    // 此处直接返回，绝不叠加 send(routeInput)，否则双重发送。
+    // 打字无阅读器选区，用 literalRest 作为落库内容；无范围时 dispatchVerb 如实降级。
+    const plan = planTypedInput(text);
+    if (plan.kind === "verb") {
+      runVerb(plan.id, { literalRest: plan.rest });
+      return;
+    }
+    // 普通对话（含 ask / 未命中）：原样走 stream。
     const bookTitle = scope.scope === "book" ? (bookInfo?.title ?? null) : null;
     void send(routeInput(text, bookTitle));
   };
@@ -316,15 +350,73 @@ export function AIPanel() {
     void send(combined);
   };
 
-  // ===== V2 动词快捷触发：按钮直触发对应动词 prompt =====
+  // ===== V2 动词快捷触发（P0-C 真命令化）=====
+  // 副作用后置：先照常 send LLM 回复，再按需执行命令；命令失败只提示、不拦截。
+  const buildVerbContext = (): VerbContext => {
+    const bookTitle = scope.scope === "book" ? (bookInfo?.title ?? null) : null;
+    // 结构化选区上下文：复用 scope 与 bookInfo 已有状态，不新增上下文系统。
+    // highlightId / cfiRange 由阅读器选区条产生，AI 面板拿不到 → 如实走降级，不臆造。
+    return {
+      bookId: scope.bookId ?? null,
+      bookTitle,
+      selectionText: scope.selectionText ?? null,
+      chapterIndex: scope.chapterIndex ?? null,
+      chapterTitle:
+        typeof scope.chapterIndex === "number"
+          ? (chapters.find((c) => c.chapterIndex === scope.chapterIndex)?.chapterTitle ?? null)
+          : null,
+    };
+  };
+
+  const runVerb = (id: VerbId, extra?: Partial<VerbContext>) => {
+    const ctx: VerbContext = { ...buildVerbContext(), ...extra };
+    setActionNotice(null);
+    void dispatchVerb(id, ctx, {
+      send: (text) => send(text),
+      generateQuiz: (bookId, content) =>
+        quizService.generate(
+          bookId,
+          content,
+          3,
+          ["choice", "short"],
+          undefined,
+          ctx.chapterIndex,
+          ctx.chapterTitle,
+        ),
+      // AIPanel 当前拿不到 highlightId，此路径不会触发；保留真命令通路但不臆造 id。
+      createFlashcard: (highlightId) => highlightToFlashcard(highlightId),
+      notify: (notice) => setActionNotice(notice),
+      tr: (key, options) => String(t(key, options as never)),
+      logError,
+    });
+  };
+
   const handleQuickVerb = (id: VerbId) => {
     startNewConversation();
     // 同上：动词触发新一轮，停止旧播报
     stopTts({ owner: "ai" });
     setTtsPlaying(false);
-    const bookTitle = scope.scope === "book" ? (bookInfo?.title ?? null) : null;
-    void send(verbPrompt(id, bookTitle));
+    runVerb(id);
   };
+
+  // ===== 冷启动动词直达（P1-2）=====
+  // AiVerbCoach 等入口通过 scope.verbId 传入一次性意图；面板打开后这里消费一次，
+  // 直接走 dispatchVerb 真命令链，不经过输入框、不双重 send。读完即清 scope，防重复触发。
+  useEffect(() => {
+    if (!open) return;
+    const st = useAiStore.getState();
+    const incomingVerb = st.scope.verbId;
+    if (!incomingVerb) return;
+    const rest = st.scope.verbRest ?? null;
+    // 先清意图再执行：即使 runVerb 内部异步，也不会因重渲染重复触发。
+    useAiStore.setState((s) => ({ scope: { ...s.scope, verbId: null, verbRest: null } }));
+    stopTts({ owner: "ai" });
+    setTtsPlaying(false);
+    setActionNotice(null);
+    runVerb(incomingVerb, { literalRest: rest });
+    // runVerb 是每次渲染新建的函数；此处只按 open + verbId 触发一次，eslint 抑制依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, scope.verbId]);
 
   // ===== 学习工具 Portal 定位 =====
   useEffect(() => {
@@ -416,10 +508,35 @@ export function AIPanel() {
   // ===== 渲染 =====
   // 中枢三形态（V2）：桌读横屏=右侧抽屉；随身/平板竖屏=底部 Sheet；工作台由 ReaderAiPanel 常驻右栏
   const layout = useBreakpoint();
+  // ===== S2-2.5：未配 AI 引导条（本次会话内可关闭）=====
+  const [aiHintDismissed, setAiHintDismissed] = useState(false);
+
   return (
     <>
     <Sheet open={open} onClose={closePanel} title={t("ai.title")} variant={layout.isTabletLandscape ? "right" : "bottom"}>
       <div className={cn("flex flex-col gap-3", layout.isTabletLandscape ? "h-full" : "h-[70vh]")}>
+        {/* ==== 未配 AI 引导条（S2-2.5：未配置 AI 服务时提示，可关闭）==== */}
+        {!profileId && !aiHintDismissed && (
+          <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-accent/30 bg-accent-bg px-3 py-2 text-xs text-accent">
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1">{t("ai.hint.noAi")}</span>
+            <button
+              type="button"
+              onClick={() => navigate("/ai-config")}
+              className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold text-accent-fg"
+            >
+              {t("ai.hint.configure")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAiHintDismissed(true)}
+              className="shrink-0 p-0.5 text-accent/60 hover:text-accent"
+              aria-label={t("common.close")}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         {/* ==== 顶部：TTS ==== */}
         <div className="flex justify-end items-center gap-2 border-b border-overlay pb-2">
           {/* TTS 开关 */}
@@ -457,6 +574,48 @@ export function AIPanel() {
         <div ref={scrollRef} className="flex-1 space-y-3 overflow-auto">
           <AIChatList />
         </div>
+
+        {/* ==== P0-C 动词结构化结果卡片（真落库 / 缺参降级 / 失败）==== */}
+        {actionNotice && (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-[var(--radius-md)] border border-accent/30 bg-accent-bg px-3 py-2 text-xs text-accent"
+          >
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1 leading-4">{actionNotice.text}</span>
+            {actionNotice.goPractice && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActionNotice(null);
+                  navigate("/practice");
+                }}
+                className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold text-accent-fg"
+              >
+                {t("ai.verbs.goPractice")}
+              </button>
+            )}
+            {actionNotice.retry && (
+              <button
+                type="button"
+                onClick={() => handleQuickVerb(actionNotice.retry as VerbId)}
+                className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold text-accent-fg"
+              >
+                {actionNotice.retry === "makeCard"
+                  ? t("ai.verbs.oneClickCard")
+                  : t("ai.verbs.oneClickQuiz")}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setActionNotice(null)}
+              aria-label={t("common.close")}
+              className="shrink-0 p-0.5 text-accent/60 hover:text-accent"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
 
         {/* ==== 章节选择器 ==== */}
         {scope.bookId && chapters.length > 0 && (
@@ -524,6 +683,22 @@ export function AIPanel() {
               />
             )}
           </button>
+          {/* 2026-10-10 真机反馈：阅读器「问 AI」自动带入当前书，用户误以为系统私自选中。
+              此处明确解释绑定语义，并提示可随时点 × 解除（绑定本身是 v3.0 书内问答设计）。 */}
+          {scope.bookId && bookInfo && (
+            <p className="px-0.5 text-[11px] leading-4 text-ink-muted">
+              {t("ai.panel.bookScopeHint", {
+                title: bookInfo.title,
+              })}
+              <button
+                type="button"
+                onClick={() => useAiStore.getState().applyBookScope(undefined)}
+                className="ml-1 text-accent underline-offset-2 hover:underline"
+              >
+                {t("ai.panel.bookScopeClear")}
+              </button>
+            </p>
+          )}
 
           {/* 学习工具 - 第二行 */}
           <div className="relative self-start">
@@ -583,12 +758,12 @@ export function AIPanel() {
               />
               <button
                 type="button"
-                onClick={submit}
-                disabled={streaming || !input.trim()}
-                aria-label={t("ai.send")}
+                onClick={streaming ? () => void stop() : submit}
+                disabled={!streaming && !input.trim()}
+                aria-label={streaming ? t("ai.stop") : t("ai.send")}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-accent text-accent-fg disabled:opacity-50"
               >
-                <Send className="h-5 w-5" />
+                {streaming ? <Square className="h-5 w-5" /> : <Send className="h-5 w-5" />}
               </button>
             </>
           ) : (
@@ -737,19 +912,27 @@ export function AIPanel() {
               {t("ai.verbs.section")}
             </div>
             <div className="flex flex-wrap gap-1 px-1 pb-1">
-              {QUICK_VERBS.map((v) => (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => {
-                    setToolsOpen(false);
-                    handleQuickVerb(v.id);
-                  }}
-                  className="rounded-full border border-line px-2 py-1 text-[11px] text-ink-soft transition hover:bg-paper-soft"
-                >
-                  {t(v.labelKey)}
-                </button>
-              ))}
+              {QUICK_VERBS.map((v) => {
+                // R-C4：非 出题/考我/制卡 的动词仅生成对话建议（不写库），显式标注，避免误认为已执行动作
+                const advice = isAdviceVerb(v.id);
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    title={advice ? t("ai.verbs.adviceTitle") : t("ai.verbs.commandTitle")}
+                    onClick={() => {
+                      setToolsOpen(false);
+                      handleQuickVerb(v.id);
+                    }}
+                    className="rounded-full border border-line px-2 py-1 text-[11px] text-ink-soft transition hover:bg-paper-soft"
+                  >
+                    {t(v.labelKey)}
+                    {advice && (
+                      <span className="ml-0.5 text-[9px] text-ink-muted">·{t("ai.verbs.adviceBadge")}</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
           {LEARNING_TOOLS.map((tool) => {
@@ -772,6 +955,38 @@ export function AIPanel() {
               </button>
             );
           })}
+          {/* S2-2.2：动词产物页深链 —— 练习页 / 教学页（孤儿路由收编为动词结果视图） */}
+          <div className="mt-1 border-t border-line pt-1">
+            <div className="px-2 pb-1 text-[10px] text-ink-muted">{t("ai.tools.pageEntry")}</div>
+            <button
+              type="button"
+              onClick={() => {
+                setToolsOpen(false);
+                navigate("/practice?mode=feynman");
+              }}
+              className="flex w-full items-center gap-2 rounded-md p-2 text-left transition hover:bg-paper-soft"
+            >
+              <Play className="h-4 w-4 shrink-0 text-accent" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium text-ink">{t("ai.tools.practiceEntry")}</div>
+                <div className="truncate text-[10px] text-ink-muted">{t("ai.tools.practiceEntryDesc")}</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setToolsOpen(false);
+                navigate("/teaching");
+              }}
+              className="flex w-full items-center gap-2 rounded-md p-2 text-left transition hover:bg-paper-soft"
+            >
+              <GraduationCap className="h-4 w-4 shrink-0 text-accent" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium text-ink">{t("ai.tools.teachingEntry")}</div>
+                <div className="truncate text-[10px] text-ink-muted">{t("ai.tools.teachingEntryDesc")}</div>
+              </div>
+            </button>
+          </div>
         </div>,
         document.body,
       )}

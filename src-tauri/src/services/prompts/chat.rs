@@ -73,3 +73,91 @@ pub fn build_chat_unbound_guide() -> String {
      始终维持耐心、循循善诱的学习助手口吻。"
         .to_string()
 }
+
+// ==================== P2-2 人群画像附录（2026-11-19） ====================
+//
+// 画像（怎么讲）与 ageGuard 适龄分级（能不能讲）是两套独立体系，绝不混用：
+// 画像来自用户自主选择的学习者类型（大学生/考研/社会学习者），只调节讲解策略；
+// ageGuard 是安全护栏的单一真源，本模块不碰。
+
+/// 人群画像类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonaKind {
+    /// 大学生：教材/论文精读，重概念体系与论证链
+    College,
+    /// 考研：考点化、辨析式、应试思维路径
+    Postgrad,
+    /// 社会学习者：碎片时间、实用导向、可执行优先
+    Social,
+}
+
+impl PersonaKind {
+    /// 解析画像标识（settings KV 存储用）；未知值返回 None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "college" => Some(Self::College),
+            "postgrad" => Some(Self::Postgrad),
+            "social" => Some(Self::Social),
+            _ => None,
+        }
+    }
+
+    /// 稳定标识（settings KV 存储用）。2026-11-19：现仅测试引用（round-trip 契约），
+    /// 标注 cfg(test) 消除 dead_code 警告；生产序列化走 build_persona_appendix。
+    #[cfg(test)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::College => "college",
+            Self::Postgrad => "postgrad",
+            Self::Social => "social",
+        }
+    }
+}
+
+/// 人群画像提示词附录：`full` 走远程强模型（≤800 字），`short` 走端侧 1B
+/// （≤120 字纯文本，禁 ⟦⟧/【】/表格/多级列表——端侧小模型遇结构化标记会打崩输出）。
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ChatPersonaAppendix {
+    pub short: String,
+    pub full: String,
+}
+
+/// 构建画像附录（模板单一真源；full ≤800 字、short ≤120 字由模板保证，
+/// chat_tests 断言锁死，任何后续修改破坏约束都会被测试抓住）。
+pub fn build_persona_appendix(kind: PersonaKind) -> ChatPersonaAppendix {
+    match kind {
+        PersonaKind::College => ChatPersonaAppendix {
+            short: "用户是在校大学生，正在精读教材论文。请先点明概念在学科体系中的位置，讲清论证与推理链，辨析易混概念，结论之外给出依据。".to_string(),
+            full: "【学习者画像】用户是在校大学生，正在精读教材、论文或专著。回答时请：1）先点明概念在学科知识体系中的位置与前置依赖；2）讲清论证结构与推理链，而不只给结论；3）辨析教材中易混淆的相邻概念；4）必要时给出可迁移到其他章节的学习方法建议。保持严谨但通俗，避免应试化口吻。".to_string(),
+        },
+        PersonaKind::Postgrad => ChatPersonaAppendix {
+            short: "用户正在备考研究生考试，时间紧要拿分。请直接圈出考点与考法，辨析易混点与命题陷阱，讲清解题思路，不冗长铺垫。".to_string(),
+            full: "【学习者画像】用户正在备考研究生入学考试，时间紧、目标是拿分。回答时请：1）直接圈出考点与高频考法；2）给出易混概念辨析与常见命题陷阱；3）讲清解题思路与判断依据，而不只给答案；4）提示该知识点历年常见出题角度。突出结构化与重点，避免冗长铺垫。".to_string(),
+        },
+        PersonaKind::Social => ChatPersonaAppendix {
+            short: "用户是社会学习者，碎片时间学实用技能。请先给可执行的做法或结论，再用最少背景解释原因，给出实际示例，控制篇幅。".to_string(),
+            full: "【学习者画像】用户是社会学习者，利用碎片时间提升实用技能，目标导向强。回答时请：1）先给可立即执行的做法或结论；2）再用最少的必要背景解释为什么；3）给出实际场景中的示例；4）控制篇幅，避免教科书式铺陈。语言平实、可操作。".to_string(),
+        },
+    }
+}
+
+/// 校验 short 是否符合端侧约束：≤120 字、纯单段文本、禁结构化标记。
+/// （⟦⟧/【】会打崩 1B；换行/列表/表格属结构化排版，端侧同样禁用。）
+/// 任何一条不满足 → false（调用方按「无 short」处理，fail-closed）。
+pub fn is_valid_local_short(short: &str) -> bool {
+    let s = short.trim();
+    if s.is_empty() {
+        return false;
+    }
+    if s.chars().count() > 120 {
+        return false;
+    }
+    if s.contains('⟦') || s.contains('】') || s.contains('【') || s.contains('⟧') {
+        return false;
+    }
+    if s.contains('\n') || s.contains('|') {
+        return false;
+    }
+    true
+}

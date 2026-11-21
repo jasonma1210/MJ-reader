@@ -3,9 +3,11 @@ import type {
   AIPanelMode,
   ChatMessage,
 } from "../types";
-import { aiService, aiWebSearch, type ConversationSummary } from "../services/aiService";
+import { aiService, type ConversationSummary } from "../services/aiService";
+import { cancelAiStream } from "../services/closedLoopService";
 import { buildBookContext, type BookSource } from "../services/bookContext";
 import { searchAllBooksContent, ensureAllBookIndexes } from "../services/searchService";
+import { filterTraceableSources } from "../services/sourceAnchor";
 import { logError } from "../utils/logError";
 // errMsg：把 Tauri invoke 拒绝的 {code,message} 纯对象 / Error / string 统一转可读文本。
 // 此前用 String(err) 拼接 AppError 纯对象 → 气泡显示「[object Object]」，
@@ -25,6 +27,10 @@ interface AIPanelScope {
   prefill?: string | null;
   /** 打开面板即自动发送 selectionText（V2 动词发起位：制卡/考我/拆这段用 chat 承载） */
   autoSend?: boolean;
+  /** 冷启动动词直达：打开后由 AIPanel 一次性消费，直接走真命令分派（不经过输入框） */
+  verbId?: "quiz" | "quizMe" | "makeCard" | null;
+  /** 动词的打字范围文本（冷启动无选区时作为落库内容） */
+  verbRest?: string | null;
 }
 
 interface AIState {
@@ -60,7 +66,16 @@ interface AIState {
   /** 阅读器侧边栏：设置 book 范围对话上下文但不弹出全局 Sheet（横屏内嵌 AI 面板用） */
   setReaderScope: (bookId: string) => void;
   send: (text: string) => Promise<void>;
+  /** P0-1（2026-10-09）：停止生成。流式会话进行中 → 置位后端取消令牌 + 本地停止累积 */
+  stop: () => Promise<void>;
   setProfile: (id: string | null) => void;
+  /**
+   * 2026-10-10 真机修复：从后端加载生效 profile 并写入 profileId。
+   * 此前 profileId 恒为 null（setProfile 无调用点），AI 助手弹窗的
+   * 「尚未配置 AI 服务」引导条在已配置时误显示。生效 profile 判定：
+   * isPrimary 优先，否则取第一个 hasApiKey 的配置。
+   */
+  ensureProfileId: () => Promise<void>;
   /** 打开对话面板时恢复该范围（全局/书籍）最近一次对话，使对话可持久化续接 */
   restoreRecentConversation: () => Promise<void>;
   /** 新建对话：清空当前会话，下次 send 由后端生成新会话 */
@@ -148,6 +163,9 @@ export const useAiStore = create<AIState>((set, get) => ({
           prefill:
             incoming.prefill !== undefined ? incoming.prefill : s.scope.prefill,
           autoSend: incoming.autoSend ?? false,
+          // 动词直达是一次性意图：未被本次 openPanel 传入时清空，避免残留导致下次开面板重复触发。
+          verbId: incoming.verbId ?? null,
+          verbRest: incoming.verbRest ?? null,
         },
       };
     });
@@ -211,6 +229,18 @@ export const useAiStore = create<AIState>((set, get) => ({
   closePanel: () => set({ open: false }),
 
   setProfile: (profileId) => set({ profileId }),
+  ensureProfileId: async () => {
+    if (get().profileId) return;
+    try {
+      const profiles = await aiService.listProfiles();
+      const primary =
+        profiles.find((p) => p.isPrimary) ??
+        profiles.find((p) => p.hasApiKey);
+      if (primary) set({ profileId: primary.id });
+    } catch (e) {
+      logError("aiStore.ensureProfileId", e);
+    }
+  },
 
   restoreRecentConversation: async () => {
     const { scope } = get();
@@ -310,22 +340,19 @@ export const useAiStore = create<AIState>((set, get) => ({
       streaming: true,
     }));
 
-    // 对话上下文：
+    // 对话上下文：只使用学习库内证据，不再静默混入联网搜索。
     // - 书范围：优先选中章节拆书结构化数据；未选章节回退本书 FTS 检索（带溯源）
-    // - 全局（知识库）：跨书 FTS 检索全部书籍 + 联网搜索合并（最新知识）
+    // - 全局（知识库）：跨书 FTS 检索全部书籍（带溯源）
     let context: string | null = null;
     let sources: BookSource[] = [];
     if (scope.bookId && typeof scope.chapterIndex === "number") {
       const chapterCtx = await buildChapterContext(scope.bookId, scope.chapterIndex);
       context = chapterCtx;
     } else if (scope.bookId) {
-      // 书范围：全书 FTS 知识库 grounding（带溯源） + 并行联网搜索「触类旁通参考」（阶段D #7）
-      const [fc, webText] = await Promise.all([
-        buildBookContext(scope.bookId, trimmed),
-        webSearchContext(trimmed),
-      ]);
+      // 书范围：全书 FTS 知识库 grounding（带溯源）。回答明确只基于本书。
+      const fc = await buildBookContext(scope.bookId, trimmed);
       context = fc.text || null;
-      sources = fc.sources;
+      sources = filterTraceableSources(fc.sources, scope.bookId);
       if (sources.length > 0) {
         set((s) => ({
           messages: s.messages.map((m) =>
@@ -333,20 +360,12 @@ export const useAiStore = create<AIState>((set, get) => ({
           ),
         }));
       }
-      if (webText) {
-        context = context
-          ? `${context}\n\n【联网搜索 · 触类旁通参考资料】\n${webText}`
-          : `【联网搜索 · 触类旁通参考资料】\n${webText}`;
-      }
     } else {
-      // 全局知识库 + 联网搜索（并行）
-      const [kbHits, webText] = await Promise.all([
-        (async () => {
-          await ensureAllBookIndexes();
-          return searchAllBooksContent(trimmed, 6);
-        })().catch(() => []),
-        webSearchContext(trimmed),
-      ]);
+      // 全局知识库：跨书 FTS 检索，不注入联网内容，避免破坏「答案永不离原文」契约。
+      const kbHits = await (async () => {
+        await ensureAllBookIndexes();
+        return searchAllBooksContent(trimmed, 6);
+      })().catch(() => []);
       const parts: string[] = [];
       if (kbHits.length > 0) {
         parts.push("【知识库（我的书籍）检索到的内容】");
@@ -355,18 +374,16 @@ export const useAiStore = create<AIState>((set, get) => ({
             `- 《${h.bookTitle}》（${h.chapterTitle ?? "未知章节"}）：${h.content.replace(/\s+/g, " ").slice(0, 240)}`,
           );
         }
-        sources = kbHits.map((h, i) => ({
-          index: i + 1,
-          bookId: h.bookId,
-          chapterTitle: h.chapterTitle,
-          snippet: h.content.slice(0, 120),
-          locator: h.locator,
-          chunkIndex: h.chunkIndex,
-        }));
-      }
-      if (webText) {
-        parts.push("【联网搜索补充资料】");
-        parts.push(webText);
+        sources = filterTraceableSources(
+          kbHits.map((h, i) => ({
+            index: i + 1,
+            bookId: h.bookId,
+            chapterTitle: h.chapterTitle,
+            snippet: h.content.slice(0, 120),
+            locator: h.locator,
+            chunkIndex: h.chunkIndex,
+          })),
+        );
       }
       if (parts.length > 0) {
         context = parts.join("\n\n");
@@ -414,27 +431,18 @@ export const useAiStore = create<AIState>((set, get) => ({
       useAiStore.getState().persistSession(useAiStore.getState().scopeKey());
     }
   },
-}));
 
-/**
- * 联网搜索上下文（阶段D #7「网络搜索触类旁通」）：
- * 把联网检索的答案 + 结果列表整理成注入 context 的纯文本；无结果时返回 null。
- * 供书范围/全局范围共用，避免重复实现。
- */
-async function webSearchContext(query: string): Promise<string | null> {
-  try {
-    const r = await aiWebSearch(query, { maxResults: 4, includeAnswer: true });
-    if (!r || (r.results.length === 0 && !r.answer)) return null;
-    const lines: string[] = [];
-    if (r.answer?.trim()) lines.push(r.answer.trim());
-    for (const it of r.results.slice(0, 4)) {
-      lines.push(`- ${it.title}：${it.snippet || "（无摘要）"}（${it.url}）`);
+  // P0-1（2026-10-09）：停止生成。后端 ai_cancel_stream 置位取消令牌后，
+  // 读取循环立即退出（BE-32），前端同时停止累积 token。
+  stop: async () => {
+    const { streaming, conversationId } = get();
+    if (!streaming) return;
+    if (conversationId) {
+      cancelAiStream(conversationId).catch((e) => logError("aiStore.stop", e));
     }
-    return lines.join("\n");
-  } catch {
-    return null;
-  }
-}
+    set({ streaming: false });
+  },
+}));
 
 /** 单轮（非流式）问答：把选区交给后端命令，结果整体填入助手消息。 */
 async function runSingleShot(producer: () => Promise<string>): Promise<void> {

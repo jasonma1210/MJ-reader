@@ -12,7 +12,15 @@ import {
   type EditProfile,
 } from "../ai-config/RemoteProfileEditModal";
 
-export function AIModelConfig({ locked = false }: { locked?: boolean }) {
+export function AIModelConfig({
+  locked = false,
+  onActivate,
+}: {
+  locked?: boolean;
+  /** 2026-10-10 真机修复：locked（端侧/Ollama 生效）时点击启用开关，
+   *  先自动切回本引擎（远程 API）再启用模型，避免「点了没反应」。 */
+  onActivate?: () => Promise<void>;
+}) {
   const { t } = useTranslation();
   const [profiles, setProfiles] = useState<AIProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,7 +91,17 @@ export function AIModelConfig({ locked = false }: { locked?: boolean }) {
     }
   };
 
-  const onTogglePrimary = (p: AIProfile) => {
+  const onTogglePrimary = async (p: AIProfile) => {
+    // 真机修复：三源互斥锁定态下点击启用 → 自动切回本引擎（远程 API），随后启用该模型
+    if (locked && onActivate) {
+      try {
+        await onActivate();
+      } catch (e) {
+        logError("AIModelConfig.activateEngine", e);
+        setSaveMsg(`✗ ${String(e)}`);
+        return;
+      }
+    }
     const next = profiles.map((q) => ({
       ...q,
       isPrimary: q.id === p.id ? !q.isPrimary : false,
@@ -181,14 +199,19 @@ export function AIModelConfig({ locked = false }: { locked?: boolean }) {
                 </div>
               </div>
               <button
-                onClick={() => onTogglePrimary(p)}
-                disabled={locked}
+                onClick={() => void onTogglePrimary(p)}
                 className={cn(
                   "relative h-6 w-11 shrink-0 rounded-full transition",
                   effectivePrimary ? "bg-accent" : "bg-line-soft",
-                  locked && "pointer-events-none opacity-50",
+                  locked && "opacity-50",
                 )}
-                title={effectivePrimary ? t("aiModel.currentActive") : t("aiModel.setActive")}
+                title={
+                  locked
+                    ? t("aiModel.setActive")
+                    : effectivePrimary
+                      ? t("aiModel.currentActive")
+                      : t("aiModel.setActive")
+                }
                 aria-label={t("aiModel.setActive")}
               >
                 <span

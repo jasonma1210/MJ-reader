@@ -20,6 +20,8 @@ export const CMD = {
   importBookFromUri: "import_book_from_uri",
   getContentUriMetadata: "get_content_uri_metadata",
   listDirectories: "list_directories",
+  importFolders: "import_folders",
+  pickAndroidFolder: "pick_android_folder",
   // ai_chat
   aiChatStream: "ai_chat_stream",
   listConversations: "list_conversations",
@@ -32,6 +34,11 @@ export const CMD = {
   // ai_breakdown
   aiBookBreakdown: "ai_book_breakdown",
   aiBookBreakdownCancel: "ai_book_breakdown_cancel",
+  // P0-1（2026-10-09）：拆书四件套（状态恢复/章节分析/质量自检/强制重置）
+  getBreakdownStatus: "get_breakdown_status",
+  getBookBreakdownChunk: "get_book_breakdown_chunk",
+  getBreakdownSelfCheck: "get_breakdown_self_check",
+  forceResetBreakdown: "force_reset_breakdown",
   // v3.2（Part A 缺口②③）：结构化文本路由命令（一次往返定 OCR/文字层取舍）
   extractTextRoutes: "extract_text_routes",
   getBookBreakdown: "get_book_breakdown",
@@ -278,6 +285,8 @@ export const CMD = {
   getNodeByUid: "get_node_by_uid",
   linkNodeToCard: "link_node_to_card",
   generateBookwideAggregates: "generate_bookwide_aggregates",
+  // P0-1（2026-10-09）：错题清空（其余两键已在上文定义）
+  clearWrongQuestions: "clear_wrong_questions",
   setVerticalWriting: "set_vertical_writing",
   createCardLink: "create_card_link",
   listCardLinks: "list_card_links",
@@ -285,6 +294,8 @@ export const CMD = {
   getBookStats: "get_book_stats",
   getActiveProvider: "get_active_provider",
   setActiveProvider: "set_active_provider",
+  saveChatPersona: "save_chat_persona",
+  getChatPersona: "get_chat_persona",
   loadAiConfig: "load_ai_config_cmd",
   saveAiConfig: "save_ai_config",
   // ===== 端侧推理（2026-09-04 接线；命令随 llamacpp feature 门控，iOS 包会返回命令不存在） =====

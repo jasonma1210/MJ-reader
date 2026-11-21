@@ -37,6 +37,10 @@ pub use card::build_flashcard_prompt;
 pub use chat::build_chat_system_prompt;
 pub use chat::build_chat_system_prompt_local;
 pub use chat::build_chat_unbound_guide;
+pub use chat::build_persona_appendix;
+pub use chat::is_valid_local_short;
+pub use chat::ChatPersonaAppendix;
+pub use chat::PersonaKind;
 pub use light::{build_ask_prompt, build_toc_prompt};
 pub use mindmap::build_independent_mindmap_prompt;
 pub use summarize::{

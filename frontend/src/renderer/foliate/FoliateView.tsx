@@ -305,6 +305,13 @@ export function FoliateView({ bookId }: { bookId: string }) {
       const bgColor =
         BG_COLOR_PRESETS.find((x) => x.key === s.bgColorKey)?.color ??
         BG_COLOR_PRESETS[0].color;
+      // 竖排（P0-1）：正文纵向书写，右侧起栏；与行距/字号并存
+      const verticalCss = s.verticalWriting
+        ? `
+      html, body { writing-mode: vertical-rl !important; text-orientation: mixed !important; }
+      body > * { max-height: 100% !important; }
+      p { margin: 0 0.6em 0 0 !important; }`
+        : "";
       const css = `:root {
         --flow-padding: 8px ${marginX}px;
         --flow-max-width: 100%;
@@ -332,7 +339,8 @@ export function FoliateView({ bookId }: { bookId: string }) {
       }
       p { margin: 0.6em 0; }
       h1, h2, h3, h4, h5, h6 { margin: 0.8em 0 0.4em; line-height: 1.3; }
-      .section-body { overflow: visible !important; }`;
+      .section-body { overflow: visible !important; }
+      ${verticalCss}`;
       try {
         viewRef.current.renderer!.setStyles(css);
       } catch (e) {
@@ -476,7 +484,6 @@ export function FoliateView({ bookId }: { bookId: string }) {
       if (!lastLocation) {
         try {
           const record = await settingsService.getReadingProgress(bookId);
-          console.log("[PROGRESS-DEBUG] openBook fetchProgress bookId=", bookId, "record=", record);
           if (record) {
             const cfi = record.cfi?.trim();
             if (cfi) lastLocation = cfi;
@@ -766,7 +773,6 @@ export function FoliateView({ bookId }: { bookId: string }) {
         currentPageTextRef.current = "";
       }
       setProgress(Math.round(fraction * 100));
-      console.log("[PROGRESS-DEBUG] handleRelocate bookId=", bookId, "fraction=", fraction, "cfi=", cfi?.slice?.(0, 40));
       // 内存位置缓存（方向/壳切换重挂载后即时恢复）
       useReaderStore.getState().setLastPosition({ bookId, fraction, cfi });
       applyContentViewport(currentDocRef.current);
@@ -952,7 +958,6 @@ export function FoliateView({ bookId }: { bookId: string }) {
       // 即使 WebView 被重建（内存缓存丢失）也能从后端恢复，不再跳回第一页。
       const flushF = currentFractionRef.current;
       const flushC = currentCfiRef.current;
-      console.log("[PROGRESS-DEBUG] unmount flush bookId=", bookId, "fraction=", flushF);
       if (flushF > 0) {
         void settingsService.upsertReadingProgress({
           bookId,
@@ -995,7 +1000,6 @@ export function FoliateView({ bookId }: { bookId: string }) {
       if (!bid) return;
       const f = currentFractionRef.current;
       const c = currentCfiRef.current;
-      console.log("[PROGRESS-DEBUG] visibility flush bookId=", bid, "fraction=", f);
       if (f > 0) {
         void settingsService.upsertReadingProgress({
           bookId: bid,
@@ -1022,11 +1026,12 @@ export function FoliateView({ bookId }: { bookId: string }) {
   const fontFamily = useReaderStore((s) => s.fontFamily);
   const lineHeightKey = useReaderStore((s) => s.lineHeightKey);
   const paraSpacingKey = useReaderStore((s) => s.paraSpacingKey);
+  const verticalWriting = useReaderStore((s) => s.verticalWriting);
   const textColorKey = useReaderStore((s) => s.textColorKey);
   const bgColorKey = useReaderStore((s) => s.bgColorKey);
   useEffect(() => {
     injectContentStyles(fontSize);
-  }, [fontSize, fontFamily, lineHeightKey, paraSpacingKey, textColorKey, bgColorKey, injectContentStyles]);
+  }, [fontSize, fontFamily, lineHeightKey, paraSpacingKey, textColorKey, bgColorKey, verticalWriting, injectContentStyles]);
 
   // 高亮仓库变更 → 同步绘制
   useEffect(() => {

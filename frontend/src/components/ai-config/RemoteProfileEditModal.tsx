@@ -149,9 +149,17 @@ export function RemoteProfileEditModal({
             <input
               value={draft.modelName}
               onChange={(e) => set("modelName", e.target.value)}
+              placeholder={t("aiModel.modelNamePlaceholder")}
               className="w-full rounded-lg border border-line-soft bg-paper-soft px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             />
           </Labeled>
+          {/* 2026-10-10 真机反馈：用户填了小米 MiMo 无效模型名 mimo-v2.5，
+              对话请求 4xx 且错误体为 JSON。此处提示已知模型名，避免再次踩坑。 */}
+          {(draft.baseUrl ?? "").includes("mimo") && (
+            <p className="text-[11px] leading-4 text-ink-muted">
+              {t("aiModel.mimoModelHint")}
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Labeled label={t("aiModel.weight")}>
               <input

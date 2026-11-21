@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
-import { ChevronLeft, ChevronRight, RotateCw } from "lucide-react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { BookOpen, ChevronLeft, ChevronRight, RotateCw } from "lucide-react";
 import { studySetService } from "../services/studySetService";
 import { cardService } from "../services/cardService";
 import { masteryService, type BookKnowledgeNode } from "../services/masteryService";
-import { updateKnowledgeMastery } from "../services/closedLoopService";
+import { useJumpToSource } from "../hooks/useJumpToSource";
+import {
+  planMasteryWriteback,
+  reportMasteryWritebackIssue,
+  updateKnowledgeMastery,
+} from "../services/closedLoopService";
 import type { Card, StudySet } from "../types";
 import { cn } from "../utils/cn";
 import { EmptyState, LoadingState } from "../components/common/states";
@@ -48,6 +53,9 @@ export function ReviewFlashcardsPage() {
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const navigate = useNavigate();
+  /** P0-F：卡片一键回原文（复用统一跳转入口，cfi 空时降级为跳书恢复进度） */
+  const jumpToSource = useJumpToSource();
 
   useEffect(() => {
     void (async () => {
@@ -113,8 +121,7 @@ export function ReviewFlashcardsPage() {
   /** 掌握度回写（S2 任务 14）：评分 → 反查卡片关联的知识节点 → update_knowledge_mastery。
    *  尽力而为（fire-and-forget）：失败只记日志，不阻塞复习流。 */
   const writeBackMastery = (card: Card, rating: string) => {
-    if (!card.bookId) return;
-    const nodes = nodeCache.get(card.bookId) ?? [];
+    const nodes = card.bookId ? nodeCache.get(card.bookId) ?? [] : [];
     const nodeId = nodes.find((n) => {
       try {
         const ids: unknown = JSON.parse(n.relatedCardIds || "[]");
@@ -123,17 +130,24 @@ export function ReviewFlashcardsPage() {
         return false;
       }
     })?.id;
-    if (!nodeId) return;
-    updateKnowledgeMastery(card.bookId, nodeId, "flashcard_review", rating !== "again")
+
+    // P0-E：去二值化四档映射 + 关联失败不静默（logError + toast）
+    const plan = planMasteryWriteback(card.bookId, nodeId, rating);
+    if (plan.kind === "issue") {
+      reportMasteryWritebackIssue(plan, t);
+      return;
+    }
+    const { bookId, nodeId: targetNodeId, correct } = plan;
+    updateKnowledgeMastery(bookId, targetNodeId, "flashcard_review", correct)
       .then(() => {
         // 回写成功后同步缓存中的掌握度，避免重复取数
         setNodeCache((prev) => {
           const next = new Map(prev);
-          const list = prev.get(card.bookId ?? "") ?? [];
+          const list = prev.get(bookId) ?? [];
           next.set(
-            card.bookId ?? "",
+            bookId,
             list.map((n) =>
-              n.id === nodeId
+              n.id === targetNodeId
                 ? { ...n, assessmentCount: n.assessmentCount + 1 }
                 : n,
             ),
@@ -206,6 +220,19 @@ export function ReviewFlashcardsPage() {
             </span>
           </button>
 
+          {/* P0-F：一键回原文——复用 useJumpToSource，cfi 为空时仍跳书恢复进度 */}
+          <button
+            onClick={() => {
+              if (!current) return;
+              jumpToSource(current.bookId ?? "", current.cfiRange);
+            }}
+            disabled={!current?.bookId}
+            className="flex items-center justify-center gap-1 self-center rounded-full bg-line-soft px-4 py-1.5 text-xs font-medium text-ink-soft transition active:scale-95 disabled:opacity-40"
+          >
+            <BookOpen className="h-3.5 w-3.5" />
+            {t("review.viewSource")}
+          </button>
+
           {/* FSRS 评级按钮 */}
           <div className="flex items-center gap-2">
             {RATINGS.map((btn) => (
@@ -236,11 +263,10 @@ export function ReviewFlashcardsPage() {
               {flipped ? t("review.showFront") : t("review.showBack")}
             </button>
             <button
-              onClick={() => go(1)}
-              disabled={index >= total - 1}
-              className="flex items-center gap-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-accent-fg disabled:opacity-40"
+              onClick={() => (index >= total - 1 ? navigate("/mastery") : go(1))}
+              className="flex items-center gap-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-accent-fg"
             >
-              {t("review.next")}
+              {index >= total - 1 ? t("review.viewMastery") : t("review.next")}
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>

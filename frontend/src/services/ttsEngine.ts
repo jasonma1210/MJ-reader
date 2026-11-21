@@ -25,12 +25,13 @@ export interface TTSSentence {
   end: number;
 }
 
-/** 朗读归属：区分「阅读器正文朗读」与「AI 助手回复朗读」。
+/** 朗读归属：区分「阅读器正文朗读」「AI 助手回复朗读」与「通勤模式朗读」。
  * 引擎是模块级单例（同一时刻只有一路音频），归属标记让某一方在退出自己的界面时
  * 只停自己的朗读，不误伤另一方。
  * 场景（v3.7.2 修复）：AI 面板是 Shell 层常驻浮层、永不卸载，关闭面板/离开 AI 界面
- * 时若调用无参 stopTts() 会连阅读器正文朗读一起掐断，因此按归属精确停止。 */
-export type TtsOwner = "reader" | "ai";
+ * 时若调用无参 stopTts() 会连阅读器正文朗读一起掐断，因此按归属精确停止。
+ * P2-2（2026-11-19）：追加 "commute"（通勤模式听答案），退出通勤只停 commute。 */
+export type TtsOwner = "reader" | "ai" | "commute";
 
 /** 播放选项：onSentenceStart 供跟读高亮/自动翻页；onNeedMore 供续读下一朗读单元；
  * visibleText 供滚动式渲染器「看到什么从哪里读」（起播定位到视口内首个完整可见句）；

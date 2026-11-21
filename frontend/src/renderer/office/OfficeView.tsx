@@ -386,7 +386,6 @@ export function OfficeView({
         const apply = (ratio: number, attempt: number = 0): boolean => {
           if (cancelled || !containerRef.current || ratio <= 0) return false;
           const max = containerRef.current.scrollHeight - containerRef.current.clientHeight;
-          console.log("[PROGRESS-DEBUG] OfficeView.apply attempt=", attempt, "ratio=", ratio, "max=", max, "scrollHeight=", containerRef.current.scrollHeight);
           if (max > 0) {
             containerRef.current.scrollTop = ratio * max;
             return true;
@@ -400,15 +399,12 @@ export function OfficeView({
         requestAnimationFrame(() => {
           if (cancelled || !containerRef.current) return;
           const cached = useReaderStore.getState().lastPosition;
-          console.log("[PROGRESS-DEBUG] OfficeView.load restore bookId=", bookId, "cached=", cached);
           if (cached && cached.bookId === bookId && cached.fraction > 0) {
-            console.log("[PROGRESS-DEBUG] OfficeView.load restore FROM_MEMORY fraction=", cached.fraction);
             initRestoredRef.current = true;
             apply(cached.fraction);
             return;
           }
           void settingsService.getReadingProgress(bookId).then((record) => {
-            console.log("[PROGRESS-DEBUG] OfficeView.load restore FROM_DB record=", record);
             initRestoredRef.current = true;
             if (record && record.percentage > 0) {
               apply(record.percentage / 100);
@@ -436,18 +432,14 @@ export function OfficeView({
       let finalFraction = 0;
       if (memCached && memCached.bookId === bookId && memCached.fraction > 0) {
         finalFraction = memCached.fraction;
-        console.log("[PROGRESS-DEBUG] OfficeView cleanUp USE_MEMORY_CACHE fraction=", finalFraction);
       } else {
         const el = containerRef.current;
         if (el) {
           const max = el.scrollHeight - el.clientHeight;
           finalFraction = max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
-          console.log("[PROGRESS-DEBUG] OfficeView cleanUp USE_DOM fraction=", finalFraction, "scrollTop=", el.scrollTop, "max=", max);
         } else {
-          console.log("[PROGRESS-DEBUG] OfficeView cleanUp el is NULL");
         }
       }
-      console.log("[PROGRESS-DEBUG] OfficeView cleanUp flush bookId=", bookId, "finalFraction=", finalFraction);
       if (finalFraction > 0) {
         void settingsService.upsertReadingProgress({
           bookId,
@@ -492,7 +484,6 @@ export function OfficeView({
         if (!initRestoredRef.current && fraction < 0.01) {
           // 跳过初始化意外 scroll 的 fraction=0
         } else {
-          console.log("[PROGRESS-DEBUG] OfficeView scroll memory-cache bookId=", bookId, "fraction=", fraction);
           useReaderStore
             .getState()
             .setLastPosition({ bookId, fraction });

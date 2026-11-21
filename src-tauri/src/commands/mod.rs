@@ -31,9 +31,13 @@ pub mod book;
 // v1.1.0 P0.2 实现：卡片轴心架构 — 卡片主表 CRUD + 统一双向链接管理
 pub mod card;
 pub mod directory;
+#[cfg(test)]
+pub mod directory_tests;
 pub mod file;
 #[cfg(test)]
 pub mod file_tests;
+// 2026-11-20：Android SAF 目录批量扫描导入桥（JNI + feature 门控）
+pub mod folder_picker;
 // v1.1.0 P0.3 实现：mindmap_nodes 持久化 + 节点回跳原文
 pub mod mindmap_node;
 // P1 导出闭环：Markdown / OPML 导出命令
@@ -111,6 +115,8 @@ pub mod ollama_config_tests;
 pub mod lan_file_server;
 #[cfg(test)]
 pub mod knowledge_node_tests;
+#[cfg(test)]
+pub mod mindmap_node_tests;
 #[cfg(test)]
 pub mod study_note_tests;
 #[cfg(test)]

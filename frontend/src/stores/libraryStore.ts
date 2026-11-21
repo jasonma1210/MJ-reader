@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Book } from "../types";
 import { bookService } from "../services/bookService";
 import { generateTitlePlaceholderCover } from "../utils/textCover";
+import { logError } from "../utils/logError";
 
 export type LibraryFilter = "recent" | "progress" | "type" | "unfinished";
 export type LibraryView = "grid" | "list";
@@ -9,6 +10,8 @@ export type LibraryView = "grid" | "list";
 interface LibraryState {
   books: Book[];
   loading: boolean;
+  /** S3-3.2：加载失败信息（非空时页面显示 ErrorState + 重试） */
+  error: string | null;
   query: string;
   filter: LibraryFilter;
   view: LibraryView;
@@ -72,6 +75,7 @@ async function backfillPlaceholderCovers(books: Book[]): Promise<void> {
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   books: [],
   loading: false,
+  error: null,
   query: "",
   filter: "recent",
   view: "grid",
@@ -79,12 +83,18 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   selectedIds: [],
 
   load: async () => {
-    set({ loading: true });
-    const books = await bookService.getBooks();
-    set({ books, loading: false });
-    backfillGenericTitles(books);
-    // [v3.7] 书架加载时为无封面的书生成标题占位封面
-    void backfillPlaceholderCovers(books);
+    set({ loading: true, error: null });
+    try {
+      const books = await bookService.getBooks();
+      set({ books, loading: false });
+      backfillGenericTitles(books);
+      // [v3.7] 书架加载时为无封面的书生成标题占位封面
+      void backfillPlaceholderCovers(books);
+    } catch (e) {
+      // S3-3.2：静默失败 → 显式错误态（页面可重试）
+      logError("libraryStore.load", e);
+      set({ error: "书架加载失败", loading: false });
+    }
   },
 
   setQuery: (query) => set({ query }),

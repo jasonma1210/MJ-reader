@@ -116,7 +116,6 @@ export function findTextRangeWithin(
     endRaw: number;
     node: Text;
   }[] = [];
-  let pos = 0;
   const body = doc.body;
   if (!body) return null;
   const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
@@ -151,7 +150,6 @@ export function findTextRangeWithin(
     const compact = t.data.substring(s, e).replace(/\s+/g, "");
     if (compact.length === 0) continue;
     chunks.push({ compact, startRaw: s, endRaw: e, node: t });
-    pos += compact.length;
   }
   if (chunks.length === 0) return null;
 

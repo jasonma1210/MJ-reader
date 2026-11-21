@@ -1,6 +1,6 @@
 [package]
 name = "mjnexus-reader"
-version = "1.0.1"
+version = "1.1.0"
 description = "AI-native cross-platform ebook reader"
 authors = ["MJNexus"]
 edition = "2021"
@@ -93,10 +93,11 @@ qrcode = { version = "0.14", features = ["svg"] }
 # 替代 UDP connect 8.8.8.8 探测（移动网络/无外网路由时失败 → 误返回 127.0.0.1）
 local-ip-address = "0.6"
 
-# v3.4 实现：Edge TTS（微软 Read Aloud 在线合成，多端统一神经音色）
-# 纯 Rust，复用树内 tokio-tungstenite / sha2 / rand / serde_json；无系统 TLS/音频依赖，
-# 利于 Android aarch64 / iOS aarch64 交叉编译。详见 docs/design/tts-edge-mobile-assessment.md
-kothok-edge-tts = "0.2"
+# Edge TTS（微软 Read Aloud 在线合成，多端统一神经音色）
+# 纯 Rust，无系统 TLS/音频依赖，利于 Android/iOS 交叉编译。详见 docs/design/tts-edge-mobile-assessment.md
+# 2026-11-19：微软自 2026-10-10 将 Read Aloud 迁移到 V2（Sec-MS-GEC V2 签名），
+# kothok-edge-tts 0.2.10 仍发 V1 令牌 → 全量 HTTP 403。换用已实现 V2 的 edge-tts-rust。
+edge-tts-rust = "0.1.7"
 
 # v2.0 T09 实现：云端 ASR 服务（腾讯云实时语音识别 WebSocket + 小米 MiMo ASR）
 # - tokio-tungstenite：腾讯云 wss://asr.cloud.tencent.com 流式识别客户端
@@ -138,6 +139,12 @@ onnx = ["dep:ort"]
 #   pnpm tauri android build --target aarch64 --features android-asr
 # 详见 docs/android-asr-jni-runbook.md。
 android-asr = ["dep:jni"]
+# 2026-11-20：Android SAF 目录批量扫描导入桥。
+# 启用后引入 jni crate，通过 JNI 调用 FolderPickerBridge.kt（系统目录选择器 +
+# DocumentsContract 递归枚举），结果经 WebView.evaluateJavascript 回传前端。
+# 默认不启用以避免无 NDK 环境阻塞构建；真机（Bigme B6）构建命令：
+#   cargo tauri android build --apk --target aarch64 --features android-folder-picker
+android-folder-picker = ["dep:jni"]
 # 2026-09-04：下载保活（用户需求「锁屏黑屏后下载继续直到完成」）。
 # 启用后经 JNI 调 DownloadWakeLock.kt 持 PARTIAL_WAKE_LOCK（CPU 保活、屏幕可熄），
 # 下载结束/取消/失败自动释放（RAII guard）。ndk-context 已是 android target 非可选依赖。

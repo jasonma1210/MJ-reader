@@ -1,5 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
+import { BookOpen } from "lucide-react";
 import { useLibraryStore } from "../stores/libraryStore";
 import { isTauri } from "../services/tauri";
 import { useLayoutMode } from "../hooks/useLayoutMode";
@@ -10,12 +12,16 @@ import { BookCard } from "../components/library/BookCard";
 import { ListRow } from "../components/library/ListRow";
 import { ImportEntry } from "../components/library/ImportEntry";
 import { EmptyState } from "../components/common/states";
+import { Button } from "../components/ui/Button";
 import { RecentLearning } from "../components/library/RecentLearning";
 import { useRecentLearningBook } from "../hooks/useRecentLearning";
 
 export function LibraryPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const books = useLibraryStore((s) => s.books);
+  const storeError = useLibraryStore((s) => s.error);
+  const reload = useLibraryStore((s) => s.load);
   const query = useLibraryStore((s) => s.query);
   const filter = useLibraryStore((s) => s.filter);
   const view = useLibraryStore((s) => s.view);
@@ -100,8 +106,34 @@ export function LibraryPage() {
         <ImportEntry />
       </div>
 
-      {filtered.length === 0 ? (
-        <EmptyState title={t("library.empty")} />
+      {storeError ? (
+        /* S3-3.2：书架加载失败 → 错误态 + 重试（不再静默白屏） */
+        <EmptyState
+          title={t("library.loadFailed")}
+          description={String(storeError)}
+          icon={BookOpen}
+          action={
+            <Button size="sm" onClick={() => void reload()}>
+              {t("common.retry")}
+            </Button>
+          }
+        />
+      ) : filtered.length === 0 ? (
+        books.length === 0 ? (
+          /* S2-2.5：书架真空 → 「导入第一本书」冷启动引导 */
+          <EmptyState
+            title={t("library.emptyFirst.title")}
+            description={t("library.emptyFirst.desc")}
+            icon={BookOpen}
+            action={
+              <Button size="sm" onClick={() => navigate("/import")}>
+                {t("library.import")}
+              </Button>
+            }
+          />
+        ) : (
+          <EmptyState title={t("library.empty")} />
+        )
       ) : view === "grid" ? (
         <div
           className="grid gap-3"

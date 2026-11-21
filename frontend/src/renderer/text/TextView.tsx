@@ -269,7 +269,6 @@ export function TextView({
         const apply = (ratio: number, attempt: number = 0): boolean => {
           if (cancelled || !containerRef.current || ratio <= 0) return false;
           const max = containerRef.current.scrollHeight - containerRef.current.clientHeight;
-          console.log("[PROGRESS-DEBUG] TextView.apply attempt=", attempt, "ratio=", ratio, "max=", max, "scrollHeight=", containerRef.current.scrollHeight);
           if (max > 0) {
             containerRef.current.scrollTop = ratio * max;
             return true;
@@ -284,9 +283,7 @@ export function TextView({
         requestAnimationFrame(() => {
           if (cancelled || !containerRef.current) return;
           const cached = useReaderStore.getState().lastPosition;
-          console.log("[PROGRESS-DEBUG] TextView.loadText restore bookId=", bookId, "cached=", cached);
           if (cached && cached.bookId === bookId && cached.fraction > 0) {
-            console.log("[PROGRESS-DEBUG] TextView.loadText restore FROM_MEMORY fraction=", cached.fraction);
             // apply 可能异步重试，但这里先标记——因为不管能不能恢复到目标位置，
             // 初始化阶段已经过去，后续 scroll 不应再被抑制
             initRestoredRef.current = true;
@@ -294,7 +291,6 @@ export function TextView({
             return;
           }
           void settingsService.getReadingProgress(bookId).then((record) => {
-            console.log("[PROGRESS-DEBUG] TextView.loadText restore FROM_DB record=", record);
             initRestoredRef.current = true;
             if (record && record.percentage > 0) {
               apply(record.percentage / 100);
@@ -321,18 +317,14 @@ export function TextView({
       let finalFraction = 0;
       if (memCached && memCached.bookId === bookId && memCached.fraction > 0) {
         finalFraction = memCached.fraction;
-        console.log("[PROGRESS-DEBUG] TextView cleanUp USE_MEMORY_CACHE fraction=", finalFraction);
       } else {
         const el = containerRef.current;
         if (el) {
           const max = el.scrollHeight - el.clientHeight;
           finalFraction = max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
-          console.log("[PROGRESS-DEBUG] TextView cleanUp USE_DOM fraction=", finalFraction, "scrollTop=", el.scrollTop, "max=", max);
         } else {
-          console.log("[PROGRESS-DEBUG] TextView cleanUp el is NULL, nothing to save");
         }
       }
-      console.log("[PROGRESS-DEBUG] TextView cleanUp flush bookId=", bookId, "finalFraction=", finalFraction);
       if (finalFraction > 0) {
         void settingsService.upsertReadingProgress({
           bookId,
@@ -403,7 +395,6 @@ export function TextView({
         if (!initRestoredRef.current && fraction < 0.01) {
           // 跳过，不覆盖缓存
         } else {
-          console.log("[PROGRESS-DEBUG] scroll memory-cache bookId=", bookId, "fraction=", fraction);
           useReaderStore
             .getState()
             .setLastPosition({ bookId, fraction });

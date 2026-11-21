@@ -246,7 +246,7 @@ pub async fn teaching_respond(
     let mut accuracy_score = 0.0;
     let mut report_json = "{}".to_string();
     if dialogue.len() >= 9 {
-        let (c, co, a) = generate_report(db, &new_dialogue_json, &topic).await?;
+        let (_c, co, a) = generate_report(db, &new_dialogue_json, &topic).await?;
         completeness_score = co;
         accuracy_score = a;
         report_json = serde_json::json!({

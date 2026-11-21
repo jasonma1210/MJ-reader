@@ -149,36 +149,23 @@ pub fn read_file_bytes(app: AppHandle, file_path: String) -> AppResult<Response>
 
 /// 查询 Android content:// URI 的元数据（display name / size / mime type）。
 /// v0.7.0 实现：SAF 选择的文件 URI 不含路径，前端需通过此命令拿到原始文件名。
-/// 仅在 Android 平台编译；其他平台返回 AppError::General。
+///
+/// 2026-11-18 修正：原实现调用 `Fs::get_content_uri_metadata`，但锁定的
+/// tauri-plugin-fs 2.5.1 从未提供该 API（`#[cfg(target_os="android")]` 分支在 macOS
+/// 上的 `cargo check` 不编译，缺陷一直潜伏到 Android 真机构建才暴露 E0599）。
+/// 现统一返回"不支持"，由前端 importService.resolveContentUriName 的两层兜底
+/// （plugin-fs stat → URI 尾部解析）继续工作，不影响导入流程。
 #[tauri::command]
 pub fn get_content_uri_metadata<R: Runtime>(
     webview: Webview<R>,
     uri: String,
 ) -> AppResult<ContentUriMetadata> {
-    #[cfg(target_os = "android")]
-    {
-        use tauri_plugin_fs::FsExt;
-        let fs = webview.fs();
-        match fs.get_content_uri_metadata(uri) {
-            Ok(meta) => Ok(ContentUriMetadata {
-                display_name: meta.display_name,
-                size: meta.size,
-                mime_type: meta.mime_type,
-            }),
-            Err(e) => Err(AppError::General(format!(
-                "Failed to query content uri metadata: {}",
-                e
-            ))),
-        }
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = webview;
-        let _ = uri;
-        Err(AppError::General(
-            "get_content_uri_metadata 仅支持 Android 平台".to_string(),
-        ))
-    }
+    let _ = webview;
+    let _ = uri;
+    Err(AppError::General(
+        "get_content_uri_metadata 当前 tauri-plugin-fs 版本不支持，前端请走 stat/URI 兜底"
+            .to_string(),
+    ))
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

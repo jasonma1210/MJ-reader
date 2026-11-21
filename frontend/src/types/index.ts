@@ -199,6 +199,43 @@ export interface BreakdownChunk {
   parseSelfCheck?: ParseSelfCheck | null;
 }
 
+/** P0-1（2026-10-09）拆书四件套：进行中状态（get_breakdown_status） */
+export interface BreakdownStatus {
+  running: boolean;
+  done: number;
+  total: number;
+}
+
+/** P0-1 拆书四件套：单章拆解分析（get_book_breakdown_chunk） */
+export interface BookBreakdownChunk {
+  chapterIndex: number;
+  chapterTitle: string;
+  level: number;
+  positionFraction: number;
+  summary: string;
+  keyPoints: string[];
+  meaning: string;
+  knowledgePoints: string[];
+  memoryPoints: string[];
+  cardsCount?: number;
+  mindmapNodeCount?: number;
+  knowledgeGraph?: BreakdownKnowledgeGraph | null;
+}
+
+/** P0-1 拆书四件套：质量自检（get_breakdown_self_check） */
+export interface BreakdownQuality {
+  bookId: string;
+  checkedAt: number;
+  chapterTotal: number;
+  chapterMissing: string[];
+  knowledgeTotal: number;
+  knowledgeMissingSource: number;
+  emptySummary: number;
+  positionMonotonic: boolean;
+  duplicateKnowledge: number;
+  score: number;
+}
+
 /** 统一 AI 面板状态（4-Tab 共用） */
 export type AIPanelMode = "summary" | "translate" | "explain" | "ask-book" | "chat";
 

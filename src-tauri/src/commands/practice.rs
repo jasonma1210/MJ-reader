@@ -261,7 +261,7 @@ pub async fn practice_scenario_history(
 pub async fn voice_practice_ask(
     state: State<'_, AppState>,
     target_node_id: Option<String>,
-    material_book_id: Option<String>,
+    _material_book_id: Option<String>,
 ) -> AppResult<VoiceAsk> {
     let db = &*state.db;
     let session_id = Uuid::new_v4().to_string();

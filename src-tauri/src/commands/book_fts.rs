@@ -8,7 +8,6 @@
 // 为什么不在这里写 SQL：项目的分层约定是「命令层薄、服务层厚」，
 // 真正的建索引 / 检索逻辑都在 services::book_fts 里，那边可以脱离 Tauri 直接跑单测。
 
-use sqlx::Row;
 use tauri::State;
 
 use crate::commands::ai_core::extract_book_text_by_format;

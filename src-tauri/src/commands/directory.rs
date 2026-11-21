@@ -17,7 +17,9 @@ use std::path::Path;
 /// 这三个格式解析侧是空 STUB，留在白名单里会让目录扫描把它们静默收进书库，
 /// 用户点开才发现打不开；而扫描是批量的，脏数据一次进一堆。
 /// 与 `commands/book.rs` 的 `RETIRED_FORMATS` 保持同步。
-const SCAN_SUPPORTED_EXTS: &[&str] = &[
+// 2026-11-20: 解冻目录扫描后由 scan_dirs_into_library 真实使用。
+// pub(crate)：供 directory_tests 验证格式白名单契约（递归扫描回归锁）。
+pub(crate) const SCAN_SUPPORTED_EXTS: &[&str] = &[
     "epub", "pdf", "txt", "md", "markdown", "html", "htm", "xhtml", "xht",
     "mhtml", "mht", "mhtm", "xml", "mobi", "azw", "azw3", "fb2",
     "cbz", "zip", "docx", "doc", "pptx", "ppt",
@@ -38,6 +40,7 @@ pub struct BookDirectory {
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn create_directory(
     state: State<'_, AppState>,
     name: String,
@@ -102,6 +105,7 @@ pub async fn list_directories(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn rename_directory(
     state: State<'_, AppState>,
     id: String,
@@ -120,6 +124,7 @@ pub async fn rename_directory(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn delete_directory(
     state: State<'_, AppState>,
     id: String,
@@ -141,6 +146,7 @@ pub async fn delete_directory(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn move_book_to_directory(
     state: State<'_, AppState>,
     book_id: String,
@@ -181,6 +187,7 @@ pub struct ScanResult {
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn list_library_dirs(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<LibraryDir>> {
@@ -205,6 +212,7 @@ pub async fn list_library_dirs(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn add_library_dir(
     state: State<'_, AppState>,
     path: String,
@@ -247,6 +255,7 @@ pub async fn add_library_dir(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn remove_library_dir(
     state: State<'_, AppState>,
     id: String,
@@ -264,6 +273,7 @@ pub async fn remove_library_dir(
 /// 支持 epub/pdf/txt/md/mobi/azw/azw3/docx 格式
 /// 基于 file_hash 去重
 #[tauri::command]
+#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn scan_library_dir(
     state: State<'_, AppState>,
     app: AppHandle,
@@ -288,6 +298,7 @@ pub async fn scan_library_dir(
 /// - 原地引用，不复制文件；
 /// - 按 file_hash 判重（与单文件导入口径统一）；
 /// - 导入成功后后台懒处理元数据/封面（EPUB/MOBI 内嵌封面等）。
+// 2026-11-20: 解冻后由 import_folders 真实调用。
 async fn scan_dirs_into_library(
     pool: &SqlitePool,
     app: &AppHandle,
@@ -367,6 +378,7 @@ async fn scan_dirs_into_library(
 
 /// v1.3.0：直接选择一个或多个文件夹深度扫描导入（前端 Library「导入文件夹」入口）。
 #[tauri::command]
+// 2026-11-20 解冻：目录批量扫描导入（导入页"从目录导入"选项），已在 lib.rs 恢复注册。
 pub async fn import_folders(
     state: State<'_, AppState>,
     app: AppHandle,
@@ -385,13 +397,16 @@ pub async fn import_folders(
     scan_dirs_into_library(&pool, &app, &paths).await
 }
 
+// 2026-11-20: 解冻后由扫描导入链真实使用。
 enum ImportOutcome {
     Imported { hash: String, id: String },
     Skipped,
 }
 
 /// 递归收集目录下的图书文件
-fn collect_book_files(
+// 2026-11-20: 解冻后由 scan_dirs_into_library 真实调用。
+// pub(crate)：供 directory_tests 验证递归扫描/格式过滤/跳隐藏目录契约。
+pub(crate) fn collect_book_files(
     dir: &str,
     exts: &[&str],
     files: &mut Vec<String>,
@@ -428,6 +443,7 @@ fn collect_book_files(
 }
 
 /// 导入单个文件到书库（复用 import_book 逻辑的简化版）
+// 2026-11-20: 解冻后由 scan_dirs_into_library 真实调用。
 async fn import_file_to_library(
     pool: &SqlitePool,
     file_path: &str,

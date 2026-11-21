@@ -1,8 +1,8 @@
 // v0.7.1+ AI 对话 / 配置 / 连接测试（P1-1 拆分自 ai.rs，仅搬符号不改逻辑）。
 //
-// 12 个命令：ai_cancel_stream / save_ai_profiles / list_ai_profiles / delete_ai_profile /
+// 11 个命令：ai_cancel_stream / save_ai_profiles / list_ai_profiles / delete_ai_profile /
 // test_ai_connection / list_ollama_models / save_ai_config / load_ai_config_cmd /
-// ai_chat_stream / ai_test_connection / ai_translate / ai_explain。
+// ai_chat_stream / ai_translate / ai_explain。
 //
 // 命令名与 `#[tauri::command]` 属性一律不变（前端 invoke 依赖字符串名）。
 // 共享符号来自 ai_core（ChatMessage / OpenAI* / stream_cancellations 等）。
@@ -16,10 +16,149 @@ use crate::error::{AppError, AppResult};
 use crate::services::ai_profiles::{self, AiProfile};
 use crate::AppState;
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use tauri::{AppHandle, Emitter, State};
 use futures_util::StreamExt;
 use std::sync::Arc;
+
+// ==================== P0-1 学习数据注入对话（2026-11-19） ====================
+//
+// 背景：薄弱点/错题此前困在掌握度仪表盘与错题本，从不进 AI 对话——AI 每次失忆，
+// 无法针对「用户哪里没掌握」作答。本组函数把学习数据以纯文本标签注入书本 grounding。
+
+/// P0-1 纯函数：解析 source_chapters JSON（形如 `[{"chapter_index":3,...}]`），
+/// 判断节点是否覆盖指定章节。畸形 JSON 一律按不覆盖处理（不臆造归属）。
+pub(crate) fn node_covers_chapter(source_chapters_json: &str, chapter_index: i64) -> bool {
+    let parsed: serde_json::Value = match serde_json::from_str(source_chapters_json) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let Some(arr) = parsed.as_array() else {
+        return false;
+    };
+    arr.iter()
+        .any(|item| item.get("chapter_index").and_then(|v| v.as_i64()) == Some(chapter_index))
+}
+
+/// P0-1 纯函数：薄弱点/错题段格式化（纯文本标签与前 3 段一致；自封顶 1200 字）。
+/// 空数据返回空串（调用方整体省略，降级为原 grounding）。
+pub(crate) fn format_weak_learning_context(
+    weak_nodes: &[(String, f64)],
+    wrong_questions: &[(String, i64)],
+) -> String {
+    if weak_nodes.is_empty() && wrong_questions.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    if !weak_nodes.is_empty() {
+        out.push_str("【我的薄弱知识点】\n");
+        for (name, score) in weak_nodes.iter() {
+            out.push_str(&format!(
+                "- {}（掌握度 {:.0}%）\n",
+                name.trim(),
+                score * 100.0
+            ));
+        }
+    }
+    if !wrong_questions.is_empty() {
+        out.push_str("【我的错题】\n");
+        for (q, cnt) in wrong_questions.iter() {
+            let brief: String = q.trim().chars().take(60).collect();
+            out.push_str(&format!("- {}（错 {} 次）\n", brief, cnt));
+        }
+    }
+    out.chars().take(1200).collect()
+}
+
+/// P0-1：查询本书薄弱知识点（已评估里掌握度最低优先；章节聚焦按 source_chapters
+/// JSON 过滤，无命中退化「本书未掌握优先」——knowledge_nodes 无 chapter_index 列，
+/// 不依赖 SQLite JSON1，解析在 Rust 侧完成）。软删守卫：join books 可见性。
+pub(crate) async fn fetch_weak_nodes(
+    db: &SqlitePool,
+    book_id: &str,
+    chapter_index: Option<i64>,
+) -> Vec<(String, f64)> {
+    let rows = sqlx::query(
+        "SELECT kn.node_name, kn.mastery_score, kn.source_chapters
+         FROM knowledge_nodes kn
+         JOIN books b ON b.id = kn.book_id AND b.deleted_at IS NULL
+         WHERE kn.book_id = ? AND (kn.mastery_score > 0 OR kn.assessment_count > 0)
+         ORDER BY kn.mastery_score ASC LIMIT 8",
+    )
+    .bind(book_id)
+    .fetch_all(db)
+    .await;
+    let Ok(rows) = rows else {
+        return Vec::new();
+    };
+    let all: Vec<(String, f64, String)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("node_name").unwrap_or_default(),
+                r.try_get::<f64, _>("mastery_score").unwrap_or(0.0),
+                r.try_get::<String, _>("source_chapters").unwrap_or_default(),
+            )
+        })
+        .collect();
+    if let Some(idx) = chapter_index {
+        let scoped: Vec<(String, f64)> = all
+            .iter()
+            .filter(|(_, _, sc)| node_covers_chapter(sc, idx))
+            .map(|(n, s, _)| (n.clone(), *s))
+            .collect();
+        if !scoped.is_empty() {
+            return scoped.into_iter().take(5).collect();
+        }
+    }
+    all.into_iter().take(5).map(|(n, s, _)| (n, s)).collect()
+}
+
+/// P0-1：查询本书未掌握错题（错次多优先；章节聚焦经 quiz_question_id LEFT JOIN
+/// quiz_questions.chapter_index 过滤，旧数据 NULL 时退化「本书未掌握优先」）。
+/// 软删守卫：join books 可见性。
+pub(crate) async fn fetch_wrong_questions(
+    db: &SqlitePool,
+    book_id: &str,
+    chapter_index: Option<i64>,
+) -> Vec<(String, i64)> {
+    let rows = sqlx::query(
+        "SELECT wq.question, wq.wrong_count, q.chapter_index AS q_chapter
+         FROM quiz_wrong_questions wq
+         JOIN books b ON b.id = wq.book_id AND b.deleted_at IS NULL
+         LEFT JOIN quiz_questions q ON q.id = wq.quiz_question_id
+         WHERE wq.book_id = ? AND wq.mastered = 0
+         ORDER BY wq.wrong_count DESC, wq.last_wrong_at DESC LIMIT 8",
+    )
+    .bind(book_id)
+    .fetch_all(db)
+    .await;
+    let Ok(rows) = rows else {
+        return Vec::new();
+    };
+    let all: Vec<(String, i64, Option<i64>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("question").unwrap_or_default(),
+                r.try_get::<i64, _>("wrong_count").unwrap_or(0),
+                r.try_get::<Option<i64>, _>("q_chapter").unwrap_or(None),
+            )
+        })
+        .collect();
+    if let Some(idx) = chapter_index {
+        let scoped: Vec<(String, i64)> = all
+            .iter()
+            .filter(|(_, _, ch)| *ch == Some(idx))
+            .map(|(q, c, _)| (q.clone(), *c))
+            .collect();
+        if !scoped.is_empty() {
+            return scoped.into_iter().take(5).collect();
+        }
+    }
+    all.into_iter().take(5).map(|(q, c, _)| (q, c)).collect()
+}
+
 /// v3.0（用户报障「AI 对话没有对接书本内容」）：构造书本接地上下文（类知识库）。
 ///
 /// 组成（总量封顶 ~3000 字，防撑爆 prompt）：
@@ -124,11 +263,24 @@ async fn build_chat_book_grounding(
         }
     }
 
+    // 4. P0-1（2026-11-19）：我的薄弱知识点 / 我的错题——学习数据注入对话。
+    // 此前薄弱点困在掌握度仪表盘、从不进对话（AI 每次失忆）；本段让 AI 知道
+    // 用户哪里没掌握、哪里反复错，答题可针对性补强。与 user_query 无关（用户状态），
+    // 空数据返回空串整体省略；该段自封顶 1200 字。
+    let weak_nodes = fetch_weak_nodes(db, book_id, chapter_index).await;
+    let wrong_qs = fetch_wrong_questions(db, book_id, chapter_index).await;
+    let weak_ctx = format_weak_learning_context(&weak_nodes, &wrong_qs);
+    if !weak_ctx.is_empty() {
+        out.push('\n');
+        out.push_str(&weak_ctx);
+    }
+
     if out.is_empty() {
         return out;
     }
-    // 总量封顶 4200 字（章节地图 + FTS 段落 + GraphRAG 图谱；GraphRAG 自身已有 1200 字内封顶）
-    let capped: String = out.chars().take(4200).collect();
+    // 总量封顶 5000 字（章节地图 + FTS 段落 + GraphRAG 图谱 + 薄弱点/错题；
+    // GraphRAG 自身 1200 字封顶、学习数据段 1200 字封顶）
+    let capped: String = out.chars().take(5000).collect();
     format!(
         "以下是当前书籍的真实内容资料（据此回答，资料没覆盖的明确说「本书资料中未提及」）：\n\n{}",
         capped
@@ -512,16 +664,49 @@ pub async fn ai_chat_stream(
         );
     }
     // P2-14：system_prompt_overrides.chat 覆盖（settings 表可配置），追加为基础约束的补充。
-    if let Some(chat_override) = crate::commands::ai_core::load_system_prompt_overrides(db)
-        .await
-        .chat
-    {
-        if !chat_override.trim().is_empty() {
+    // P2-2 修补（2026-11-19）：此前对端侧也无条件注入——override 是自由长文本，
+    // 会打崩 1B 端侧模型（同 unbound guide 的教训）。现与 unbound guide 同口径：
+    // 仅远程强模型路径注入，端侧精简路径跳过。
+    if !is_llamacpp {
+        if let Some(chat_override) = crate::commands::ai_core::load_system_prompt_overrides(db)
+            .await
+            .chat
+        {
+            if !chat_override.trim().is_empty() {
+                messages.insert(
+                    1,
+                    ChatMessage {
+                        role: "system".into(),
+                        content: chat_override,
+                    },
+                );
+            }
+        }
+    }
+    // P2-2（2026-11-19）：人群画像附录分层注入——远程 full（≤800 字，已由加载侧截断）、
+    // 端侧仅 short（≤120 字纯文本，is_valid_local_short fail-closed 校验过）；
+    // 无画像或端侧 short 不合法 → 不注入。插入系统消息前排（index 2）。
+    if let Some(appendix) = crate::commands::ai_core::load_chat_persona_appendix(db).await {
+        let content: Option<String> = if is_llamacpp {
+            // 端侧预算为 0（Unsupported 档）时不注入，fail-closed
+            let budget = crate::services::device_tier::local_prompt_char_budget();
+            if !appendix.short.is_empty() && appendix.short.chars().count() <= budget {
+                Some(appendix.short.clone())
+            } else {
+                None
+            }
+        } else if !appendix.full.is_empty() {
+            Some(appendix.full.clone())
+        } else {
+            None
+        };
+        if let Some(content) = content {
+            let idx = std::cmp::min(2, messages.len());
             messages.insert(
-                1,
+                idx,
                 ChatMessage {
                     role: "system".into(),
-                    content: chat_override,
+                    content,
                 },
             );
         }
@@ -589,7 +774,24 @@ pub async fn ai_chat_stream(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(format!("AI 服务返回错误 {}: {}", status, text).into());
+        // 2026-10-10 真机修复：OpenAI 兼容 provider 的 4xx 错误体是 JSON
+        // （{"error":{"message":"...","type":...}}），原样拼接会让 AI 弹窗
+        // 展示一坨 JSON（用户报障「输出是 JSON 格式」）。此处提取 error.message
+        // 精简为用户可读文案，取不到再退回原文并截断。
+        let mut readable = text.clone();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(msg) = v
+                .pointer("/error/message")
+                .and_then(|m| m.as_str())
+                .filter(|m| !m.trim().is_empty())
+            {
+                readable = msg.to_string();
+            } else if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+                readable = msg.to_string();
+            }
+        }
+        let truncated: String = readable.chars().take(200).collect();
+        return Err(format!("AI 服务返回错误 {}: {}", status, truncated).into());
     }
 
     let mut stream = response.bytes_stream();
@@ -650,10 +852,13 @@ pub async fn ai_chat_stream(
             if let Some(data) = line.strip_prefix("data: ") {
                 let data = data.trim();
                 if data == "[DONE]" {
-                    // 正文缺失但模型只给了思考链（Nemotron 等）：把思考链作为最终答案兜底发出，
-                    // 否则用户看到「还没有对话」。思考链非答案，但聊胜于无，且落库同样兜底。
+                    // 正文缺失但模型只给了思考链（Nemotron/MiMo 等推理模型）：
+                    // 2026-10-10 真机修复——不再把思考链原文当答案兜底发出。
+                    // 推理模型的思考链常为 JSON/半成品结构，用户看到的是
+                    // 「输出是 JSON 格式」而非对话正文（真机报障根因）。
+                    // 改为：只发一行明确提示，避免误导；正文正常时不受影响。
                     if full_content.trim().is_empty() && !reasoning_full.trim().is_empty() {
-                        let fallback = reasoning_full.trim().to_string();
+                        let fallback = "（模型本次仅返回了思考过程，未生成正文回复。可重试，或在 AI 配置中改用非思考/更强模型。）".to_string();
                         full_content.push_str(&fallback);
                         let _ = app.emit("ai-chat-chunk", ChatChunkEvent {
                             conversation_id: conversation_id.clone(),
@@ -1092,56 +1297,3 @@ pub struct TestConnectionResult {
     pub latency_ms: u64,
 }
 
-#[tauri::command]
-pub async fn ai_test_connection(
-    api_url: String,
-    api_key: String,
-    model: String,
-) -> AppResult<TestConnectionResult> {
-    let start = std::time::Instant::now();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("客户端构建失败: {}", e))?;
-
-    let url = build_chat_url(&api_url);
-
-    let body = OpenAIRequest {
-        model: model.clone(),
-        messages: vec![ChatMessage {
-            role: "user".into(),
-            content: "ping".into(),
-        }],
-        stream: None,
-        temperature: None,
-        max_tokens: Some(1),
-        response_format: None,
-    };
-
-    let response = client
-        .post(&url)
-        .bearer_auth(&api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {}", e))?;
-
-    let status_code = response.status().as_u16();
-    let success = response.status().is_success();
-    let latency_ms = start.elapsed().as_millis() as u64;
-
-    let message = if success {
-        format!("连接成功（{}ms）", latency_ms)
-    } else {
-        let body_text = response.text().await.unwrap_or_default();
-        let truncated: String = body_text.chars().take(200).collect();
-        format!("HTTP {}: {}", status_code, truncated)
-    };
-
-    Ok(TestConnectionResult {
-        success,
-        status_code,
-        message,
-        latency_ms,
-    })
-}

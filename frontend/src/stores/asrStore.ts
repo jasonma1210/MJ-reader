@@ -95,10 +95,8 @@ export const useAsrStore = create<AsrState>((set, get) => ({
   loadModels: async () => {
     set({ loading: true });
     try {
-      console.log("[ASR] asrStore.loadModels: calling listAsrModels...");
       const models = await listAsrModels();
       const active = models.find((m) => m.isActive);
-      console.log("[ASR] asrStore.loadModels: got", models?.length ?? 0, "models, active =", active?.id ?? null);
       set({ models, activeModelId: active?.id ?? null, loading: false });
     } catch (e) {
       console.error("[ASR] asrStore.loadModels: FAILED", e);

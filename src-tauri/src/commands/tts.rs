@@ -5,11 +5,15 @@
 //! 与平台无关，只需联网即可在桌面 / Android / iOS 获得统一神经音色。
 //! 详见 docs/design/tts-edge-mobile-assessment.md。
 //!
-//! 实现依赖 `kothok-edge-tts`（纯 Rust，rustls/ring，无系统 TLS / 音频库，利于移动端交叉编译）。
-//! 启动时须调用一次 `init_tls()`（见 lib.rs setup）。
+//! 实现依赖 `edge-tts-rust`（纯 Rust，rustls，无系统 TLS / 音频库，利于移动端交叉编译）。
+//!
+//! 2026-11-19 迁移说明：微软自 2026-10-10 将 Read Aloud 从 V1 迁移到 V2
+//! （`Sec-MS-GEC` 改为 CS64+修改版 SHA-256 的 V2 签名，版本号 `2-...`）。
+//! 原 `kothok-edge-tts 0.2.10` 只发 V1 令牌 → WSS 握手全量 HTTP 403。
+//! 换用已实现 V2 的 `edge-tts-rust 0.1.7`（本地探针实测合成成功），对外命令签名不变、前端零改动。
 
 use crate::error::AppResult;
-use kothok_edge_tts::{EdgeTts, Engine, TtsEvent};
+use edge_tts_rust::{EdgeTtsClient, SpeakOptions};
 
 /// 前端可选的 Edge 神经音色清单（curated，离线可读、确定性）。
 /// 不依赖 server 语音目录抓取，保证设置页离线可用；用户也可自行输入任意 voice 短名。
@@ -56,28 +60,33 @@ fn rate_to_ssml_percent(rate: f64) -> String {
     format!("{sign}{pct}%")
 }
 
-/// 便利函子：将前端语速 + 文本合成一段 MP3，拼接返回全部音频字节。
-async fn synthesize_mp3(text: &str, voice: &str, rate_percent: &str, lang: &str) -> AppResult<Vec<u8>> {
-    let events = EdgeTts
-        .synthesize(text, voice, rate_percent, lang)
+/// 24kHz 单声道 MP3 输出格式（与旧 crate 行为一致，前端 AudioContext 可直接解码）。
+const OUTPUT_FORMAT_MP3: &str = "audio-24khz-48kbitrate-mono-mp3";
+
+/// 便利函子：将前端语速 + 文本合成一段 MP3，返回全部音频字节。
+/// `lang` 参数保留仅为兼容对外命令签名；新 crate 从 voice 短名自行解析地域，无需显式传 lang。
+async fn synthesize_mp3(text: &str, voice: &str, rate_percent: &str, _lang: &str) -> AppResult<Vec<u8>> {
+    let client = EdgeTtsClient::new()
+        .map_err(|e| crate::error::AppError::General(format!("Edge TTS 客户端初始化失败: {e}")))?;
+    let result = client
+        .synthesize(
+            text,
+            SpeakOptions {
+                voice: voice.to_string(),
+                rate: rate_percent.to_string(),
+                output_format: OUTPUT_FORMAT_MP3.to_string(),
+                ..SpeakOptions::default()
+            },
+        )
         .await
         .map_err(|e| crate::error::AppError::General(format!("Edge TTS 合成失败: {e}")))?;
 
-    let mut audio: Vec<u8> = Vec::new();
-    for ev in events {
-        match ev {
-            TtsEvent::Audio(bytes) => audio.extend_from_slice(&bytes),
-            TtsEvent::TurnEnd => break,
-            // 第一版不消费逐词边界（P2 词级高亮跟随），忽略即可
-            TtsEvent::WordBoundary { .. } => {}
-        }
-    }
-    if audio.is_empty() {
+    if result.audio.is_empty() {
         return Err(crate::error::AppError::General(
             "Edge TTS 未返回音频（服务可能临时不可用）".to_string(),
         ));
     }
-    Ok(audio)
+    Ok(result.audio)
 }
 
 /// 合成一段文本，返回 24kHz 单声道 MP3 字节。

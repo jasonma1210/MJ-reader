@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Highlighter, Search, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { Highlighter, Search, ChevronLeft, ChevronRight, Trash2, BookOpenCheck } from "lucide-react";
 import { useHighlightStore } from "../../stores/highlightStore";
 import { resolveHighlightJump } from "../reader/HighlightList";
+import { highlightToFlashcard } from "../../services/closedLoopService";
+import { toast } from "../../utils/toast";
+import { logError } from "../../utils/logError";
 import { EmptyState } from "../common/states";
 import { buildStripeColors } from "../../utils/stripeColor";
 
@@ -155,8 +158,23 @@ export function HighlightsPanel({ bookId, onClose }: { bookId: string; onClose?:
                     </p>
                   )}
                 </button>
-                {/* 操作行：删除 */}
-                <div className="flex items-center justify-end border-t border-line px-2 py-1">
+                {/* 操作行：制卡（P1-3，真机回归补挂——原入口在未挂载的 HighlightList 上不可达）+ 删除 */}
+                <div className="flex items-center justify-end gap-1 border-t border-line px-2 py-1">
+                  <button
+                    onClick={() =>
+                      void highlightToFlashcard(h.id)
+                        .then(() => toast(t("highlights.cardDone")))
+                        .catch((e) => {
+                          logError("HighlightsPanel.makeCard", e);
+                          toast(t("highlights.cardFailed"));
+                        })
+                    }
+                    title={t("highlights.makeCard")}
+                    aria-label={t("highlights.makeCard")}
+                    className="flex h-6 w-6 items-center justify-center rounded text-ink-muted transition hover:bg-accent-bg hover:text-accent"
+                  >
+                    <BookOpenCheck className="h-3.5 w-3.5" />
+                  </button>
                   <button
                     onClick={() => void remove(h.id)}
                     title={t("highlights.delete")}

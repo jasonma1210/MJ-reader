@@ -45,6 +45,12 @@
     "restart": "Restart",
     "loadMore": "Load more"
   },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "desc": "An error occurred while rendering. You can retry, or clear the onboarding cache and start over.",
+    "retry": "Retry",
+    "retryClearOnboarding": "Clear onboarding cache & retry"
+  },
   "tags": {
     "title": "Tags",
     "searchPlaceholder": "Search tags…",
@@ -94,7 +100,12 @@
     "legendLearning": "Learning 60-80%",
     "legendWeak": "Weak 40-60%",
     "legendNone": "None <40%",
-    "quizMeThis": "Quiz me on this"
+    "quizMeThis": "Quiz me on this",
+    "relatedQuestions": "Related questions",
+    "noRelatedQuestions": "No related questions yet. Try “Quiz me” from the AI hub.",
+    "answer": "Answer",
+    "material": "Weak material",
+    "practiceThis": "Practice now"
   },
   "graph": {
     "title": "Knowledge Graph",
@@ -155,6 +166,10 @@
     "empty": "Your library is empty. Import a book to start.",
     "chapters": "ch",
     "continueCardSubtitle": "Last read",
+    "resumePreciseSubtitle": "Resume: {{chapter}}",
+    "resumePreciseSubtitlePos": "Resume: by saved position",
+    "focusPreset": "Focus duration",
+    "focusMinutes": "{{count}} min",
     "recentLearning": "Recent Learning",
     "recentNotes": "Notes",
     "recentNotesHint": "Back to this book's notes",
@@ -171,7 +186,16 @@
     "deleteConfirm": "Delete \"{{title}}\"? Progress, notes and cards for this book will be removed.",
     "deletedCount": "Deleted {{count}} books",
     "deleteSelectedTitle": "Delete selected books",
-    "deleteSelectedConfirm": "Delete {{count}} selected books? Related progress/notes/card data will be cleared."
+    "deleteSelectedConfirm": "Delete {{count}} selected books? Related progress/notes/card data will be cleared.",
+    "recall": "Recall last read",
+    "recallHide": "Hide",
+    "recallEmpty": "No reading history yet, start from the beginning.",
+    "recallFailed": "Recall failed, please retry",
+    "emptyFirst": {
+      "title": "Your shelf is empty",
+      "desc": "Import your first book to start the Read → Distill → Practice → Recall loop."
+    },
+    "loadFailed": "Library failed to load"
   },
   "reader": {
     "title": "Reader",
@@ -243,7 +267,10 @@
     "noteSelectFirst": "Select text to annotate first",
     "viewMode": {
       "noPageHint": "This format has no native pages. Scroll mode only."
-    }
+    },
+    "breakdownStop": "Stop",
+    "breakdownViewProgress": "View progress",
+    "breakdownStopped": "Breakdown stopped"
   },
   "aiModel": {
     "title": "AI Models",
@@ -276,7 +303,9 @@
     "currentActive": "Active",
     "setActive": "Set active",
     "edit": "Edit",
-    "delete": "Delete"
+    "delete": "Delete",
+    "modelNamePlaceholder": "Provider model ID, e.g. gpt-4o-mini",
+    "mimoModelHint": "Xiaomi MiMo: use mimo-v2.5-pro or mimo-v2.6-pro (no -pro suffix is invalid). Thinking mode is on by default; retry or switch model if only reasoning is returned."
   },
   "asr": {
     "modeTitle": "Speech engine",
@@ -419,7 +448,21 @@
     "boardFailed": "Failed to add to board",
     "makeCard": "Make card",
     "quizMe": "Quiz me",
-    "breakdown": "Break this"
+    "cardSaved": "Saved to review queue",
+    "cardFailed": "Failed to create card, please retry",
+    "inline": {
+      "explain": "Inline explanation",
+      "summary": "Inline summary",
+      "translate": "Inline translation"
+    },
+    "inlineLoading": "Generating…",
+    "inlineFailed": "Generation failed",
+    "inlineClose": "Close inline result",
+    "inlineSaveNote": "Save as note",
+    "inlineAttachHl": "Attach to highlight",
+    "inlineNoteSaved": "Saved as note",
+    "inlineHlAttached": "Attached to highlight note",
+    "inlineSaveFailed": "Save failed, please retry"
   },
   "ai": {
     "title": "AI Assistant",
@@ -451,7 +494,9 @@
       "scopeBook": "Book",
       "scopeSelection": "Selection",
       "allBook": "Whole book",
-      "close": "Close panel"
+      "close": "Close panel",
+      "bookScopeHint": "Answering based on “{title}”; tap × to unbind",
+      "bookScopeClear": "Unbind"
     },
     "fab": "Open AI Assistant",
     "profiles": "Model config",
@@ -468,9 +513,6 @@
       "ask": {
         "label": "Ask"
       },
-      "breakdown": {
-        "label": "Break down"
-      },
       "makeCard": {
         "label": "Make card"
       },
@@ -480,15 +522,17 @@
       "quizMe": {
         "label": "Quiz me"
       },
-      "coach": {
-        "label": "Coach me"
-      },
-      "plan": {
-        "label": "Plan"
-      },
-      "diagnose": {
-        "label": "Diagnose"
-      }
+      "quizDone": "Generated {{n}} questions, added to the question bank",
+      "cardDone": "Card created and added to your review queue",
+      "quizDegrade": "No book bound or no selection — returned as AI advice. Bind a book or select text to generate with one tap.",
+      "cardDegrade": "No highlight available to turn into a card — returned as AI advice. Highlight text in the reader to create one with a tap.",
+      "commandFailed": "Command failed; the AI reply is unaffected. Please retry.",
+      "goPractice": "Practice",
+      "oneClickQuiz": "Generate quiz",
+      "oneClickCard": "Make card",
+      "adviceTitle": "AI advice: chat reply only, no learning data is written",
+      "commandTitle": "Real command: writes learning data (questions/cards)",
+      "adviceBadge": "advice"
     },
     "voice": {
       "cancelled": "Cancelled"
@@ -533,7 +577,21 @@
       "selfcheck": {
         "title": "Self-check",
         "desc": "Verify you truly understand"
-      }
+      },
+      "pageEntry": "Pages",
+      "practiceEntry": "Practice",
+      "practiceEntryDesc": "Feynman / case / project / compare practice",
+      "teachingEntry": "Teach the AI",
+      "teachingEntryDesc": "Explain to AI to deepen understanding"
+    },
+    "stop": "Stop",
+    "coach": {
+      "title": "Where to start?",
+      "desc": "Start by selecting text in the book; only quiz and card actions write learning data."
+    },
+    "hint": {
+      "noAi": "AI is not configured yet. Set up a model to chat and practice.",
+      "configure": "Set up"
     }
   },
   "learn": {
@@ -566,7 +624,8 @@
       "mastered": "Mastered",
       "learning": "Learning",
       "weak": "Weak",
-      "none": "Not started"
+      "none": "Not started",
+      "seeAll": "Mastery detail"
     },
     "heatmap": {
       "title": "Activity Chart",
@@ -585,7 +644,14 @@
       "emptyDesc": "Pick one from your shelf to start today",
       "reviewCta": "Review {{count}} due cards",
       "reviewDesc": "Practice when due, no willpower needed",
-      "askAi": "Ask AI"
+      "askAi": "Ask AI",
+      "stats": {
+        "streak": "Day streak",
+        "days": "d",
+        "todayTime": "Today",
+        "due": "Due reviews",
+        "monthTime": "This month"
+      }
     },
     "todayDue": "Review {{count}} cards today",
     "todayRead": "Read {{min}} min today",
@@ -620,7 +686,10 @@
     "hard": "Hard",
     "good": "Good",
     "easy": "Easy",
-    "viewSource": "View source"
+    "viewSource": "View source",
+    "viewMastery": "View mastery",
+    "masteryNoBook": "Cannot write back mastery: card has no associated book",
+    "masteryNoNode": "Cannot write back mastery: no linked knowledge node found"
   },
   "notes": {
     "title": "Notes",
@@ -716,7 +785,14 @@
     "serverStartFailedMsg": "Local file server failed to start: {{msg}}",
     "skippedDuplicate": "Skipped duplicate",
     "unknownError": "Unknown error",
-    "useFileButton": "Please use the file button to select"
+    "useFileButton": "Please use the file button to select",
+    "browseFolder": "Import from Folder",
+    "folderHint": "Choose a folder to auto-scan all books in its subfolders — no need to add one by one.",
+    "scanning": "Scanning folder…",
+    "scanSummary": "Scan done: {{imported}} added · {{skipped}} duplicates skipped · {{failed}} failed ({{total}} found)",
+    "scanNoBook": "No importable books found in this folder",
+    "folderUnavailable": "Folder selection is unavailable on this platform. Use \"Select Files\" or LAN upload instead.",
+    "scanFailed": "Folder scan failed: {{msg}}"
   },
   "workspace": {
     "title": "Book workspace",
@@ -766,7 +842,7 @@
       "mindmap": "Mindmap nodes",
       "chapterLabel": "Ch {{index}} · {{title}}",
       "noChunks": "No breakdown result yet",
-      "selfCheck": "Self-check",
+      "selfCheck": "Quality check",
       "viewChapter": "Chapter view",
       "viewUnit": "Unit view",
       "loadingUnits": "Loading knowledge units…",
@@ -816,7 +892,19 @@
       "categoryTitle": "Content category detection",
       "knowledgeTitle": "Key knowledge points ({{count}})",
       "memoryTitle": "Key memory points ({{count}})",
-      "examTitle": "Exam points / easy mistakes ({{count}})"
+      "examTitle": "Exam points / easy mistakes ({{count}})",
+      "analyzeChapter": "Analyze",
+      "meaning": "Deep meaning",
+      "chunkKnowledgePoints": "Chapter knowledge points",
+      "chunkCards": "{{count}} concept cards in this chapter",
+      "selfCheckHide": "Hide check",
+      "qualityScore": "Breakdown quality {{score}}/100",
+      "qualityMissingChapters": "{{count}} chapters missing",
+      "qualityEmptySummary": "{{count}} chapters with empty summary",
+      "qualityDuplicateKnowledge": "{{count}} duplicate knowledge points",
+      "qualityPositionNonMonotonic": "Chapter position order abnormal",
+      "qualityMissingSource": "{{count}} knowledge points lack source",
+      "qualityAllGood": "No issues found, quality passed"
     },
     "quiz": {
       "title": "Quiz",
@@ -895,7 +983,8 @@
       "deckName": "MJNexus-Review",
       "cardFileName": "review-memory-cards-{{date}}",
       "reportFileName": "review-report-{{date}}",
-      "maskReveal": "Reveal"
+      "maskReveal": "Reveal",
+      "clearWrong": "Clear"
     },
     "notes": {
       "graphTitle": "Knowledge graph",
@@ -991,7 +1080,9 @@
       "scrollMode": "Scroll Mode",
       "aiModelSub": "Remote AI engine · OpenAI-compatible / Ollama",
       "aiModelAction": "Configure >",
-      "backupAction": "Manage >"
+      "backupAction": "Manage >",
+      "outputSub": "Exports and study reports",
+      "tagsSub": "Manage tags for notes and cards"
     },
     "readingPref": {
       "defaultView": "Default View",
@@ -1720,7 +1811,10 @@
     "inputEmpty": "Enter your answer first",
     "submit": "Submit Answer",
     "evaluating": "AI is reviewing…",
-    "evaluateFailed": "Review failed, please retry"
+    "evaluateFailed": "Review failed, please retry",
+    "fromAiHub": "Started from AI hub: {{mode}}",
+    "needAi": "This needs AI to be configured (Settings → AI capabilities).",
+    "goConfigure": "Configure"
   },
   "voicePractice": {
     "title": "Voice Quiz",
@@ -1776,7 +1870,9 @@
     "noHistory": "No past sessions",
     "historyItem": "No topic",
     "statusDone": "Done",
-    "statusActive": "Active"
+    "statusActive": "Active",
+    "fromAiHub": "Started from AI hub: you teach, AI learns",
+    "needAi": "This needs AI to be configured (Settings → AI capabilities)."
   },
   "voiceCoach": {
     "title": "Voice Coach",
@@ -1960,7 +2056,26 @@
   "focus": {
     "title": "Focus Mode",
     "report": "Reading Report",
-    "exit": "Exit"
+    "exit": "Exit",
+    "timeUp": "Focus session complete"
+  },
+  "commute": {
+    "title": "Commute Mode",
+    "entry": "Commute",
+    "exit": "Exit commute mode",
+    "personaLabel": "Persona",
+    "persona": {
+      "college": "College",
+      "postgrad": "Postgrad",
+      "social": "Self-learner"
+    },
+    "startListen": "Start voice question",
+    "stopListen": "Stop recording",
+    "tapToSpeak": "Tap to speak your question",
+    "listening": "Listening…",
+    "thinking": "Thinking…",
+    "speaking": "Reading answer…",
+    "stopSpeak": "Stop speaking"
   },
   "quiz": {
     "tokenCostWarning": "Generating questions costs AI tokens (~100-200 per question). Continue?"

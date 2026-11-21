@@ -12,6 +12,8 @@ import {
   Database,
   NotebookPen,
   GraduationCap,
+  Package,
+  Tags,
 } from "lucide-react";
 import { useMeStore } from "../stores/meStore";
 import { Profile } from "../components/me/Profile";
@@ -145,6 +147,21 @@ export function MePage() {
           label={t("notes.title")}
           sub={t("notes.hintShort")}
           to="/notes"
+        />
+        {/* S2-2.3：产出与标签收编 —— 孤儿路由进 Me 页个人空间 */}
+        <RowDivider />
+        <SettingRow
+          icon={Package}
+          label={t("output.title")}
+          sub={t("me.row.outputSub")}
+          to="/output"
+        />
+        <RowDivider />
+        <SettingRow
+          icon={Tags}
+          label={t("tags.title")}
+          sub={t("me.row.tagsSub")}
+          to="/labels"
         />
       </SettingGroup>
 

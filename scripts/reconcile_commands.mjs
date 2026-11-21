@@ -30,6 +30,41 @@ const FRONTEND = join(ROOT, "frontend", "src");
 const errors = [];
 const infos = [];
 
+/**
+ * S4-4.7 显式下线命令（冻结能力，前端零引用）。
+ * 与 lib.rs 中 `// [S4-4.7 下线]` 注释保持一一对应；恢复接线时：
+ * 1) 取消 lib.rs 对应注释；2) 从本清单移除；3) 前端接 CMD 后重跑本脚本。
+ * 下线命令不计入「定义未注册」失败，也不计入命令缺口。
+ */
+const DOWNGRADED_COMMANDS = new Set([
+  "exit_app",
+  "link_question_to_knowledge_node",
+  "export_opml",
+  // 同步（BACKLOG 冻结池）
+  "get_sync_config", "save_sync_config", "test_sync_connection", "list_sync_conflicts",
+  "resolve_sync_conflict", "auto_resolve_conflicts", "get_device_id", "list_sync_providers",
+  "detect_sync_conflicts", "resolve_conflict_3way_merge", "get_sync_history",
+  "purge_expired_tombstones",
+  // 目录管理（冻结）
+  "create_directory", "rename_directory", "delete_directory", "move_book_to_directory",
+  "list_library_dirs", "add_library_dir", "remove_library_dir", "scan_library_dir",
+  // 2026-11-20: import_folders 已解冻（目录批量扫描导入），从冻结清单移除。
+  // Anki（冻结）
+  "import_anki_apkg", "preview_anki_apkg",
+  // 卡片部分命令（冻结：由 create/list/record 主路径接管）
+  "get_card_by_id", "get_card_by_uid", "update_card", "delete_card", "list_reverse_links",
+  "delete_card_link", "scan_title_links", "list_title_links_for_book", "search_cards",
+  // ASR 移动端（待独立服务环境）
+  "transcribe_streaming", "android_speech_recognizer_start", "android_speech_recognizer_stop",
+  "android_speech_recognizer_request_auth", "ios_speech_recognizer_start",
+  "ios_speech_recognizer_stop", "ios_speech_recognizer_check_auth",
+  "ios_speech_recognizer_request_auth",
+  // 子脑图 / 选集 / 图谱链接（冻结）
+  "link_node_to_highlight", "link_node_to_knowledge_node", "list_outline_nodes",
+  "load_submap", "save_submap", "query_cards_for_conditional_mindmap",
+  "update_study_set", "delete_study_set",
+]);
+
 function walk(dir, ext, out) {
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
@@ -128,9 +163,12 @@ function parseCmdRegistry() {
   return vals;
 }
 
-/** 3. 死锁守卫静态断言 */
+/** 3. 死锁守卫静态断言（S4-4.1 拆分后 BREAKDOWN_HARD_TIMEOUT_SECS 位于 ai_breakdown/events.rs） */
 function checkDeadlockGuards() {
-  const breakdown = readFileSync(join(SRC_TAURI, "commands", "ai_breakdown.rs"), "utf8");
+  const breakdown = readFileSync(
+    join(SRC_TAURI, "commands", "ai_breakdown", "events.rs"),
+    "utf8",
+  );
   const ocr = readFileSync(join(SRC_TAURI, "services", "ocr_pp.rs"), "utf8");
 
   const bt = breakdown.match(/const\s+BREAKDOWN_HARD_TIMEOUT_SECS\s*:\s*u64\s*=\s*(\d+)/);
@@ -150,7 +188,7 @@ function main() {
   const feLiterals = frontendInvokeLiterals();
   const cmdRegistry = parseCmdRegistry(); // 前端命令名唯一真相源
 
-  const unregistered = [...defined].filter((n) => !registered.has(n));
+  const unregistered = [...defined].filter((n) => !registered.has(n) && !DOWNGRADED_COMMANDS.has(n));
   const undefinedReg = [...registered].filter((n) => !defined.has(n));
   // 前端命令面 = 裸 invoke 字面量 ∪ CMD 注册表值；任一不在后端注册 → 运行时失败
   const feSurface = new Set([...feLiterals, ...cmdRegistry]);

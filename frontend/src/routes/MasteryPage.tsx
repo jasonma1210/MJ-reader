@@ -16,6 +16,10 @@ import {
 } from "../services/masteryService";
 import { useAiStore } from "../stores/aiStore";
 import { verbPrompt } from "../ai/router";
+import { listQuestionsForKnowledgePoint, getWeakNodesMaterial } from "../services/closedLoopService";
+import { cardService } from "../services/cardService";
+import { useJumpToSource } from "../hooks/useJumpToSource";
+import { logError } from "../utils/logError";
 
 function pct(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -34,6 +38,43 @@ function bucketColor(score: number): string {
   if (score >= 0.6) return "var(--mastery-learning)";
   if (score >= 0.4) return "var(--mastery-weak)";
   return "var(--mastery-none)";
+}
+
+/**
+ * P0-F：薄弱点 → 原文 cfi 反查（对齐 KnowledgeGraphPage.onNodeClick 的 relatedCardIds 反查）。
+ * MasteryNode 自身无 cfiRange / relatedCardIds，但同一 knowledge_nodes 表 id 对应的
+ * BookKnowledgeNode 携带 relatedCardIds：由 (bookId, id) 定位节点 → 取首张关联卡 →
+ * cardService.listByBook 反查其 cfiRange。任一步缺失或查询失败 → 返回 null，
+ * 调用方降级为 jumpToSource(bookId)（仅跳书，阅读器恢复上次进度）。
+ * 抽成注入 listByBook 的纯函数，便于单测覆盖反查与降级路径。
+ */
+export async function resolveMasteryCfi(
+  bookNodes: Record<string, BookKnowledgeNode[]>,
+  node: Pick<MasteryNode, "id" | "bookId">,
+  listByBook: (bookId: string) => Promise<Array<{ id: string; cfiRange?: string | null }>>,
+  log?: (context: string, error: unknown) => void,
+): Promise<string | null> {
+  if (!node.bookId || !node.id) return null;
+  const bookNode = (bookNodes[node.bookId] ?? []).find((n) => n.id === node.id);
+  if (!bookNode) return null;
+  let cardIds: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(bookNode.relatedCardIds || "[]");
+    if (Array.isArray(parsed)) {
+      cardIds = parsed.filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    return null;
+  }
+  const cardId = cardIds[0];
+  if (!cardId) return null;
+  try {
+    const cards = await listByBook(node.bookId);
+    return cards.find((c) => c.id === cardId)?.cfiRange ?? null;
+  } catch (e) {
+    log?.("MasteryPage.viewSource", e);
+    return null;
+  }
 }
 
 interface BookStat {
@@ -65,6 +106,8 @@ function computeBookStats(nodes: BookKnowledgeNode[], titleMap: Record<string, s
 export function MasteryPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  /** P0-F：薄弱点一键回原文（统一跳转入口，与复习卡 / 图谱共用） */
+  const jumpToSource = useJumpToSource();
   const { books, load: loadBooks } = useLibraryStore();
   const openPanel = useAiStore((s) => s.openPanel);
   const [dash, setDash] = useState<MasteryDashboard | null>(null);
@@ -72,10 +115,15 @@ export function MasteryPage() {
   const [selected, setSelected] = useState<MasteryNode | null>(null);
   const [history, setHistory] = useState<NodeReviewPoint[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // P0-1（2026-10-09）：知识点相关题目（list_questions_for_knowledge_point）
+  const [nodeQuestions, setNodeQuestions] = useState<Array<{ id: string; question: string; answer: string; isCorrect: number | null }>>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
 
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
   const [bookNodes, setBookNodes] = useState<Record<string, BookKnowledgeNode[]>>({});
   const [bookNodesLoading, setBookNodesLoading] = useState(false);
+  // P0-1（2026-10-09）：薄弱点素材（get_weak_nodes_material），展示关联题总量
+  const [materialCount, setMaterialCount] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,6 +132,23 @@ export function MasteryPage() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // P0-1：薄弱点素材总量（含 relatedQuestionIds 数），尽力而为
+  useEffect(() => {
+    let alive = true;
+    getWeakNodesMaterial(null)
+      .then((m) => {
+        if (alive) {
+          setMaterialCount(
+            (m ?? []).reduce((s, n) => s + (n.relatedQuestionIds?.length ?? 0), 0),
+          );
+        }
+      })
+      .catch((e) => logError("MasteryPage.material", e));
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -192,8 +257,17 @@ export function MasteryPage() {
   const openHistory = async (node: MasteryNode) => {
     setSelected(node);
     setHistoryLoading(true);
+    setNodeQuestions([]);
     try {
       setHistory(await masteryService.getNodeReviewHistory(node.id));
+      // P0-1：相关题目（list_questions_for_knowledge_point，按节点名检索题库回溯）
+      if (node.bookId) {
+        setQuestionsLoading(true);
+        listQuestionsForKnowledgePoint(node.bookId, node.nodeName)
+          .then((qs) => setNodeQuestions(qs ?? []))
+          .catch((e) => logError("MasteryPage.nodeQuestions", e))
+          .finally(() => setQuestionsLoading(false));
+      }
     } finally {
       setHistoryLoading(false);
     }
@@ -202,6 +276,17 @@ export function MasteryPage() {
   const closeHistory = () => {
     setSelected(null);
     setHistory([]);
+    setNodeQuestions([]);
+  };
+
+  /** P0-F：薄弱点回原文——反查 cfi 精确定位；拿不到则降级为跳书恢复进度 */
+  const viewSource = () => {
+    if (!selected || !selected.bookId) return;
+    const bookId = selected.bookId;
+    void resolveMasteryCfi(bookNodes, selected, cardService.listByBook, logError).then((cfi) => {
+      jumpToSource(bookId, cfi);
+    });
+    closeHistory();
   };
 
   const weakTop = dash?.weakTop ?? [];
@@ -223,7 +308,7 @@ export function MasteryPage() {
         <StatCard icon={<Gauge className="h-4 w-4" />} label={t("mastery.overall")} value={pct(overall)} />
         <StatCard icon={<TrendingDown className="h-4 w-4" />} label={t("mastery.weakNodes")} value={String(weakTop.length)} />
         <StatCard icon={<AlertTriangle className="h-4 w-4" />} label={t("mastery.forgettingNodes")} value={String(forgetting.length)} />
-        <StatCard icon={<BookOpen className="h-4 w-4" />} label={t("mastery.dependency")} value={String(depEdges.length)} />
+        <StatCard icon={<BookOpen className="h-4 w-4" />} label={t("mastery.material")} value={String(materialCount)} />
       </div>
 
       {/* 书籍掌握度概览 */}
@@ -235,6 +320,7 @@ export function MasteryPage() {
         currentNodes={currentNodes}
         selectedBookId={selectedBookId}
         onSelectBook={selectBook}
+        onSelectNode={(n) => void openHistory(n as unknown as MasteryNode)}
         loading={bookNodesLoading && Object.keys(bookNodes).length === 0}
         t={t}
       />
@@ -288,6 +374,38 @@ export function MasteryPage() {
               <CurveStat label={t("mastery.forgettingProb")} value={pct(selected.predictedForgettingProb)} />
               <CurveStat label={t("mastery.lastReview")} value={fmtDate(selected.lastReviewAt)} />
             </div>
+            {/* 相关题目（P0-1：list_questions_for_knowledge_point 题库回溯） */}
+            <div className="rounded-[var(--radius-md)] border border-line bg-paper-soft p-3">
+              <div className="mb-1.5 text-xs font-semibold text-ink-soft">
+                {t("mastery.relatedQuestions")}
+              </div>
+              {questionsLoading ? (
+                <p className="text-sm text-ink-muted">{t("common.loading")}</p>
+              ) : nodeQuestions.length === 0 ? (
+                <p className="text-sm text-ink-muted">{t("mastery.noRelatedQuestions")}</p>
+              ) : (
+                <ul className="space-y-2">
+                  {nodeQuestions.map((q) => (
+                    <li key={q.id} className="rounded-md border border-line bg-paper px-2.5 py-2">
+                      <div className="text-sm text-ink">{q.question}</div>
+                      <div className="mt-0.5 text-xs text-ink-muted">{t("mastery.answer")}：{q.answer}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {/* S3-3.3：薄弱点一键练习 → 练习页深链（预选该节点）；与 AI 考我并列 */}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                if (!selected.id) return;
+                closeHistory();
+                navigate(`/practice?node=${encodeURIComponent(selected.id)}`);
+              }}
+            >
+              {t("mastery.practiceThis")}
+            </Button>
             {/* 薄弱点一键回中枢：AI 考我这个知识点（V2 视图串联） */}
             <Button
               size="sm"
@@ -308,6 +426,16 @@ export function MasteryPage() {
             >
               {t("mastery.quizMeThis")}
             </Button>
+            {/* P0-F：一键回原文——relatedCardIds 反查 cfi 精确定位，拿不到则降级跳书 */}
+            <Button
+              size="sm"
+              variant="secondary"
+              iconLeft={<BookOpen className="h-3.5 w-3.5" />}
+              onClick={viewSource}
+              disabled={!selected.bookId}
+            >
+              {t("review.viewSource")}
+            </Button>
           </div>
         </div>
       )}
@@ -324,6 +452,7 @@ function BookMasteryPanel({
   currentNodes,
   selectedBookId,
   onSelectBook,
+  onSelectNode,
   loading,
   t,
 }: {
@@ -334,6 +463,8 @@ function BookMasteryPanel({
   currentNodes: BookKnowledgeNode[];
   selectedBookId: string | null;
   onSelectBook: (id: string | null) => void;
+  /** S3-3.5：触屏点击格子 → 打开节点详情抽屉 */
+  onSelectNode: (n: BookKnowledgeNode) => void;
   loading: boolean;
   t: (key: string) => string;
 }) {
@@ -405,7 +536,7 @@ function BookMasteryPanel({
           t={t}
         />
       ) : currentNodes.length > 0 ? (
-        <NodeHeatmap nodes={currentNodes} t={t} />
+        <NodeHeatmap nodes={currentNodes} t={t} onSelectNode={onSelectNode} />
       ) : (
         <div className="px-4 py-6 text-center text-sm text-ink-muted">
           {t("mastery.noKnowledgeNodes")}
@@ -470,7 +601,16 @@ function AllBooksHeatmap({
   );
 }
 
-function NodeHeatmap({ nodes, t }: { nodes: BookKnowledgeNode[]; t: (key: string) => string }) {
+function NodeHeatmap({
+  nodes,
+  t,
+  onSelectNode,
+}: {
+  nodes: BookKnowledgeNode[];
+  t: (key: string) => string;
+  /** S3-3.5：触屏可达——点击格子打开节点详情抽屉（信息不再只靠 hover） */
+  onSelectNode?: (n: BookKnowledgeNode) => void;
+}) {
   const [hover, setHover] = useState<{ node: BookKnowledgeNode; x: number; y: number } | null>(null);
 
   return (
@@ -489,6 +629,7 @@ function NodeHeatmap({ nodes, t }: { nodes: BookKnowledgeNode[]; t: (key: string
               setHover({ node: n, x: rect.left, y: rect.top });
             }}
             onBlur={() => setHover(null)}
+            onClick={() => onSelectNode?.(n)}
             className="h-5 w-5 shrink-0 rounded-[3px] transition hover:scale-110 hover:ring-1 hover:ring-ink"
             style={{ backgroundColor: bucketColor(n.masteryScore) }}
             aria-label={`${n.nodeName} ${Math.round(n.masteryScore * 100)}%`}

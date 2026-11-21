@@ -135,6 +135,8 @@ export const notesService = {
     noteType?: string | null;
     knowledgeNodeId?: string | null;
     mediaUrl?: string | null;
+    /** 人机分离标记：'ai'=AI 解释草稿，默认 'user' */
+    source?: "user" | "ai";
   }): Promise<boolean> {
     const noteType = input.noteType ?? "annotation";
     if (!isTauri()) {
@@ -173,7 +175,7 @@ export const notesService = {
         mediaUrl: input.mediaUrl ?? null,
         transcript: null,
         knowledgeNodeId: input.knowledgeNodeId ?? null,
-        source: "user",
+        source: input.source ?? "user",
       });
       return true;
     } catch {

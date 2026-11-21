@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Highlighter, Trash2, StickyNote } from "lucide-react";
+import { Highlighter, Trash2, StickyNote, BookOpenCheck } from "lucide-react";
 import { useHighlightStore } from "../../stores/highlightStore";
+import { highlightToFlashcard } from "../../services/closedLoopService";
+import { toast } from "../../utils/toast";
+import { logError } from "../../utils/logError";
 import { cn } from "../../utils/cn";
 import { EmptyState } from "../common/states";
 
@@ -91,6 +94,17 @@ export function HighlightList({
   // 删除：乐观移除 + 后端软删
   const handleDelete = (id: string) => {
     void remove(id);
+  };
+
+  // P1-3：高亮就地制卡（复用与划词浮条同一条 highlightToFlashcard 命令通路）。
+  // 失败显式 logError + toast，不静默吞错。
+  const handleMakeCard = (id: string) => {
+    void highlightToFlashcard(id)
+      .then(() => toast(t("highlights.cardDone")))
+      .catch((e) => {
+        logError("HighlightList.makeCard", e);
+        toast(t("highlights.cardFailed"));
+      });
   };
 
   // 备注编辑：打开（载入原文）、保存（乐观更新 note → 后端持久化）、取消（丢弃草稿）
@@ -190,6 +204,14 @@ export function HighlightList({
                 ))}
               </div>
               <div className="flex items-center gap-1">
+                <button
+                  onClick={() => handleMakeCard(h.id)}
+                  title={t("highlights.makeCard")}
+                  aria-label={t("highlights.makeCard")}
+                  className="flex h-6 w-6 items-center justify-center rounded text-ink-muted transition hover:bg-accent-bg hover:text-accent"
+                >
+                  <BookOpenCheck className="h-3.5 w-3.5" />
+                </button>
                 <button
                   onClick={() =>
                     editingId === h.id

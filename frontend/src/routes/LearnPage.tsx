@@ -3,10 +3,13 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { Play, MessageCircleQuestion, BookOpen } from "lucide-react";
 import { useLearnStore, type LearnRange } from "../stores/learnStore";
+import type { LearnStats } from "../types";
 import { useAiStore } from "../stores/aiStore";
+import { useCommuteStore } from "../stores/commuteStore";
 import { LearnCurve } from "../components/learn/LearnCurve";
 import { MasteryRing } from "../components/learn/MasteryRing";
 import { Heatmap } from "../components/learn/Heatmap";
+import { AiVerbCoach } from "../components/onboarding/AiVerbCoach";
 import { TodaySuggestions } from "../components/learn/TodaySuggestions";
 import { cn } from "../utils/cn";
 import { useRecentLearningBook } from "../hooks/useRecentLearning";
@@ -26,10 +29,12 @@ export function LearnPage() {
   const { t } = useTranslation();
   const range = useLearnStore((s) => s.range);
   const setRange = useLearnStore((s) => s.setRange);
+  const stats = useLearnStore((s) => s.stats);
   const heatmap = useLearnStore((s) => s.heatmap);
   const curve = useLearnStore((s) => s.curve);
   const weakNodes = useLearnStore((s) => s.weakNodes);
   const load = useLearnStore((s) => s.load);
+  const learnError = useLearnStore((s) => s.error);
   const navigate = useNavigate();
   const openPanel = useAiStore((s) => s.openPanel);
   const mainline = useRecentLearningBook();
@@ -40,6 +45,19 @@ export function LearnPage() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-auto bg-paper px-4 pb-4 pt-3">
+      {/* S3-3.2：今日台加载失败 → 错误态 + 重试 */}
+      {learnError && (
+        <div className="flex items-center justify-between rounded-[var(--radius-lg)] border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
+          <span>{learnError}</span>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="shrink-0 rounded-full border border-danger/40 px-2 py-0.5 font-medium"
+          >
+            {t("common.retry")}
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1
           className="font-extrabold text-ink"
@@ -62,8 +80,20 @@ export function LearnPage() {
               {t(r.labelKey)}
             </button>
           ))}
+          {/* P2-2 通勤模式入口：语音问 → 听答案的免触闭环 */}
+          <button
+            type="button"
+            onClick={() => useCommuteStore.getState().setActive(true)}
+            className="rounded-full bg-paper-soft px-2.5 py-1 text-[12px] font-medium text-ink-soft transition hover:bg-line-soft"
+            aria-label={t("commute.title")}
+          >
+            {t("commute.entry")}
+          </button>
         </div>
       </div>
+
+      {/* S2-2.5：冷启动「动词教练」——尚无最近学习书时引导首个动作 */}
+      {!mainline.book && <AiVerbCoach />}
 
       {/* 今日主线：最近学习书 + 到期复习 + 问 AI */}
       <TodayMainline
@@ -72,6 +102,9 @@ export function LearnPage() {
         ready={mainline.ready}
         dueCount={mainline.dueCount}
       />
+
+      {/* 2×2 今日统计卡（S1 任务 1.7：真实 stats，不再用 mock 兜底） */}
+      <TodayStats stats={stats} />
 
       {/* 今日建议 + 概览摘要 + 掌握度/图谱入口 */}
       <TodaySuggestions />
@@ -96,6 +129,51 @@ export function LearnPage() {
       </div>
     </div>
   );
+}
+
+/** 2×2 今日统计卡：连续天数 / 今日时长 / 到期卡 / 本月时长（learnStore.stats 真数据） */
+function TodayStats({ stats }: { stats: LearnStats | null }) {
+  const { t } = useTranslation();
+  const cells: { label: string; value: string }[] = [
+    {
+      label: t("learn.today.stats.streak"),
+      value: stats ? `${stats.streakDays ?? 0} ${t("learn.today.stats.days")}` : "–",
+    },
+    {
+      label: t("learn.today.stats.todayTime"),
+      value: stats ? formatDuration(stats.todaySeconds) : "–",
+    },
+    {
+      label: t("learn.today.stats.due"),
+      value: stats ? `${stats.dueCards}` : "–",
+    },
+    {
+      label: t("learn.today.stats.monthTime"),
+      value: stats ? formatDuration(stats.monthSeconds) : "–",
+    },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {cells.map((c) => (
+        <div
+          key={c.label}
+          className="flex flex-col gap-0.5 rounded-[var(--radius-lg)] border border-line bg-paper p-3 shadow-sm"
+        >
+          <span className="text-[11px] text-ink-muted">{c.label}</span>
+          <span className="text-lg font-bold tabular-nums text-ink">{c.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 秒 → "Xh Ym"；不足 1 分钟显示 "Ym" */
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  if (m <= 0) return "0m";
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return h > 0 ? `${h}h ${rm}m` : `${rm}m`;
 }
 
 /** 今日主线卡：到期待复习是今日第一动作；问 AI 直达书语境中枢 */

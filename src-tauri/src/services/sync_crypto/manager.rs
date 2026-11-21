@@ -1,3 +1,4 @@
+#![allow(dead_code)] // 能力库保留（同步加密管理脚手架）
 // v0.8.0 P1.4 实现：同步加密管理
 // 协调 sync_config 表中的加密相关字段、提供加密开关 / 口令校验 / 迁移流程
 use super::file_crypto;
