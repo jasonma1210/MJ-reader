@@ -200,6 +200,15 @@ pub fn run() {
                 }
             }
 
+            // 2026-11-20：Android SAF 目录批量扫描导入桥——缓存 JavaVM 供 JNI 调用。
+            // 仅 android-folder-picker feature 启用时生效；内部 catch_unwind 保证不崩 App。
+            #[cfg(all(target_os = "android", feature = "android-folder-picker"))]
+            {
+                if let Err(e) = commands::folder_picker::setup_android_folder_picker(app) {
+                    log::warn!("[FolderPicker] JNI 桥接初始化失败: {}", e);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -444,7 +453,11 @@ pub fn run() {
                         // [S4-4.7 下线] directory::remove_library_dir,
                         // [S4-4.7 下线] directory::scan_library_dir,
             // v1.3.0 实现：直接选择文件夹深度扫描导入
-                        // [S4-4.7 下线] directory::import_folders,
+            // 2026-11-20 解冻：目录批量扫描导入（导入页选项）；scan_dirs_into_library 递归+
+            // SHA256 去重+软删过滤均已对齐单文件口径，仅恢复注册即可用。
+            directory::import_folders,
+            // 2026-11-20：Android SAF 目录选择（JNI；未启用 feature 时返回降级 status）
+            commands::folder_picker::pick_android_folder,
             // v0.8.0 P2.1 实现：Anki .apkg 导入导出
                         // [S4-4.7 下线] anki::import_anki_apkg,
             anki::export_anki_apkg,
@@ -832,7 +845,7 @@ mod command_registration_tests {
         // 目录管理（冻结）
         "create_directory", "rename_directory", "delete_directory", "move_book_to_directory",
         "list_library_dirs", "add_library_dir", "remove_library_dir", "scan_library_dir",
-        "import_folders",
+        // 2026-11-20: import_folders 已解冻（目录批量扫描导入），从冻结清单移除。
         // Anki（冻结）
         "import_anki_apkg", "preview_anki_apkg",
         // 卡片部分命令（冻结）

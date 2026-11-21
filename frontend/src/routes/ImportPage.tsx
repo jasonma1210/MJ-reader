@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Upload, Copy, Check, FileText, Clock, History, AlertTriangle } from "lucide-react";
-import { importService, mapImportStage, type ImportStatusEvent } from "../services/importService";
+import { Upload, Copy, Check, FileText, Clock, History, AlertTriangle, FolderOpen, Loader2 } from "lucide-react";
+import {
+  importService,
+  mapImportStage,
+  FolderPickerUnavailableError,
+  type ImportStatusEvent,
+  type FolderScanResult,
+} from "../services/importService";
 import { useLibraryStore } from "../stores/libraryStore";
 import { getReadingRecords, type ReadingRecord } from "../services/searchService";
 import { toast } from "../utils/toast";
@@ -20,6 +26,8 @@ export function ImportPage() {
   const [serverUrl, setServerUrl] = useState<string>("");
   const [copied, setCopied] = useState(false);
   const [recent, setRecent] = useState<ReadingRecord[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<FolderScanResult | null>(null);
 
   const refreshRecent = () => {
     void getReadingRecords("1w").then(setRecent);
@@ -77,6 +85,42 @@ export function ImportPage() {
             : String(e);
         toast(t("import.failedMsg", { msg }));
       }
+    }
+  };
+
+  // 从目录导入：用户点选目录（非手填）→ 自动扫描子目录图书 → 汇总展示。
+  // 平台分流：Android 走原生 SAF 桥（document URI 逐条导入）；桌面走后端 import_folders；
+  // 两者都不可用时诚实提示降级，不臆造成功。
+  const onPickFolder = async () => {
+    setScanResult(null);
+    setScanning(true);
+    try {
+      const android = await importService.androidFolderPickerStatus();
+      let result: FolderScanResult;
+      if (android.supported && android.ready) {
+        result = await importService.importFromAndroidFolder();
+      } else {
+        let folder: string | null;
+        try {
+          folder = await importService.pickFolder();
+        } catch (e) {
+          if (e instanceof FolderPickerUnavailableError) {
+            toast(t("import.folderUnavailable"));
+            return;
+          }
+          throw e;
+        }
+        if (!folder) return;
+        result = await importService.importFolders([folder]);
+      }
+      setScanResult(result);
+      void useLibraryStore.getState().load();
+      refreshRecent();
+    } catch (e) {
+      logError("ImportPage.onPickFolder", e);
+      toast(t("import.scanFailed", { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setScanning(false);
     }
   };
 
@@ -165,6 +209,38 @@ export function ImportPage() {
         >
           {t("import.browseFiles")}
         </button>
+      </section>
+
+      {/* 从目录导入（2026-11-20）：用户选目录 → 自动递归扫描子目录图书 */}
+      <section className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">
+        <div className="flex items-center gap-2">
+          <FolderOpen className="h-4 w-4 text-accent" />
+          <span className="text-sm font-semibold text-ink">{t("import.browseFolder")}</span>
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-ink-muted">{t("import.folderHint")}</p>
+        <button
+          onClick={() => void onPickFolder()}
+          disabled={scanning}
+          className="mt-3 flex items-center justify-center gap-2 rounded-full border border-accent px-5 py-2 text-sm font-semibold text-accent transition active:scale-[0.98] disabled:opacity-60"
+        >
+          {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderOpen className="h-4 w-4" />}
+          {scanning ? t("import.scanning") : t("import.browseFolder")}
+        </button>
+        {scanResult && (
+          <div className="mt-3 rounded-md bg-accent-bg/50 px-3 py-2 text-xs leading-relaxed text-ink">
+            {scanResult.totalFound === 0
+              ? t("import.scanNoBook")
+              : t("import.scanSummary", {
+                  imported: scanResult.imported,
+                  skipped: scanResult.skipped,
+                  failed: scanResult.failed,
+                  total: scanResult.totalFound,
+                })}
+            {scanResult.errors.length > 0 && (
+              <div className="mt-1 text-danger">{scanResult.errors[0]}</div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* 文件服务器（局域网） */}

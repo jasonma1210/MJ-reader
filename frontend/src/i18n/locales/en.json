@@ -785,7 +785,14 @@
     "serverStartFailedMsg": "Local file server failed to start: {{msg}}",
     "skippedDuplicate": "Skipped duplicate",
     "unknownError": "Unknown error",
-    "useFileButton": "Please use the file button to select"
+    "useFileButton": "Please use the file button to select",
+    "browseFolder": "Import from Folder",
+    "folderHint": "Choose a folder to auto-scan all books in its subfolders — no need to add one by one.",
+    "scanning": "Scanning folder…",
+    "scanSummary": "Scan done: {{imported}} added · {{skipped}} duplicates skipped · {{failed}} failed ({{total}} found)",
+    "scanNoBook": "No importable books found in this folder",
+    "folderUnavailable": "Folder selection is unavailable on this platform. Use \"Select Files\" or LAN upload instead.",
+    "scanFailed": "Folder scan failed: {{msg}}"
   },
   "workspace": {
     "title": "Book workspace",

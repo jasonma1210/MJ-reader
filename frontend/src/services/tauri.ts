@@ -20,6 +20,8 @@ export const CMD = {
   importBookFromUri: "import_book_from_uri",
   getContentUriMetadata: "get_content_uri_metadata",
   listDirectories: "list_directories",
+  importFolders: "import_folders",
+  pickAndroidFolder: "pick_android_folder",
   // ai_chat
   aiChatStream: "ai_chat_stream",
   listConversations: "list_conversations",

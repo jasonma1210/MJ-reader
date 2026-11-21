@@ -9,6 +9,55 @@ export interface ContentUriMeta {
   mimeType: string;
 }
 
+/**
+ * 目录批量扫描结果（对齐后端 directory::ScanResult，camelCase）。
+ * 后端 import_folders 直接返回该结构，不走 import-progress 事件流。
+ */
+export interface FolderScanResult {
+  totalFound: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
+}
+
+/** 移动端不支持目录选择的确定信号（tauri-plugin-dialog 在 #[cfg(mobile)] 下抛此错误）。 */
+export class FolderPickerUnavailableError extends Error {
+  constructor() {
+    super("folder picker unavailable on this platform");
+    this.name = "FolderPickerUnavailableError";
+  }
+}
+
+/**
+ * Android 目录选择桥状态。
+ * 触发路径已从 Rust JNI 命令改为 Kotlin addJavascriptInterface（见 MjnFolderBridge）。
+ * triggered 字段为保持 UI 契约兼容恒为 false（UI 只读 supported/ready）。
+ */
+interface AndroidFolderPickerStatus {
+  triggered: boolean;
+  ready: boolean;
+  supported: boolean;
+  reason: string | null;
+}
+
+/** Kotlin 桥注入的全局回调名（FolderPickerBridge.kt 经 evaluateJavascript 调用）。 */
+const ANDROID_FOLDER_CALLBACK = "__mjnFolderPicked" as const;
+
+/**
+ * Kotlin 经 addJavascriptInterface 暴露的桥对象（绕开 Rust JNI/JavaVM——Tauri 2 下不可用）。
+ * 由 MainActivity 的 onWebViewCreate 在页面加载前注入 window.MjnFolderBridge。
+ */
+interface MjnFolderBridge {
+  pick(): boolean;
+  isReady(): boolean;
+}
+
+type FolderCallbackHost = Window & {
+  [ANDROID_FOLDER_CALLBACK]?: (uris: string[]) => void;
+  MjnFolderBridge?: MjnFolderBridge;
+};
+
 /** 后端 import-progress / import-done / import-error 事件载荷（camelCase） */
 export interface ImportStatusEvent {
   id: string;
@@ -148,6 +197,140 @@ export const importService = {
     } catch {
       return null;
     }
+  },
+
+  /**
+   * 探测 Android 原生目录选择桥是否可用。
+   *
+   * 触发路径为 Kotlin 在 WryActivity.onWebViewCreate 中经 addJavascriptInterface
+   * 注入的 window.MjnFolderBridge（页面加载前完成）。Rust JNI 路径已废弃：
+   * 真机 logcat 证实 Tauri 2 下 ndk_context 未初始化，JavaVM 不可获取。
+   *
+   * 非 Android / 桥未注入时返回 supported=false，UI 走桌面 plugin-dialog 分流。
+   */
+  async androidFolderPickerStatus(): Promise<AndroidFolderPickerStatus> {
+    if (!isTauri()) {
+      return { triggered: false, ready: false, supported: false, reason: null };
+    }
+    const bridge = (window as FolderCallbackHost).MjnFolderBridge;
+    if (!bridge) {
+      return {
+        triggered: false,
+        ready: false,
+        supported: false,
+        reason: "Android folder bridge not injected",
+      };
+    }
+    let ready = false;
+    try {
+      ready = bridge.isReady();
+    } catch (e) {
+      logError("importService.androidFolderPickerStatus", e);
+    }
+    return {
+      triggered: false,
+      ready,
+      supported: true,
+      reason: ready ? null : "Android folder picker not ready",
+    };
+  },
+
+  /**
+   * 选择单个目录（导入页"从目录导入"选项，用户点选、不手填）。
+   * - 桌面：plugin-dialog 的 open({directory:true})，返回真实路径。
+   * - Android：plugin-dialog 在 #[cfg(mobile)] 下确定抛 FolderPickerNotImplemented；
+   *   这里转成 FolderPickerUnavailableError，由 UI 走原生桥路径。
+   */
+  async pickFolder(): Promise<string | null> {
+    if (!isTauri()) return null;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, multiple: false });
+      return typeof selected === "string" ? selected : null;
+    } catch (e) {
+      if (e instanceof Error && /folder.?picker.?not.?implemented/i.test(e.message)) {
+        throw new FolderPickerUnavailableError();
+      }
+      throw e;
+    }
+  },
+
+  /**
+   * 递归扫描一个或多个目录并批量导入（桌面后端 import_folders）。
+   * 返回聚合 ScanResult；不走 import-progress 事件流。
+   */
+  async importFolders(paths: string[]): Promise<FolderScanResult> {
+    return invoke<FolderScanResult>(CMD.importFolders, { paths });
+  },
+
+  /**
+   * 从 Android 目录批量导入：触发 Kotlin JS 桥选择系统目录 → 等待桥回传 document URI 列表
+   * → 逐条走现成的 startImport（content:// → import_book_from_uri，零字节过 IPC）。
+   *
+   * 回调由 FolderPickerBridge.kt 经 WebView.evaluateJavascript 注入，故此处先注册
+   * window.__mjnFolderPicked，再同步调用 window.MjnFolderBridge.pick()。
+   * 该路径完全绕开 Rust JNI —— 真机证实 Tauri 2 下 ndk_context 未初始化。
+   */
+  async importFromAndroidFolder(): Promise<FolderScanResult> {
+    const host = window as FolderCallbackHost;
+    const bridge = host.MjnFolderBridge;
+    if (!bridge) {
+      throw new Error("Android 目录选择桥未注入");
+    }
+    let ready = false;
+    try {
+      ready = bridge.isReady();
+    } catch (e) {
+      logError("importService.importFromAndroidFolder.isReady", e);
+    }
+    if (!ready) {
+      throw new Error("Android 目录选择桥未就绪");
+    }
+
+    const uris = await new Promise<string[]>((resolve, reject) => {
+      // 防止用户取消/超时后回调悬挂：60s 超时兜底。
+      const timer = window.setTimeout(() => {
+        delete host[ANDROID_FOLDER_CALLBACK];
+        reject(new Error("Android 目录选择超时"));
+      }, 60000);
+      host[ANDROID_FOLDER_CALLBACK] = (result: string[]) => {
+        window.clearTimeout(timer);
+        delete host[ANDROID_FOLDER_CALLBACK];
+        resolve(Array.isArray(result) ? result : []);
+      };
+      let triggered = false;
+      try {
+        triggered = bridge.pick();
+      } catch (e) {
+        window.clearTimeout(timer);
+        delete host[ANDROID_FOLDER_CALLBACK];
+        reject(e);
+        return;
+      }
+      if (!triggered) {
+        window.clearTimeout(timer);
+        delete host[ANDROID_FOLDER_CALLBACK];
+        reject(new Error("Android 目录选择未触发"));
+      }
+    });
+
+    const result: FolderScanResult = {
+      totalFound: uris.length,
+      imported: 0,
+      skipped: 0,
+      failed: 0,
+      errors: [],
+    };
+    for (const uri of uris) {
+      try {
+        await this.startImport(uri);
+        result.imported += 1;
+      } catch (e) {
+        result.failed += 1;
+        result.errors.push(`${uri}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return result;
   },
 
   /**

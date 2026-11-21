@@ -785,7 +785,14 @@
     "serverStartFailedMsg": "本地文件服务启动失败：{{msg}}",
     "skippedDuplicate": "已跳过重复",
     "unknownError": "未知错误",
-    "useFileButton": "请使用文件按钮选择"
+    "useFileButton": "请使用文件按钮选择",
+    "browseFolder": "从目录导入",
+    "folderHint": "选择目录后自动扫描其子目录中的全部图书，无需逐本添加。",
+    "scanning": "正在扫描目录…",
+    "scanSummary": "扫描完成：新增 {{imported}} 本 · 跳过重复 {{skipped}} 本 · 失败 {{failed}} 本（共发现 {{total}} 本）",
+    "scanNoBook": "该目录下未发现可导入的图书",
+    "folderUnavailable": "当前平台暂不支持目录选择，请改用「选择文件」或局域网上传。",
+    "scanFailed": "目录扫描失败：{{msg}}"
   },
   "workspace": {
     "title": "书籍工作区",

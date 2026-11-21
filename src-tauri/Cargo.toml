@@ -139,6 +139,12 @@ onnx = ["dep:ort"]
 #   pnpm tauri android build --target aarch64 --features android-asr
 # 详见 docs/android-asr-jni-runbook.md。
 android-asr = ["dep:jni"]
+# 2026-11-20：Android SAF 目录批量扫描导入桥。
+# 启用后引入 jni crate，通过 JNI 调用 FolderPickerBridge.kt（系统目录选择器 +
+# DocumentsContract 递归枚举），结果经 WebView.evaluateJavascript 回传前端。
+# 默认不启用以避免无 NDK 环境阻塞构建；真机（Bigme B6）构建命令：
+#   cargo tauri android build --apk --target aarch64 --features android-folder-picker
+android-folder-picker = ["dep:jni"]
 # 2026-09-04：下载保活（用户需求「锁屏黑屏后下载继续直到完成」）。
 # 启用后经 JNI 调 DownloadWakeLock.kt 持 PARTIAL_WAKE_LOCK（CPU 保活、屏幕可熄），
 # 下载结束/取消/失败自动释放（RAII guard）。ndk-context 已是 android target 非可选依赖。
