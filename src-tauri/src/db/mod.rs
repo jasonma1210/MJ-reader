@@ -36,7 +36,7 @@ use std::str::FromStr;
 ///   按 scope 归并历史重复画布并建唯一索引、file_integrity_manifest 完整性清单表
 /// - 31：W2（2026-11-25 数据去重）— content_units_fts 改为 contentless FTS5，
 ///   正文唯一副本留在 content_units，消除 FTS 内第二份正文副本
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 31;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 32;
 
 /// 契约 §2 强制列清单（22 列）——所有 `INSERT INTO cards` 必须一列不少。
 ///
@@ -758,6 +758,11 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error>
     migrate_add_column(pool, "mindmap_nodes", "linked_node_ids", "TEXT NOT NULL DEFAULT '[]'")
         .await?;
 
+    // ===== schema v32（读后记忆系统）：highlights.page_index =====
+    // 高亮表历史无页码列，导致成卡草稿 pageIndex 恒为 null；PDF 高亮可从 cfi "pdf:N"
+    // 解析出真页码，EPUB/文本高亮保持 NULL（不造假）。幂等加列，旧库自动补齐。
+    migrate_add_column(pool, "highlights", "page_index", "INTEGER").await?;
+
     // v1.1.2 审计修复：标记 v1.1.2 整合迁移已应用
     // 未来新增迁移：递增 CURRENT_SCHEMA_VERSION，并在此处添加 set_schema_version 调用
 
@@ -1456,10 +1461,11 @@ async fn backfill_cards_convergence(pool: &SqlitePool) -> Result<usize, sqlx::Er
         Option<String>,
         Option<String>,
         Option<i64>,
+        Option<i64>,
         i64,
         i64,
     )> = sqlx::query_as(
-        "SELECT id, book_id, selected_text, color, cfi_range, chapter_index, created_at, updated_at
+        "SELECT id, book_id, selected_text, color, cfi_range, chapter_index, page_index, created_at, updated_at
          FROM highlights
          WHERE card_id IS NULL AND IFNULL(tombstone, 0) = 0
          ORDER BY created_at, id",
@@ -1467,7 +1473,7 @@ async fn backfill_cards_convergence(pool: &SqlitePool) -> Result<usize, sqlx::Er
     .fetch_all(&mut *tx)
     .await?;
 
-    for (h_id, book_id, selected_text, color, cfi_range, chapter_index, c_at, u_at) in
+    for (h_id, book_id, selected_text, color, cfi_range, chapter_index, page_index, c_at, u_at) in
         highlight_rows
     {
         let card_id = uuid::Uuid::new_v4().to_string();
@@ -1488,7 +1494,7 @@ async fn backfill_cards_convergence(pool: &SqlitePool) -> Result<usize, sqlx::Er
             .bind(Option::<String>::None)
             .bind(&color)
             .bind(&cfi_range)
-            .bind(Option::<i64>::None) // highlights 无 page_index/rect_*，绑 None 而非造假值
+            .bind(page_index) // v32：PDF 高亮真页码；EPUB/文本无页码时为 NULL
             .bind(Option::<f64>::None)
             .bind(Option::<f64>::None)
             .bind(Option::<f64>::None)

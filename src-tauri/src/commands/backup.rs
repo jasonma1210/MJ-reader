@@ -124,6 +124,7 @@ impl<W: Write> Write for StreamingEncryptor<W> {
 }
 
 /// 内存版流式加密封装，供单测验证分帧/解密往返；生产导出直接写文件流。
+#[cfg(test)]
 pub(crate) fn streaming_encrypt_bytes(plain: &[u8], password: &str) -> AppResult<Vec<u8>> {
     let mut enc = StreamingEncryptor::new(Vec::new(), password)?;
     enc.write_all(plain)?;

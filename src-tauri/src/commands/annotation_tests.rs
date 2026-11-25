@@ -7,7 +7,7 @@
 use crate::commands::study_note::{
     add_annotation_inner, adopt_annotation_draft_inner, reject_annotation_draft_inner,
 };
-use crate::commands::annotation::{update_highlight_inner, UpdateHighlightRequest};
+use crate::commands::annotation::{page_from_cfi, update_highlight_inner, UpdateHighlightRequest};
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::str::FromStr;
@@ -304,4 +304,16 @@ mod tests {
             .expect("select");
         assert_eq!(color, "yellow", "软删除高亮颜色不应被改动");
     }
+}
+
+// v32（读后记忆系统）：PDF 高亮页码解析。非法/非 PDF cfi 不造假，返回 None。
+#[test]
+fn page_from_cfi_parses_pdf_page_only() {
+    assert_eq!(page_from_cfi("pdf:1"), Some(1));
+    assert_eq!(page_from_cfi("pdf:238"), Some(238));
+    assert_eq!(page_from_cfi("pdf:0"), None); // 页码 1-based，0 非法
+    assert_eq!(page_from_cfi("pdf:-1"), None);
+    assert_eq!(page_from_cfi("pdf:abc"), None);
+    assert_eq!(page_from_cfi("/body[1]/p[3]"), None); // EPUB cfi 无页码
+    assert_eq!(page_from_cfi(""), None);
 }

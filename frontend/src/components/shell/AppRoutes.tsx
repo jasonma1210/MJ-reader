@@ -1,42 +1,19 @@
 import { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { LibraryPage } from "../../routes/LibraryPage";
-import { LearnPage } from "../../routes/LearnPage";
 import { MePage } from "../../routes/MePage";
-import { AiConfigPage } from "../../routes/AiConfigPage";
-import { RemoteApiPage } from "../../routes/ai-config/RemoteApiPage";
-import { OnDevicePage } from "../../routes/ai-config/OnDevicePage";
-import { OllamaPage } from "../../routes/ai-config/OllamaPage";
-import { NotesLibraryPage } from "../../routes/NotesLibraryPage";
-import { ImportPage } from "../../routes/ImportPage";
-// Me sub-pages
-import { AsrSettingsPage } from "../../routes/me/AsrSettingsPage";
-import { OcrSettingsPage } from "../../routes/me/OcrSettingsPage";
-import { WebSearchSettingsPage } from "../../routes/me/WebSearchSettingsPage";
-import { AgeModePage } from "../../routes/me/AgeModePage";
-import { BackupPage } from "../../routes/me/BackupPage";
-import { AboutPage } from "../../routes/me/AboutPage";
-import { GuidePage } from "../../routes/me/GuidePage";
-import { StorageManagePage } from "../../routes/me/StorageManagePage";
-import { StudyGoalsPage } from "../../routes/me/StudyGoalsPage";
-import { KnowledgeAgentPage } from "../../routes/ai/KnowledgeAgentPage";
-import { TagsPage } from "../../routes/TagsPage";
-import { MasteryPage } from "../../routes/MasteryPage";
-// 第二梯队（P1 学习深度，共用语音组件）四页
-import { PracticePage } from "../../routes/PracticePage";
-import { TeachingPage } from "../../routes/TeachingPage";
-// 第三、四梯队（P1 路径体系 + P1/P2 阅读增强与输出；Compare 已冻结入 _parked）
-import { LearningPathPage } from "../../routes/LearningPathPage";
-import { OutputPage } from "../../routes/OutputPage";
-import { KnowledgePackPage } from "../../routes/KnowledgePackPage";
-import { ReadingReportPage } from "../../routes/ReadingReportPage";
-import { CardConfirmPage } from "../../routes/cards/CardConfirmPage";
 
 /**
- * S4-4.3 路由级分包：体积最大的四个页面（阅读器 / AI 中枢 / 知识图谱 / 白板）
- * 改为 React.lazy 按需加载，其余页面保持静态引入（首屏书库路径零额外请求）。
- * fallback 复用 LoadingState，避免懒加载瞬间白屏。
+ * 路由级分包：首屏只有书库 / 我的两页静态引入，其余页面全部 React.lazy。
+ * 此前静态引入的设置子页、输出页会把 breakdownService / jszip / marked 等
+ * 重依赖拉进入口 chunk；改懒加载后这些依赖随对应页面按需下载。
+ * fallback 为轻量骨架，避免懒加载瞬间白屏。
  */
+// LearnPage 内联 recharts 图表（LearnCurve / MasteryRing），静态引入会把整个
+// charts chunk 拉进首屏；改为按需加载，书库首屏保持零图表请求。
+const LearnPage = lazy(() =>
+  import("../../routes/LearnPage").then((m) => ({ default: m.LearnPage })),
+);
 const ReaderPage = lazy(() =>
   import("../../routes/ReaderPage").then((m) => ({ default: m.ReaderPage })),
 );
@@ -55,6 +32,84 @@ const ReviewFlashcardsPage = lazy(() =>
   import("../../routes/ReviewFlashcardsPage").then((m) => ({
     default: m.ReviewFlashcardsPage,
   })),
+);
+
+const AiConfigPage = lazy(() =>
+  import("../../routes/AiConfigPage").then((m) => ({ default: m.AiConfigPage })),
+);
+const RemoteApiPage = lazy(() =>
+  import("../../routes/ai-config/RemoteApiPage").then((m) => ({ default: m.RemoteApiPage })),
+);
+const OnDevicePage = lazy(() =>
+  import("../../routes/ai-config/OnDevicePage").then((m) => ({ default: m.OnDevicePage })),
+);
+const OllamaPage = lazy(() =>
+  import("../../routes/ai-config/OllamaPage").then((m) => ({ default: m.OllamaPage })),
+);
+const NotesLibraryPage = lazy(() =>
+  import("../../routes/NotesLibraryPage").then((m) => ({ default: m.NotesLibraryPage })),
+);
+const ImportPage = lazy(() =>
+  import("../../routes/ImportPage").then((m) => ({ default: m.ImportPage })),
+);
+const AsrSettingsPage = lazy(() =>
+  import("../../routes/me/AsrSettingsPage").then((m) => ({ default: m.AsrSettingsPage })),
+);
+const OcrSettingsPage = lazy(() =>
+  import("../../routes/me/OcrSettingsPage").then((m) => ({ default: m.OcrSettingsPage })),
+);
+const WebSearchSettingsPage = lazy(() =>
+  import("../../routes/me/WebSearchSettingsPage").then((m) => ({
+    default: m.WebSearchSettingsPage,
+  })),
+);
+const AgeModePage = lazy(() =>
+  import("../../routes/me/AgeModePage").then((m) => ({ default: m.AgeModePage })),
+);
+const BackupPage = lazy(() =>
+  import("../../routes/me/BackupPage").then((m) => ({ default: m.BackupPage })),
+);
+const AboutPage = lazy(() =>
+  import("../../routes/me/AboutPage").then((m) => ({ default: m.AboutPage })),
+);
+const GuidePage = lazy(() =>
+  import("../../routes/me/GuidePage").then((m) => ({ default: m.GuidePage })),
+);
+const StorageManagePage = lazy(() =>
+  import("../../routes/me/StorageManagePage").then((m) => ({ default: m.StorageManagePage })),
+);
+const StudyGoalsPage = lazy(() =>
+  import("../../routes/me/StudyGoalsPage").then((m) => ({ default: m.StudyGoalsPage })),
+);
+const KnowledgeAgentPage = lazy(() =>
+  import("../../routes/ai/KnowledgeAgentPage").then((m) => ({ default: m.KnowledgeAgentPage })),
+);
+const TagsPage = lazy(() =>
+  import("../../routes/TagsPage").then((m) => ({ default: m.TagsPage })),
+);
+const MasteryPage = lazy(() =>
+  import("../../routes/MasteryPage").then((m) => ({ default: m.MasteryPage })),
+);
+const PracticePage = lazy(() =>
+  import("../../routes/PracticePage").then((m) => ({ default: m.PracticePage })),
+);
+const TeachingPage = lazy(() =>
+  import("../../routes/TeachingPage").then((m) => ({ default: m.TeachingPage })),
+);
+const LearningPathPage = lazy(() =>
+  import("../../routes/LearningPathPage").then((m) => ({ default: m.LearningPathPage })),
+);
+const OutputPage = lazy(() =>
+  import("../../routes/OutputPage").then((m) => ({ default: m.OutputPage })),
+);
+const KnowledgePackPage = lazy(() =>
+  import("../../routes/KnowledgePackPage").then((m) => ({ default: m.KnowledgePackPage })),
+);
+const ReadingReportPage = lazy(() =>
+  import("../../routes/ReadingReportPage").then((m) => ({ default: m.ReadingReportPage })),
+);
+const CardConfirmPage = lazy(() =>
+  import("../../routes/cards/CardConfirmPage").then((m) => ({ default: m.CardConfirmPage })),
 );
 
 /** 懒加载 fallback：骨架占位（不闪白屏） */

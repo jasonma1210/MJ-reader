@@ -234,6 +234,14 @@ pub struct SaveHighlightRequest {
     pub color: Option<String>,
     pub style: Option<String>,
     pub chapter_index: Option<i64>,
+    /// PDF 高亮所在页（1-based）；缺省时从 cfi "pdf:N" 解析，EPUB/文本高亮为 NULL。
+    pub page_index: Option<i64>,
+}
+
+/// 从 PDF 高亮 cfi（"pdf:N"）解析页码；非该格式或非法值返回 None，绝不造假。
+pub(crate) fn page_from_cfi(cfi: &str) -> Option<i64> {
+    let n = cfi.strip_prefix("pdf:")?.parse::<i64>().ok()?;
+    (n > 0).then_some(n)
 }
 
 /// v2.x（S4 补全）：创建一条高亮（仅落库选中文本 + 位置，不依赖 AI）。
@@ -246,11 +254,13 @@ pub async fn save_highlight(
     let db = &*state.db;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
+    // v32：PDF 高亮的 cfi 形如 "pdf:<page>"，解析出真页码；EPUB/文本高亮无页码，留 NULL。
+    let page_index = request.page_index.or_else(|| page_from_cfi(&request.cfi_range));
     sqlx::query(
         "INSERT INTO highlights
-            (id, book_id, cfi_range, selected_text, color, style, chapter_index,
+            (id, book_id, cfi_range, selected_text, color, style, chapter_index, page_index,
              note, tags, ai_suggest, related_node_ids, related_question_ids, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, '', '[]', '', '[]', '[]', ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '[]', '', '[]', '[]', ?, ?)",
     )
     .bind(&id)
     .bind(&request.book_id)
@@ -259,6 +269,7 @@ pub async fn save_highlight(
     .bind(request.color.as_deref().unwrap_or("yellow"))
     .bind(request.style.as_deref().unwrap_or("highlight"))
     .bind(request.chapter_index.unwrap_or(0))
+    .bind(page_index)
     .bind(now)
     .bind(now)
     .execute(db)

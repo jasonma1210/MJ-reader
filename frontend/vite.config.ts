@@ -23,15 +23,15 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        // 拆分体积较大的第三方库，避免单 chunk 过大触发警告并改善首屏。
+        // 只把框架与图标这类「所有页面都用到」的库固定成共享 chunk。
+        // 重依赖（recharts / pdfjs / jszip / marked / dompurify 等）不要在这里分组：
+        // 按包名分组会把它们的共享依赖（clsx/lodash/react-is 等）一并拖进来，
+        // 而 shell 里的 AIChatList 用到 marked、cn 用到 clsx，结果是首屏静态加载
+        // charts/document 两个几百 KB 的 chunk。改由 React.lazy + 动态 import
+        // 的自然分包边界决定，重依赖只在实际打开对应页面时下载。
         manualChunks: {
           react: ["react", "react-dom", "react-router-dom"],
-          charts: ["recharts"],
           icons: ["lucide-react"],
-          // 1.0 主包瘦身：重依赖按能力域拆分，首屏只加载真正用到的 chunk。
-          pdf: ["pdfjs-dist", "jspdf"],
-          document: ["jszip", "xlsx", "mammoth", "marked"],
-          imaging: ["html-to-image", "dompurify"],
         },
       },
     },

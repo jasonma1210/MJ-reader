@@ -1,15 +1,27 @@
-import * as pdfjsLib from "pdfjs-dist";
+import type * as PdfJs from "pdfjs-dist";
 import { loadBookFile } from "../utils/bookFileLoader";
 import { ocrImageBase64 } from "./ocrService";
 import { logError } from "../utils/logError";
 
-// 复用 PdfView 的 worker 配置（注入 toHex / getOrInsertComputed polyfill，Android WebView 兼容）。
-// pdfjsLib 是单例模块：若 PdfView 已设置 workerPort 则直接复用；否则在此兜底设置。
-if (!pdfjsLib.GlobalWorkerOptions.workerPort) {
-  pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(
-    new URL("../renderer/pdf/pdfWorker.ts", import.meta.url),
-    { type: "module" },
-  );
+/**
+ * OCR 兜底只在扫描版 PDF 时才需要 pdfjs。静态 import 会把整个 pdf chunk 拉进
+ * 首屏（breakdownService → AIPanel → shell），因此改为首次调用时按需加载。
+ * pdfjsLib 是单例模块：若 PdfView 已设置 workerPort 则直接复用；否则在此兜底设置。
+ */
+let pdfjsPromise: Promise<typeof PdfJs> | null = null;
+function getPdfjs(): Promise<typeof PdfJs> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import("pdfjs-dist").then((mod) => {
+      if (!mod.GlobalWorkerOptions.workerPort) {
+        mod.GlobalWorkerOptions.workerPort = new Worker(
+          new URL("../renderer/pdf/pdfWorker.ts", import.meta.url),
+          { type: "module" },
+        );
+      }
+      return mod;
+    });
+  }
+  return pdfjsPromise;
 }
 
 export interface OcrProgress {
@@ -42,6 +54,7 @@ export async function ocrPdfToText(
   onProgress?: (p: OcrProgress) => void,
 ): Promise<Record<number, string>> {
   const { bytes } = await loadBookFile(bookPath, "pdf");
+  const pdfjsLib = await getPdfjs();
   const loadingTask = pdfjsLib.getDocument({
     data: bytes,
     disableFontFace: true,

@@ -852,7 +852,7 @@ pub(crate) async fn load_draft_sources(
     }
 
     let rows = sqlx::query(
-        "SELECT id, selected_text, cfi_range, chapter_index FROM highlights \
+        "SELECT id, selected_text, cfi_range, chapter_index, page_index FROM highlights \
          WHERE book_id = ? AND id IN (SELECT value FROM json_each(?)) \
            AND deleted_at IS NULL AND tombstone = 0",
     )
@@ -879,6 +879,7 @@ pub(crate) async fn load_draft_sources(
             selected_text,
             cfi_range: row.try_get("cfi_range").ok().flatten(),
             chapter_index,
+            page_index: row.try_get("page_index").ok().flatten(),
             chapter_title,
             book_title: book_title.clone(),
         });

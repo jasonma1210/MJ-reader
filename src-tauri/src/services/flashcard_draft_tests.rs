@@ -10,6 +10,7 @@ fn source() -> DraftSource {
         selected_text: "间隔重复的关键在于先主动回忆再揭晓答案。".into(),
         cfi_range: Some("/body[1]/p[3]".into()),
         chapter_index: 2,
+        page_index: Some(42),
         chapter_title: Some("第三章 记忆".into()),
         book_title: "认知天性".into(),
     }
@@ -47,7 +48,7 @@ fn parse_drafts_maps_source_anchors_and_provider() {
     assert_eq!(drafts[0].book_id, "b1");
     assert_eq!(drafts[0].chapter.as_deref(), Some("第三章 记忆"));
     assert_eq!(drafts[0].cfi_range.as_deref(), Some("/body[1]/p[3]"));
-    assert_eq!(drafts[0].page_index, None); // highlights 无 page_index，不造假
+    assert_eq!(drafts[0].page_index, Some(42)); // v32：来源高亮真页码透传，不造假
     assert_eq!(drafts[0].provider, "remote_api");
     assert!(drafts[0].confidence > 0.9);
     assert!((drafts[1].confidence - 0.5).abs() < f64::EPSILON); // 缺省不编造高置信

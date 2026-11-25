@@ -25,6 +25,7 @@ import { KnowledgeNodeSelect } from "./KnowledgeNodeSelect";
 import {
   buildSourceLocator,
   cardContentOf,
+  displayPageNumber,
   draftReducer,
   REJECT_REASONS,
   toDraftCard,
@@ -42,6 +43,20 @@ interface SourceHighlight {
 
 function trim(value: string | null | undefined): string {
   return value?.trim() ?? "";
+}
+
+/** 页码徽标：pageIndex 全链路 1-based，直接展示；非法值不渲染。 */
+function PageBadge({
+  pageIndex,
+  className,
+}: {
+  pageIndex: number | null;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const page = displayPageNumber(pageIndex);
+  if (page === null) return null;
+  return <span className={className}>{t("cardConfirm.page", { page })}</span>;
 }
 
 /** 前端作废原因（驼峰）→ 埋点枚举码（下划线），只传枚举不传文案。 */
@@ -422,11 +437,7 @@ export function FlashcardConfirmSheet({
                   >
                     <div className="mb-1 flex items-center gap-2 text-[10px] text-ink-muted">
                       <span className="truncate">{t("cardConfirm.highlightSource")}</span>
-                      {h.pageIndex !== null && (
-                        <span className="ml-auto shrink-0">
-                          {t("cardConfirm.page", { page: h.pageIndex + 1 })}
-                        </span>
-                      )}
+                      <PageBadge pageIndex={h.pageIndex} className="ml-auto shrink-0" />
                     </div>
                     <p className="line-clamp-4 text-xs leading-relaxed text-ink-soft">
                       {h.selectedText}
@@ -734,9 +745,7 @@ function DraftCardItem({
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-ink-muted">
         <span className="font-medium">{t("cardConfirm.sourceAnchor")}:</span>
         {draft.chapter && <span>{draft.chapter}</span>}
-        {draft.pageIndex !== null && (
-          <span>{t("cardConfirm.page", { page: draft.pageIndex + 1 })}</span>
-        )}
+        <PageBadge pageIndex={draft.pageIndex} />
         {draft.cfi && (
           <span className="max-w-[160px] truncate" title={draft.cfi}>
             {t("cardConfirm.cfi")}: {draft.cfi}

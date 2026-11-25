@@ -7,7 +7,9 @@
 # + 命令行手动签名 + devicectl 安装」的方式。首次需用户在 Xcode GUI 里
 # 登录 Apple ID、打开 gen/apple 工程、给 target 选 Personal Team 并生成描述文件。
 #
-# 本脚本做四件事（幂等）：
+# 本脚本做五件事（幂等）：
+#   0. 幂等重打品牌启动屏（gen/apple 会被 Tauri 重建覆盖），并重编 .app 的
+#      Assets.car / LaunchScreen.storyboardc；本步改了 bundle，后面会重签名。
 #   1. 给未签名 .app 的 Info.plist 打上 iOS 27 必需的 Scene Manifest
 #      （无此配置：启动即 EXC_BREAKPOINT 闪退；布尔值 false：黑屏）。
 #   2. 嵌入描述文件、从描述文件提取 entitlements。
@@ -25,6 +27,10 @@ SRC_APP="${1:-$ROOT/src-tauri/gen/apple/build/mjnexus-reader_iOS.xcarchive/Produ
 DEVICE="${2:-00008150-00016CEA1420401C}"
 BUNDLE_ID="com.mjnexusreader.app"
 DEV_DIR="/Applications/Xcode.app/Contents/Developer"
+
+# 0) 品牌启动屏（幂等）：源码 storyboard + imageset + 已构建 .app 的编译资源。
+echo "[ios-sign] 应用品牌启动屏补丁"
+bash "$ROOT/scripts/patch-ios-launchscreen.sh" "$SRC_APP"
 
 PP_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 # 选择「bundle id 匹配 + 未过期 + 过期时间最晚」的描述文件。

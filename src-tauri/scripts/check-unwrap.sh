@@ -27,8 +27,11 @@ if [ ! -d "$SRC_DIR" ]; then
 fi
 
 # 计数：排除测试文件与显式 allow 注释行（allow-unwrap 用于「确实可忽略」的 fire-and-forget，如 app.emit）
+# 同时排除本地编辑留下的 .bak/.orig 副本：它们被 .gitignore 忽略，CI 里不存在，
+# 若计入会让本地门禁假红（2026-11-26：asr.rs.bak 曾让计数 168→182）。
 count=$(grep -rn "let _ = " "$SRC_DIR" \
   | grep -v "_tests.rs" \
+  | grep -Ev '\.(bak|orig):' \
   | grep -v "// allow-unwrap" \
   | wc -l | tr -d ' ')
 

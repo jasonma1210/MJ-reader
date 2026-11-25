@@ -3,6 +3,7 @@ import {
   buildCardConfirmPath,
   buildSourceLocator,
   cardContentOf,
+  displayPageNumber,
   draftReducer,
   parseCardConfirmParams,
   REJECT_REASONS,
@@ -23,6 +24,21 @@ const draft: DraftCard = {
   confidence: 0.82,
   selectedText: "原文片段",
 };
+
+describe("displayPageNumber 页码展示口径", () => {
+  it("pdf:N 解析出的 1-based 页码直接展示，禁止 +1", () => {
+    expect(displayPageNumber(1)).toBe(1);
+    expect(displayPageNumber(238)).toBe(238);
+  });
+
+  it("EPUB/文本无页码、非法页码不展示", () => {
+    expect(displayPageNumber(null)).toBeNull();
+    expect(displayPageNumber(undefined)).toBeNull();
+    expect(displayPageNumber(0)).toBeNull();
+    expect(displayPageNumber(-3)).toBeNull();
+    expect(displayPageNumber(Number.NaN)).toBeNull();
+  });
+});
 
 describe("buildSourceLocator 来源锚点", () => {
   it("六字段齐全，缺值写 null", () => {

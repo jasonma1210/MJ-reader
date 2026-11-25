@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS highlights (
     color_hex TEXT,
     style TEXT NOT NULL DEFAULT 'highlight',
     chapter_index INTEGER DEFAULT 0,
+    -- v32（读后记忆系统）：PDF 高亮所在页（1-based），EPUB/文本高亮为 NULL，不造假值。
+    page_index INTEGER,
     -- v2.1（批注设计文档）：批注三要素挂载到高亮 —— 用户笔记 / 标签 / AI 批注草稿
     note TEXT NOT NULL DEFAULT '',
     tags TEXT NOT NULL DEFAULT '[]',

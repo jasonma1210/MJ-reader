@@ -124,6 +124,17 @@ export function draftReducer(
 }
 
 /**
+ * 页码全链路统一为 1-based：PDF cfi "pdf:N" 的 N → highlights.page_index → draft.pageIndex。
+ * 展示时直接用该值，禁止再 +1（旧实现两处 +1 导致页码多一页）；非法值不展示。
+ */
+export function displayPageNumber(pageIndex: number | null | undefined): number | null {
+  if (typeof pageIndex !== "number" || !Number.isFinite(pageIndex) || pageIndex < 1) {
+    return null;
+  }
+  return Math.trunc(pageIndex);
+}
+
+/**
  * 构建 sourceLocator JSON（六字段齐全，缺值写 null）。
  * valid=false 时禁止入库：bookId 必填，且 cfiRange/pageIndex/highlightId 至少一项有值。
  */

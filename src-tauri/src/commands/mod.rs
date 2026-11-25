@@ -68,6 +68,7 @@ pub mod memory;
 pub mod media_quota;
 // W2：备份流式导出单测
 #[cfg(test)]
+#[cfg(test)]
 pub mod backup_tests;
 // W5：导出后端单测
 #[cfg(test)]

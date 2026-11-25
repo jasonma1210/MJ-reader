@@ -15,6 +15,8 @@ pub struct DraftSource {
     pub selected_text: String,
     pub cfi_range: Option<String>,
     pub chapter_index: i64,
+    /// PDF 高亮所在页（1-based），EPUB/文本高亮为 NULL。
+    pub page_index: Option<i64>,
     pub chapter_title: Option<String>,
     pub book_title: String,
 }
@@ -27,7 +29,7 @@ pub struct FlashcardDraft {
     pub back: String,
     pub chapter: Option<String>,
     pub cfi_range: Option<String>,
-    /// highlights 表本身没有 page_index 列；没有真值时保持 null，绝不造假。
+    /// 来源高亮所在页（1-based）；EPUB/文本高亮无页码时保持 null，绝不造假。
     pub page_index: Option<i64>,
     pub highlight_id: String,
     pub book_id: String,
@@ -140,7 +142,7 @@ pub fn parse_drafts(
             back,
             chapter: source.chapter_title.clone(),
             cfi_range: source.cfi_range.clone(),
-            page_index: None,
+            page_index: source.page_index,
             highlight_id: source.highlight_id.clone(),
             book_id: book_id.to_string(),
             confidence,

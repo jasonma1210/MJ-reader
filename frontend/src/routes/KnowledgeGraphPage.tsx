@@ -287,7 +287,8 @@ export function KnowledgeGraphPage() {
     })();
   }, []);
 
-  const nodeOptions = graph?.nodes ?? [];
+  // 稳定引用：graph 未变时复用同一数组，避免下游 useCallback/useMemo 依赖每渲染变化
+  const nodeOptions = useMemo(() => graph?.nodes ?? [], [graph]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setRfNodes((nds) => applyNodeChanges(changes, nds));
