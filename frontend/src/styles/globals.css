@@ -271,3 +271,100 @@ body {
 }
 .md-body .mermaid svg { max-width: 100%; height: auto; }
 
+/* 拟真翻页：EPUB 纸页卷起（CSS 3D），PDF 轻量横向滑入。
+   叠加层只做视觉遮罩，真正换页由渲染器完成。 */
+@keyframes page-curl-next {
+  0%   { transform: rotateY(0deg);   opacity: 1; }
+  100% { transform: rotateY(-96deg); opacity: 0.9; }
+}
+@keyframes page-curl-prev {
+  0%   { transform: rotateY(0deg);  opacity: 1; }
+  100% { transform: rotateY(96deg); opacity: 0.9; }
+}
+@keyframes page-slide-next {
+  0%   { transform: translateX(100%); opacity: 0.9; }
+  100% { transform: translateX(0);    opacity: 0; }
+}
+@keyframes page-slide-prev {
+  0%   { transform: translateX(-100%); opacity: 0.9; }
+  100% { transform: translateX(0);     opacity: 0; }
+}
+.animate-page-curl-next { animation: page-curl-next ease-in forwards; backface-visibility: hidden; }
+.animate-page-curl-prev { animation: page-curl-prev ease-in forwards; backface-visibility: hidden; }
+.animate-page-slide-next { animation: page-slide-next ease-out forwards; }
+.animate-page-slide-prev { animation: page-slide-prev ease-out forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-page-curl-next, .animate-page-curl-prev,
+  .animate-page-slide-next, .animate-page-slide-prev { animation: none; }
+}
+
+/* 沉浸阅读系统手势防护（2026-11-25 版心模型）：
+   - 只禁长按 callout 与原生双击缩放；不设 user-select:none，否则本项目自研长按选字会失效。
+   - touch-action 按模式切换：翻页 none（全手势自研），滚动 pan-y（保留原生惯性/无障碍）。
+   - PDF 保留自身 touch-pan-y（大页面仍需原生滚动），故从 none 规则中排除。 */
+[data-reader-surface] {
+  -webkit-touch-callout: none;
+}
+[data-reader-surface][data-reader-mode="paginated"]:not([data-reader-format="pdf"]) {
+  touch-action: none;
+}
+[data-reader-surface][data-reader-mode="scroll"] {
+  touch-action: pan-y;
+}
+
+/* ===== P0 多端收敛：触控命中区 / 安全区 / 浮条与更多菜单 / 上板定位闪烁 =====
+   仅补充交互尺寸与动效，不改动既有 token 与配色，亮/暗/护眼三态自动跟随。 */
+.wb-selection-action,
+.wb-compact-tool {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* 手机竖屏白板底部抽屉：安全区 + 可滚动的「更多」菜单 */
+.wb-phone-drawer {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+}
+.wb-phone-more {
+  max-height: min(60vh, 420px);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 上板后定位：卡片选中闪烁一次，提示用户「已上板且在这里」 */
+.wb-card-focus-flash {
+  animation: wb-card-focus 1.6s ease-out 1;
+}
+@keyframes wb-card-focus {
+  0%, 100% { box-shadow: none; }
+  15%, 55% {
+    box-shadow: 0 0 0 3px var(--color-accent),
+      0 0 22px color-mix(in srgb, var(--color-accent) 55%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-card-focus-flash { animation: none; }
+}
+
+/* ===== P1/P2：统一卡片检查器 / 演示模式 / 右键精简菜单 =====
+   沿用既有 token，亮 / 暗 / 护眼三态自动跟随；仅补充容器尺寸与安全区。 */
+.wb-inspector-drawer {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.wb-context-menu {
+  max-height: min(60vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 1.0 性能底座：长列表视口外跳过渲染。
+   使用 CSS 能力检测做渐进增强，旧 WebView 不支持时保持原有全量渲染。
+   `auto` 关键字会记住元素上次实际尺寸，避免滚动位置跳变。 */
+@supports (content-visibility: auto) {
+  .cv-list-item {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 200px;
+  }
+}
+

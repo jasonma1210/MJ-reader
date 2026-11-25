@@ -8,6 +8,17 @@ export const FONT_SIZE_MIN = 14;
 export const FONT_SIZE_MAX = 30;
 export const FONT_SIZE_STEP = 2;
 
+/** KOReader 视觉方案（P0-1/P0-3/P1-7）：视觉模式三态、对齐四档、字距/休息时长范围。
+ * 这些常量是 readerStore / VisionPopover / TypographyPopover 的单一真源。 */
+export type VisionMode = "standard" | "simulated" | "ink";
+export type TextAlign = "left" | "center" | "justify" | "right";
+export type RestMinutes = 0 | 30 | 45 | 60;
+export const TEXT_ALIGN_OPTIONS: readonly TextAlign[] = ["left", "center", "justify", "right"];
+export const REST_MINUTE_OPTIONS: readonly RestMinutes[] = [0, 30, 45, 60];
+export const LETTER_SPACING_MIN = -0.05;
+export const LETTER_SPACING_MAX = 0.15;
+export const LETTER_SPACING_STEP = 0.01;
+
 /** 阅读器排版（v3.6.2 「排版面板」集中入口）：
  *  - fontFamily：正文字族（CSS 注入 foliate iframe 内的 body 元素）
  *  - lineHeight：行距倍率（follate `--flow-line-height`）
@@ -119,6 +130,61 @@ export function resolveReaderTypography(s: {
   return { fontFamily, lineHeight, marginX, textColor, bgColor };
 }
 
+/**
+ * 阅读页版心内边距（px，2026-11-25 版心模型最终口径）：
+ * 左右最多 1 个全角字宽，上下亦然且恒小于左右；档位为**绝对上限**（px），
+ * 再按当前字号封顶到 1 字 —— 因此边距与字号解耦：字号放大不再把边距一起放大，
+ * 只有切换档位才改变边距，避免上一轮「边距随字号联动」造成的反复抖动。
+ */
+export const READER_INSET_CAPS: Record<(typeof PARA_SPACING_STEPS)[number]["key"], number> = {
+  tight: 6,
+  normal: 10,
+  loose: 14,
+};
+
+export function resolveReaderInsets(
+  fontSize: number,
+  paraSpacingKey: (typeof PARA_SPACING_STEPS)[number]["key"],
+): { insetX: number; insetY: number } {
+  const charPx = Math.max(10, Math.round(fontSize)); // 1 个全角字宽（封顶依据）
+  const cap = READER_INSET_CAPS[paraSpacingKey] ?? READER_INSET_CAPS.normal;
+  // 左右：绝对上限与 1 字宽取小，任何字号/档位都不超过 1 字。
+  const insetX = Math.min(charPx, cap);
+  // 上下：左右的 0.6 倍，且至少比左右小 2px；同样不超过 1 字。
+  const insetY = Math.max(4, Math.min(charPx, insetX - 2, Math.round(insetX * 0.6)));
+  return { insetX, insetY };
+}
+
+/**
+ * 版心安全矩形：把「UI 安全区」与「版心内边距」拆成两个独立量，相加而非竞争。
+ * - uiTop：44px，位于状态栏下沿（Shell 的 safe-area-inset-top 之下，非屏幕物理顶边）。
+ * - uiBottomCss：20px + env(safe-area-inset-bottom)，iOS ≈54px。
+ * - insetX/insetY：文字到版心边缘的排版边距（≤1字、上下 < 左右），绝对量。
+ */
+export const READER_UI_TOP = 44;
+export const READER_UI_BOTTOM_BASE = 20;
+export const READER_UI_BOTTOM_CSS = "calc(20px + env(safe-area-inset-bottom, 0px))";
+
+export interface ReaderSafeRect {
+  insetX: number;
+  insetY: number;
+  uiTop: number;
+  uiBottomCss: string;
+}
+
+export function resolveReaderSafeRect(
+  fontSize: number,
+  paraSpacingKey: (typeof PARA_SPACING_STEPS)[number]["key"],
+): ReaderSafeRect {
+  const { insetX, insetY } = resolveReaderInsets(fontSize, paraSpacingKey);
+  return {
+    insetX,
+    insetY,
+    uiTop: READER_UI_TOP,
+    uiBottomCss: READER_UI_BOTTOM_CSS,
+  };
+}
+
 interface ReaderState {
   bookId: string;
   progress: number;
@@ -133,6 +199,20 @@ interface ReaderState {
   viewMode: ViewMode;
   /** P0-1（2026-10-09）：竖排阅读（写作方向），书级持久化到 reader_state */
   verticalWriting: boolean;
+  /** KOReader 视觉方案：视觉模式三态（彩屏标准 / 仿彩多色 / 墨水黑白） */
+  visionMode: VisionMode;
+  /** 软件色温：true=跟随时间三段，false=手动固定 warmth */
+  colorTempFollow: boolean;
+  /** 手动色温值：-100（冷）..100（暖） */
+  warmth: number;
+  /** 软件滤镜强度：0..100 */
+  intensity: number;
+  /** 休息提醒间隔：0=关闭 / 30 / 45 / 60 分钟 */
+  restMinutes: RestMinutes;
+  /** 正文对齐（仅 EPUB 生效） */
+  textAlign: TextAlign;
+  /** 正文字距（em，仅 EPUB 生效） */
+  letterSpacing: number;
   /**
    * 内存位置缓存：横竖屏/壳切换导致渲染器重挂载时，用此即时恢复（避免跳回第一页）。
    * 同时镜像到 localStorage——某些 ROM 在旋转时会重建 WebView（JS 状态全丢），
@@ -154,6 +234,13 @@ interface ReaderState {
   setViewMode: (v: ViewMode) => void;
   /** 竖排开关：本地持久化 + 书级写库（set_vertical_writing，尽力而为） */
   setVerticalWriting: (enabled: boolean, bookId?: string | null) => void;
+  setVisionMode: (m: VisionMode) => void;
+  setColorTempFollow: (v: boolean) => void;
+  setWarmth: (v: number) => void;
+  setIntensity: (v: number) => void;
+  setRestMinutes: (v: RestMinutes) => void;
+  setTextAlign: (v: TextAlign) => void;
+  setLetterSpacing: (v: number) => void;
   setLastPosition: (p: { bookId: string; fraction: number; cfi?: string } | null) => void;
 }
 
@@ -168,6 +255,13 @@ interface PersistedPrefs {
   bgColorKey?: string;
   viewMode?: ViewMode;
   verticalWriting?: boolean;
+  visionMode?: VisionMode;
+  colorTempFollow?: boolean;
+  warmth?: number;
+  intensity?: number;
+  restMinutes?: RestMinutes;
+  textAlign?: TextAlign;
+  letterSpacing?: number;
   lastPosition?: { bookId: string; fraction: number; cfi?: string } | null;
 }
 
@@ -177,8 +271,19 @@ function loadPersisted(): { prefs: PersistedPrefs; lastPosition: ReaderState["la
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { prefs: {}, lastPosition: null };
     const parsed = JSON.parse(raw) as PersistedPrefs;
+    // 旧数据无视觉字段：在此用 ?? 兜底，保持与初值同一默认值口径
+    const prefs: PersistedPrefs = {
+      ...parsed,
+      visionMode: parsed.visionMode ?? "standard",
+      colorTempFollow: parsed.colorTempFollow ?? true,
+      warmth: parsed.warmth ?? 0,
+      intensity: parsed.intensity ?? 60,
+      restMinutes: parsed.restMinutes ?? 0,
+      textAlign: parsed.textAlign ?? "left",
+      letterSpacing: parsed.letterSpacing ?? 0,
+    };
     return {
-      prefs: parsed,
+      prefs,
       lastPosition: parsed.lastPosition && parsed.lastPosition.bookId && typeof parsed.lastPosition.fraction === "number"
         ? { bookId: parsed.lastPosition.bookId, fraction: parsed.lastPosition.fraction, cfi: parsed.lastPosition.cfi ?? undefined }
         : null,
@@ -213,9 +318,16 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   // 文字色随背景主题定，保证深浅背景下都可读
   textColorKey: initTheme ? initTheme.fg : initial.prefs.textColorKey ?? "default",
   bgColorKey: initBgColorKey,
-  // 阅读效果默认「滚动」
-  viewMode: initial.prefs.viewMode ?? "scroll",
+  // 阅读效果默认「分页」（左右翻页）；已有用户保留其持久化偏好
+  viewMode: initial.prefs.viewMode ?? "paginated",
   verticalWriting: initial.prefs.verticalWriting ?? false,
+  visionMode: initial.prefs.visionMode ?? "standard",
+  colorTempFollow: initial.prefs.colorTempFollow ?? true,
+  warmth: initial.prefs.warmth ?? 0,
+  intensity: initial.prefs.intensity ?? 60,
+  restMinutes: initial.prefs.restMinutes ?? 0,
+  textAlign: initial.prefs.textAlign ?? "left",
+  letterSpacing: initial.prefs.letterSpacing ?? 0,
   lastPosition: initial.lastPosition,
   pageInfo: null,
   setBookId: (bookId) => set({ bookId }),
@@ -260,6 +372,34 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       setVerticalWritingCmd(bookId, enabled).catch((e) => logError("readerStore.setVerticalWriting", e));
     }
   },
+  setVisionMode: (visionMode) => {
+    set({ visionMode });
+    persistAll(snapshot(get()));
+  },
+  setColorTempFollow: (colorTempFollow) => {
+    set({ colorTempFollow });
+    persistAll(snapshot(get()));
+  },
+  setWarmth: (warmth) => {
+    set({ warmth });
+    persistAll(snapshot(get()));
+  },
+  setIntensity: (intensity) => {
+    set({ intensity });
+    persistAll(snapshot(get()));
+  },
+  setRestMinutes: (restMinutes) => {
+    set({ restMinutes });
+    persistAll(snapshot(get()));
+  },
+  setTextAlign: (textAlign) => {
+    set({ textAlign });
+    persistAll(snapshot(get()));
+  },
+  setLetterSpacing: (letterSpacing) => {
+    set({ letterSpacing });
+    persistAll(snapshot(get()));
+  },
   setLastPosition: (lastPosition) => {
     persistAll({ ...snapshot(get(), { skipLastPosition: true }), lastPosition });
     set({ lastPosition });
@@ -279,6 +419,13 @@ function snapshot(
     bgColorKey: s.bgColorKey,
     viewMode: s.viewMode,
     verticalWriting: s.verticalWriting,
+    visionMode: s.visionMode,
+    colorTempFollow: s.colorTempFollow,
+    warmth: s.warmth,
+    intensity: s.intensity,
+    restMinutes: s.restMinutes,
+    textAlign: s.textAlign,
+    letterSpacing: s.letterSpacing,
   };
   if (!opts.skipLastPosition) out.lastPosition = s.lastPosition;
   return out;

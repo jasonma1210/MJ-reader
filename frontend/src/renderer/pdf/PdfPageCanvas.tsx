@@ -11,6 +11,9 @@ import type { RenderParameters, TextItem } from "pdfjs-dist/types/src/display/ap
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
 import { useReaderSelectionStore } from "../../stores/readerSelectionStore";
 import { useHighlightStore } from "../../stores/highlightStore";
+import { useReaderStore } from "../../stores/readerStore";
+import { isTauri } from "../../services/tauri";
+import { resolvePlatformConfig, useVisionProfile } from "../visual/einkProfile";
 import { applyPdfHighlightOverlay, type PdfHighlightEntry } from "./pdfHighlightOverlay";
 import { ensurePageTextContent, type PageCacheEntry } from "./usePdfPageCache";
 
@@ -142,6 +145,9 @@ export const PdfPageCanvas = forwardRef<
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
+  const visionMode = useReaderStore((s) => s.visionMode);
+  const dprCap = resolvePlatformConfig(isTauri(), visionMode).dprCap;
+  const { reduceMotion } = useVisionProfile();
 
   const renderPage = useCallback(
     async (
@@ -155,7 +161,9 @@ export const PdfPageCanvas = forwardRef<
       if (!canvas || !textLayer) return;
       const page = entry.page;
 
-      const dpr = window.devicePixelRatio || 1;
+      // P0-6 提速：dpr 上限由 einkProfile.resolvePlatformConfig 派生
+      // （桌面 ≤1.5，墨水模式 =1，3x 屏画布像素量显著下降）。
+      const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
       canvas.width = Math.floor(viewport.width * dpr);
       canvas.height = Math.floor(viewport.height * dpr);
       canvas.style.width = `${viewport.width}px`;
@@ -252,7 +260,7 @@ export const PdfPageCanvas = forwardRef<
       );
       onRenderComplete?.(pageNumber);
     },
-    [highlightEntries, onRenderComplete],
+    [highlightEntries, onRenderComplete, dprCap],
   );
 
   const clear = useCallback(() => {
@@ -430,8 +438,13 @@ export const PdfPageCanvas = forwardRef<
     <>
       <canvas
         ref={canvasRef}
-        className="shadow-card transition-opacity duration-200"
-        style={{ maxWidth: "100%", maxHeight: "100%" }}
+        className="shadow-card transition-opacity"
+        style={{
+          maxWidth: "100%",
+          maxHeight: "100%",
+          // P0-6 ③ eink 档禁动画：取自视觉真源，无需重挂载。
+          transitionDuration: reduceMotion ? "0ms" : "200ms",
+        }}
       />
       <div
         ref={textLayerRef}

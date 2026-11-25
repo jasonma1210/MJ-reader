@@ -16,7 +16,7 @@ import {
 } from "../../utils/readerFollowSource";
 import { buildScrollFollowAdapter } from "../../utils/scrollFollowAdapter";
 import { extractHtmlToc, extractTextToc } from "../../utils/tocBuilder";
-import { useReaderStore, resolveReaderTypography, isReaderBgDark } from "../../stores/readerStore";
+import { useReaderStore, resolveReaderTypography, resolveReaderInsets, isReaderBgDark } from "../../stores/readerStore";
 import { cn } from "../../utils/cn";
 import { settingsService } from "../../services/settingsService";
 import { useReaderSelectionStore } from "../../stores/readerSelectionStore";
@@ -514,13 +514,19 @@ export function TextView({
 
   const contentStyle = useCallback((): React.CSSProperties => {
     const s = useReaderStore.getState();
-    const { fontFamily, lineHeight, marginX, textColor, bgColor } = resolveReaderTypography(s);
+    const { fontFamily, lineHeight, textColor, bgColor } = resolveReaderTypography(s);
+    // 与 EPUB 一致（2026-11-25 约定）：左右/上下最多各 1 个全角字宽，上下 < 左右。
+    const { insetX, insetY } = resolveReaderInsets(s.fontSize, s.paraSpacingKey);
     return {
       fontFamily,
       fontSize: `${s.fontSize}px`,
       lineHeight,
-      paddingLeft: `${marginX}px`,
-      paddingRight: `${marginX}px`,
+      // 版心内边距四边齐全：左右 ≤1 字，上下 = 左右×0.6 且恒小于左右。
+      // UI 安全区由 ReaderPage 的版心矩形统一扣除，这里不重复叠加。
+      paddingTop: `${insetY}px`,
+      paddingBottom: `${insetY}px`,
+      paddingLeft: `${insetX}px`,
+      paddingRight: `${insetX}px`,
       color: textColor,
       background: bgColor,
     };

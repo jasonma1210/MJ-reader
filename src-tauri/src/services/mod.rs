@@ -61,6 +61,8 @@ pub mod device_tier_tests;
 pub mod llm_cancel;
 // v3.0（3-Tab IA 重构）：局域网文件服务器服务（axum HTTP + QR 码 + 局域网 IP 探测）
 pub mod lan_file_server;
+#[cfg(test)]
+pub mod lan_file_server_tests;
 // 对齐实现调整文档（2026-08-25）：共享非流式 LLM 对话助手（建议卡/场景练习/语音问答/
 // 教学相长/语音教练/学习路径/知识输出/多书对比统一复用，杜绝各模块重复 openai_chat）
 pub mod nonstream_chat;

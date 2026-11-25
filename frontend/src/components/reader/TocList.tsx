@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ListTree } from "lucide-react";
+import { EyeOff, ListTree } from "lucide-react";
 import { aiService, type TocNode } from "../../services/aiService";
 import { getReaderToc } from "../../utils/readerTocSource";
 import { getReaderLocation } from "../../utils/readerFollowSource";
@@ -31,6 +31,18 @@ export function TocList({
   const { t } = useTranslation();
   const [nodes, setNodes] = useState<TocNodeFull[] | null>(null);
   const [loading, setLoading] = useState(false);
+  /** P1-6：仅 PDF 重排视图暴露「隐藏章节」入口；由 PdfView 广播模式状态。 */
+  const [canHideChapter, setCanHideChapter] = useState(false);
+
+  useEffect(() => {
+    const onMode = (e: Event) => {
+      const d = (e as CustomEvent<{ enabled?: boolean }>).detail;
+      setCanHideChapter(d?.enabled === true);
+    };
+    window.addEventListener("mjnexus:pdf-reflow-mode", onMode as EventListener);
+    return () =>
+      window.removeEventListener("mjnexus:pdf-reflow-mode", onMode as EventListener);
+  }, []);
 
   useEffect(() => {
     let destroyed = false;
@@ -111,25 +123,44 @@ export function TocList({
       <ul className="divide-y divide-overlay-border">
         {filtered.map(({ n, depth, idx, isCurrent }) => (
           <li key={`${depth}-${idx}-${n.title}`}>
-            <button
-              onClick={() => {
-                onJump({ title: n.title, cfi: n.cfi, href: n.href });
-                onClose?.();
-              }}
-              className={`flex w-full items-center gap-3 py-3 text-left text-[14px] transition ${
-                isCurrent
-                  ? "bg-overlay-soft text-accent"
-                  : "text-overlay hover:bg-overlay-soft"
-              }`}
-              style={{ paddingLeft: 12 + depth * 16, paddingRight: 12 }}
-            >
-              <span className="flex-1 truncate">{n.title}</span>
-              <span className={`shrink-0 text-[12px] tabular-nums ${
-                isCurrent ? "text-accent/80" : "text-overlay"
-              }`}>
-                {typeof n.pageNum === "number" ? n.pageNum : idx + 1}
-              </span>
-            </button>
+            <div className="flex w-full items-center">
+              <button
+                onClick={() => {
+                  onJump({ title: n.title, cfi: n.cfi, href: n.href });
+                  onClose?.();
+                }}
+                className={`flex min-w-0 flex-1 items-center gap-3 py-3 text-left text-[14px] transition ${
+                  isCurrent
+                    ? "bg-overlay-soft text-accent"
+                    : "text-overlay hover:bg-overlay-soft"
+                }`}
+                style={{ paddingLeft: 12 + depth * 16, paddingRight: 12 }}
+              >
+                <span className="flex-1 truncate">{n.title}</span>
+                <span className={`shrink-0 text-[12px] tabular-nums ${
+                  isCurrent ? "text-accent/80" : "text-overlay"
+                }`}>
+                  {typeof n.pageNum === "number" ? n.pageNum : idx + 1}
+                </span>
+              </button>
+              {canHideChapter && (
+                <button
+                  type="button"
+                  aria-label={t("reader.toc.hideChapter")}
+                  title={t("reader.toc.hideChapter")}
+                  onClick={() => {
+                    window.dispatchEvent(
+                      new CustomEvent("mjnexus:reader-toc-hide", {
+                        detail: { bookId, title: n.title },
+                      }),
+                    );
+                  }}
+                  className="shrink-0 px-3 py-3 text-overlay transition hover:text-accent"
+                >
+                  <EyeOff className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </li>
         ))}
       </ul>

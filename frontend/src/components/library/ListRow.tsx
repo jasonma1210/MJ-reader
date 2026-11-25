@@ -47,7 +47,7 @@ export function ListRow({ book }: { book: Book }) {
     <div
       onClick={() => (selectMode ? toggleSelected(book.id) : navigate(`/reader/${book.id}`))}
       className={cn(
-        "flex h-11 cursor-pointer items-center gap-2.5 border-b border-line/60 px-2 transition active:bg-paper-soft",
+        "cv-list-item flex h-11 cursor-pointer items-center gap-2.5 border-b border-line/60 px-2 transition active:bg-paper-soft",
         selected ? "bg-accent-bg/40" : "",
       )}
     >

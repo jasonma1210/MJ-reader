@@ -266,11 +266,27 @@
     "highlighted": "Highlighted",
     "noteSelectFirst": "Select text to annotate first",
     "viewMode": {
-      "noPageHint": "This format has no native pages. Scroll mode only."
+      "noPageHint": "This format has no native pages. Scroll mode only.",
+      "switchToScroll": "Switch to scroll",
+      "switchToPages": "Switch to paged"
     },
     "breakdownStop": "Stop",
     "breakdownViewProgress": "View progress",
-    "breakdownStopped": "Breakdown stopped"
+    "breakdownStopped": "Breakdown stopped",
+    "align": "Alignment",
+    "letterSpacing": "Letter spacing",
+    "pdf": {
+      "mode": {
+        "title": "PDF view mode",
+        "original": "Original pages",
+        "reflow": "Reflow"
+      },
+      "noTextLayer": "No text layer; reflow unavailable, kept original",
+      "onlyEpub": "Applies to EPUB only"
+    },
+    "toc": {
+      "hideChapter": "Hide this chapter"
+    }
   },
   "aiModel": {
     "title": "AI Models",
@@ -406,6 +422,7 @@
   },
   "highlights": {
     "title": "Highlights",
+    "exportMarkdown": "Export highlights as Markdown",
     "empty": "No highlights yet. Select some text and tap \"Highlight\".",
     "page": "Page {{page}}",
     "location": "Location {{loc}}",
@@ -446,6 +463,10 @@
     "boardDone": "Added to board",
     "boardDup": "Already on the board",
     "boardFailed": "Failed to add to board",
+    "boardDoneWithView": "Added to board · View card",
+    "boardView": "View card",
+    "more": "More",
+    "moreAi": "More · AI",
     "makeCard": "Make card",
     "quizMe": "Quiz me",
     "cardSaved": "Saved to review queue",
@@ -462,7 +483,10 @@
     "inlineAttachHl": "Attach to highlight",
     "inlineNoteSaved": "Saved as note",
     "inlineHlAttached": "Attached to highlight note",
-    "inlineSaveFailed": "Save failed, please retry"
+    "inlineSaveFailed": "Save failed, please retry",
+    "inlineCopy": "Copy",
+    "inlineCopied": "Copied",
+    "inlineCopyFailed": "Copy failed, please retry"
   },
   "ai": {
     "title": "AI Assistant",
@@ -723,6 +747,7 @@
     "masteryPct": "(mastery {{pct}}%)",
     "saveNote": "Save side note",
     "savedToLibrary": "Side note saved to notes library",
+    "saveFailed": "Save failed, please retry",
     "done": "Done",
     "exported": "Exported",
     "exportMarkdown": "Export Markdown",
@@ -742,6 +767,10 @@
     "voicePlaceholder": "[Voice] (no transcript; tap to jump back to source)",
     "voiceLabel": "Recording",
     "transcribing": "Transcribing…",
+    "transcribed": "Transcribed",
+    "noTranscript": "No transcript",
+    "saving": "Saving…",
+    "saveOk": "Saved",
     "asrFailed": "Voice transcription failed: {{msg}}",
     "playPlayback": "Play recording",
     "pausePlayback": "Pause playback",
@@ -1024,7 +1053,8 @@
       "aimodelHint": "AI model capabilities arrive in a later release and are not configurable yet.",
       "theme": "Appearance & eye-care",
       "language": "Language",
-      "about": "About & privacy"
+      "about": "About & privacy",
+      "vision": "Reading vision"
     },
     "theme": {
       "light": "Light (Warm)",
@@ -1162,10 +1192,13 @@
     "guide": {
       "title": "Usage Guide",
       "sub": "Revisit how to set up AI, ASR, OCR, and how to learn"
-    }
+    },
+    "languageChanged": "Language changed to {{language}}"
   },
   "splash": {
-    "tagline": "AI-powered immersive reading and memory"
+    "tagline": "AI-powered immersive reading and memory",
+    "skip": "Skip intro animation",
+    "skipHint": "Tap anywhere to skip"
   },
   "onboarding": {
     "skip": "Skip",
@@ -1535,6 +1568,13 @@
   "whiteboard": {
     "title": "Knowledge Board",
     "hintShort": "Spread notes, highlights & knowledge nodes onto an infinite canvas",
+    "moreTitle": "More tools",
+    "phoneToolsAria": "Board bottom toolbar",
+    "phoneMoreAria": "More board tools",
+    "autoArrange": "Auto arrange",
+    "sourceFilter": "Source filter",
+    "cardLocated": "Card located",
+    "cardNotFound": "Card not found on this board",
     "scopeLabel": "Scope",
     "scopeAll": "All books",
     "refresh": "Refresh",
@@ -1666,6 +1706,61 @@
       "conceptCard": "Card",
       "misquestion": "Mistake"
     },
+    "inspector": {
+      "title": "Card inspector",
+      "tab": {
+        "content": "Content",
+        "relation": "Relations",
+        "ai": "AI"
+      },
+      "source": "Source category",
+      "outgoing": "Cards this card points to",
+      "relationEmpty": "No related cards yet",
+      "aiHint": "Pick an action. Results go to the AI drafts first and only become child cards after you accept them.",
+      "open": "Open card inspector"
+    },
+    "template": {
+      "title": "Choose a board template",
+      "hint": "A template only sets the title and initial structure of new cards. It never auto-fills the board or changes existing content.",
+      "none": "No template",
+      "reading": {
+        "name": "Reading notes",
+        "desc": "Organize notes by quotes, thoughts and questions",
+        "title": "Reading notes · ",
+        "body": "## Quotes\n\n\n## My thoughts\n\n\n## Questions\n\n"
+      },
+      "concept": {
+        "name": "Concept map",
+        "desc": "Grow outward from a core concept",
+        "title": "Concept: ",
+        "body": "## Definition\n\n\n## Related concepts\n\n\n## Examples\n\n"
+      },
+      "mistake": {
+        "name": "Mistake book",
+        "desc": "Record the question, the cause and the fix",
+        "title": "Mistake · ",
+        "body": "## Question\n\n\n## Why I got it wrong\n\n\n## Correct solution\n\n"
+      },
+      "chapter": {
+        "name": "Chapter map",
+        "desc": "Outline key points and structure by chapter",
+        "title": "Chapter · ",
+        "body": "## Key points\n\n\n## Key concepts\n\n\n## To review\n\n"
+      },
+      "open": "Board templates",
+      "applied": "Applied template \"{{name}}\". New cards will use this structure."
+    },
+    "present": {
+      "enter": "Presentation / focus mode",
+      "exit": "Exit presentation",
+      "hint": "Toolbars and inspector are hidden. Press Esc or tap the top-right button to exit."
+    },
+    "context": {
+      "addNote": "Add sticky note",
+      "autoArrange": "Auto arrange",
+      "exitPresent": "Exit presentation"
+    },
+    "sourceFilterAll": "All sources",
     "cardUndo": "Undo card operation (⌘Z)",
     "cardRedo": "Redo card operation (⇧⌘Z)",
     "batch": {
@@ -1704,6 +1799,17 @@
     "backlinkMentions": "Referenced via @mention",
     "backlinkEmpty": "No backlinks for this card (not linked or @mentioned)",
     "backlinkClose": "Close backlinks",
+    "focusMode": {
+      "enter": "Focus mode",
+      "exit": "Exit focus",
+      "hint": "Focus mode hides toolbars and inspector, leaving only the canvas"
+    },
+    "shortcutMenu": {
+      "title": "Canvas shortcuts",
+      "addNote": "Add sticky note",
+      "autoArrange": "Auto arrange",
+      "exitFocus": "Exit focus"
+    },
     "mentionInsert": "Reference card",
     "mentionPickPlaceholder": "Pick a card to reference…",
     "mentionMiss": "Referenced card not found",
@@ -2079,5 +2185,42 @@
   },
   "quiz": {
     "tokenCostWarning": "Generating questions costs AI tokens (~100-200 per question). Continue?"
+  },
+  "vision": {
+    "panel": {
+      "title": "Reading Vision"
+    },
+    "openPanel": "Open reading vision panel",
+    "mode": {
+      "title": "Visual mode",
+      "standard": "Standard color",
+      "simulated": "Simulated color",
+      "ink": "Ink black & white",
+      "hint": "Software filters only; screen emission unchanged"
+    },
+    "temp": {
+      "title": "Software color temperature",
+      "auto": "Follow time",
+      "manual": "Manual",
+      "daytime": "Daytime cool (07:00–17:00)",
+      "dusk": "Dusk warm paper (17:00–21:00)",
+      "night": "Night warm dim (21:00–07:00)",
+      "warmth": "Warmth",
+      "intensity": "Filter intensity",
+      "disclaimer": "Software filter, not hardware frontlight; dim overlay only, no forced screen-off"
+    },
+    "rhythm": {
+      "title": "Reading rhythm",
+      "rest": "Rest reminder",
+      "off": "Off",
+      "m30": "Every 30 min",
+      "m45": "Every 45 min",
+      "m60": "Every 60 min",
+      "toast": "{{minutes}} min of reading; rest your eyes",
+      "wakelock": "No wake lock; screen-off is system-managed"
+    },
+    "highlight": {
+      "greyscale": "Highlights, including saved ones, use high-contrast grey in ink mode"
+    }
   }
 }

@@ -135,6 +135,8 @@ export const notesService = {
     noteType?: string | null;
     knowledgeNodeId?: string | null;
     mediaUrl?: string | null;
+    /** 语音笔记转写文本；服务端字段就叫 transcript，列表对 voice 类型只读它 */
+    transcript?: string | null;
     /** 人机分离标记：'ai'=AI 解释草稿，默认 'user' */
     source?: "user" | "ai";
   }): Promise<boolean> {
@@ -155,7 +157,7 @@ export const notesService = {
           chapterIndex: input.chapterIndex ?? 0,
           noteType,
           mediaUrl: input.mediaUrl ?? null,
-          transcript: null,
+          transcript: input.transcript ?? null,
         });
       }
       return true;
@@ -173,7 +175,7 @@ export const notesService = {
         linkedFlashcardId: null,
         noteType,
         mediaUrl: input.mediaUrl ?? null,
-        transcript: null,
+        transcript: input.transcript ?? null,
         knowledgeNodeId: input.knowledgeNodeId ?? null,
         source: input.source ?? "user",
       });

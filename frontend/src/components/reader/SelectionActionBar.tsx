@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   FileText,
@@ -9,6 +10,7 @@ import {
   Layers,
   CircleHelp,
   Lightbulb,
+  MoreHorizontal,
   X,
 } from "lucide-react";
 import { NoteEditorSheet } from "./NoteEditorSheet";
@@ -16,12 +18,17 @@ import { useAiStore } from "../../stores/aiStore";
 import { useReaderStore } from "../../stores/readerStore";
 import { useHighlightStore } from "../../stores/highlightStore";
 import { useReaderSelectionStore } from "../../stores/readerSelectionStore";
+import { useBreakpoint } from "../../hooks/useLayoutMode";
 import { highlightService } from "../../services/highlightService";
 import { notesService } from "../../services/notesService";
 import { aiService } from "../../services/aiService";
-import { whiteboardService } from "../../services/whiteboardService";
+import {
+  whiteboardService,
+  BOARD_FOCUS_EVENT,
+  type BoardFocusDetail,
+} from "../../services/whiteboardService";
 import { highlightToFlashcard } from "../../services/closedLoopService";
-import { errMsg, toast } from "../../utils/toast";
+import { errMsg, toast, toastWithAction } from "../../utils/toast";
 import { cn } from "../../utils/cn";
 import { logError } from "../../utils/logError";
 import { verbPrompt } from "../../ai/router";
@@ -85,6 +92,10 @@ export function buildInlineHighlightPatch(existingNote: string | undefined, aiTe
  */
 export function SelectionActionBar() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  // 手机竖屏一级动作收敛为「高亮 / 笔记 / 上板 / 更多」，AI 类进更多菜单。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
   const selection = useReaderSelectionStore((s) => s.selection);
   const openPanel = useAiStore((s) => s.openPanel);
   const clearReaderSel = useReaderSelectionStore((s) => s.clear);
@@ -101,12 +112,22 @@ export function SelectionActionBar() {
   // P1-3：解释优先在原文旁内联呈现；上板不再是必经动作。
   const [inlineResult, setInlineResult] = useState<InlineResult | null>(null);
   const [inlineLoading, setInlineLoading] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // 选区变化时清空上一次内联结果，避免旧解释挂到新原文上。
   useEffect(() => {
     setInlineResult(null);
     setInlineLoading(false);
+    setMoreOpen(false);
   }, [selection?.text, selection?.cfi, selection?.start, selection?.end]);
+
+  // 「更多」菜单点击外部自动关闭（菜单自身阻止 pointerdown 冒泡，避免开关互相打架）
+  useEffect(() => {
+    if (!moreOpen) return;
+    const close = () => setMoreOpen(false);
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [moreOpen]);
 
   if (!selection) return null;
 
@@ -248,6 +269,18 @@ export function SelectionActionBar() {
     }
   };
 
+  /** AI 结果卡「复制」：结果失败/加载中不复制，写入剪贴板后给明确状态反馈。 */
+  const copyInline = async () => {
+    if (!inlineResult || inlineResult.failed || !inlineResult.text) return;
+    try {
+      await navigator.clipboard.writeText(inlineResult.text);
+      toast(t("selection.inlineCopied"));
+    } catch (e) {
+      logError("SelectionActionBar.copyInline", e);
+      toast(t("selection.inlineCopyFailed"));
+    }
+  };
+
   // M4：划线一键上板（≤2 步）。现在它只是可选沉淀动作，不再是解释的必经步骤。
   const boardSelection = async () => {
     const sel = useReaderSelectionStore.getState().selection;
@@ -275,8 +308,22 @@ export function SelectionActionBar() {
         updatedAt: Date.now(),
       });
       try {
-        const added = await whiteboardService.addToBookBoard(bookId, "highlight", id);
-        toast(added ? t("selection.boardDone") : t("selection.boardDup"));
+        // 上板成功（含重复上板）返回统一卡片 id：toast 提供「查看卡片」入口，
+        // 同时派发定位事件 + URL ?focus=，白板页监听后选中并闪烁该卡。
+        const result = await whiteboardService.addToBookBoard(bookId, "highlight", id);
+        if (result) {
+          toastWithAction(t("selection.boardDoneWithView"), t("selection.boardView"), () => {
+            const detail: BoardFocusDetail = {
+              bookId,
+              cardId: result.cardId,
+              source: result.source,
+            };
+            window.dispatchEvent(new CustomEvent(BOARD_FOCUS_EVENT, { detail }));
+            navigate(`/whiteboard/${bookId}?focus=${encodeURIComponent(result.cardId)}`);
+          });
+        } else {
+          toast(t("selection.boardFailed"));
+        }
       } catch (e) {
         logError("SelectionActionBar.board", e);
         toast(t("selection.boardFailed"));
@@ -385,22 +432,29 @@ export function SelectionActionBar() {
     },
   ];
 
+  // 手机竖屏：一级只留高亮 / 笔记 / 上板；其余（含 AI 五动作）进「更多」
+  const PHONE_PRIMARY_KEYS = ["highlight", "note", "board"];
+  const visibleActions = phonePortrait
+    ? actions.filter((a) => PHONE_PRIMARY_KEYS.includes(a.key))
+    : actions;
+  const moreActions = actions.filter((a) => !PHONE_PRIMARY_KEYS.includes(a.key));
+
   return (
     <>
       <div
         role="toolbar"
         aria-label={t("selection.barAria")}
-        className="fixed z-50 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-line bg-paper px-1 py-1 shadow-lg"
+        className="wb-selection-bar fixed z-50 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-line bg-paper px-1 py-1 shadow-lg"
         style={{ left: x, top }}
       >
-        {actions.map((a) => {
+        {visibleActions.map((a) => {
           const highlighted = a.key === "highlight" && justHighlighted;
           return (
             <button
               key={a.key}
               onClick={() => void a.run()}
               className={cn(
-                "flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-ink-soft transition-colors",
+                "wb-selection-action flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-ink-soft transition-colors",
                 highlighted
                   ? "bg-[#facc15] font-semibold text-black"
                   : "hover:bg-line-soft active:bg-line-soft",
@@ -416,6 +470,46 @@ export function SelectionActionBar() {
             </button>
           );
         })}
+        {phonePortrait && (
+          <div className="relative" onPointerDown={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setMoreOpen((v) => !v)}
+              aria-label={t("selection.moreAi")}
+              aria-expanded={moreOpen}
+              className="wb-selection-action flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-ink-soft transition-colors hover:bg-line-soft active:bg-line-soft"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+              {t("selection.more")}
+            </button>
+            {moreOpen && (
+              <div
+                role="menu"
+                aria-label={t("selection.moreAi")}
+                className="absolute right-0 top-9 z-50 w-36 rounded-[var(--radius-md)] border border-line bg-paper p-1 shadow-lg"
+              >
+                <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-ink-muted">
+                  {t("selection.moreAi")}
+                </p>
+                {moreActions.map((a) => (
+                  <button
+                    key={a.key}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMoreOpen(false);
+                      void a.run();
+                    }}
+                    className="wb-selection-action flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-left text-xs text-ink-soft transition hover:bg-line-soft"
+                  >
+                    <a.icon className="h-3.5 w-3.5 shrink-0" />
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* P1-3：原文旁内联解释。失败也留在原地展示真实错误，不静默、不跳面板。 */}
@@ -463,6 +557,13 @@ export function SelectionActionBar() {
                 className="rounded-[var(--radius-sm)] border border-line px-2 py-1 text-[11px] text-ink-soft transition hover:bg-line-soft"
               >
                 {t("selection.inlineAttachHl")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void copyInline()}
+                className="rounded-[var(--radius-sm)] border border-line px-2 py-1 text-[11px] text-ink-soft transition hover:bg-line-soft"
+              >
+                {t("selection.inlineCopy")}
               </button>
             </div>
           )}

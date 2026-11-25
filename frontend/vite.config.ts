@@ -28,6 +28,10 @@ export default defineConfig({
           react: ["react", "react-dom", "react-router-dom"],
           charts: ["recharts"],
           icons: ["lucide-react"],
+          // 1.0 主包瘦身：重依赖按能力域拆分，首屏只加载真正用到的 chunk。
+          pdf: ["pdfjs-dist", "jspdf"],
+          document: ["jszip", "xlsx", "mammoth", "marked"],
+          imaging: ["html-to-image", "dompurify"],
         },
       },
     },

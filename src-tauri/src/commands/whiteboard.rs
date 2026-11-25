@@ -342,7 +342,7 @@ pub async fn whiteboard_list(
     let rows = sqlx::query(
         "SELECT w.id, w.title, w.scope_type, w.scope_ref, w.canvas_state, \
                 w.created_at, w.updated_at, \
-                (SELECT COUNT(*) FROM whiteboard_cards c WHERE c.whiteboard_id = w.id) AS card_count \
+                (SELECT COUNT(*) FROM whiteboard_cards c WHERE c.whiteboard_id = w.id AND c.tombstone = 0) AS card_count \
          FROM whiteboards w \
          WHERE w.scope_type = ? \
            AND (? IS NULL OR w.scope_ref = ?) \
@@ -440,23 +440,16 @@ pub async fn whiteboard_add_card(
     let z = layout.z.unwrap_or(0);
     let collapsed = if layout.collapsed.unwrap_or(false) { 1 } else { 0 };
 
-    // 画布不存在时自动兜底创建（默认标题 + global 作用域），保证挂卡永远可成功
+    // 2026-11-25：去掉 global 兜底建板。旧实现在 board 不存在时静默创建一块
+    // scope_type='global' 的板并把卡片挂上去，书作用域查询永远看不到它 ——
+    // 用户表现为「点了上板但白板没内容」。改为 fail-closed，由调用方先建板。
     let board_exists: i64 = sqlx::query("SELECT COUNT(*) FROM whiteboards WHERE id = ?")
         .bind(&whiteboard_id)
         .fetch_one(pool)
         .await?
         .get(0);
     if board_exists == 0 {
-        sqlx::query(
-            "INSERT INTO whiteboards (id, title, scope_type, scope_ref, canvas_state, created_at, updated_at) \
-             VALUES (?, '拆书白板', 'global', NULL, '{}', ?, ?) \
-             ON CONFLICT(id) DO NOTHING",
-        )
-        .bind(&whiteboard_id)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+        return Err(AppError::General(format!("画布不存在: {}", whiteboard_id)));
     }
 
     sqlx::query(
@@ -506,23 +499,14 @@ pub async fn whiteboard_new_note(
     let pool = &*state.db;
     let now = chrono::Utc::now().timestamp();
 
-    // 画布不存在时自动兜底创建（与 whiteboard_add_card 一致的兜底策略）
+    // 与 whiteboard_add_card 一致：board 不存在直接报错，不再静默挂到 global 板。
     let board_exists: i64 = sqlx::query("SELECT COUNT(*) FROM whiteboards WHERE id = ?")
         .bind(&whiteboard_id)
         .fetch_one(pool)
         .await?
         .get(0);
     if board_exists == 0 {
-        sqlx::query(
-            "INSERT INTO whiteboards (id, title, scope_type, scope_ref, canvas_state, created_at, updated_at) \
-             VALUES (?, '拆书白板', 'global', NULL, '{}', ?, ?) \
-             ON CONFLICT(id) DO NOTHING",
-        )
-        .bind(&whiteboard_id)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+        return Err(AppError::General(format!("画布不存在: {}", whiteboard_id)));
     }
 
     let note_id = Uuid::new_v4().to_string();
@@ -634,7 +618,7 @@ pub async fn whiteboard_cards(
     let pool = &*state.db;
     let rows = sqlx::query(
         "SELECT id, card_id, source, x, y, w, h, z, collapsed, updated_at \
-         FROM whiteboard_cards WHERE whiteboard_id = ? ORDER BY z, created_at",
+         FROM whiteboard_cards WHERE whiteboard_id = ? AND tombstone = 0 ORDER BY z, created_at",
     )
     .bind(&whiteboard_id)
     .fetch_all(pool)

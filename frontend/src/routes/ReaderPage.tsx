@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, AlignLeft, Type, GraduationCap, ScanEye } from "lucide-react";
+import { ArrowLeft, AlignLeft, Type, GraduationCap, ScanEye, Eye, BookOpen, ScrollText } from "lucide-react";
 import { useLayoutMode } from "../hooks/useLayoutMode";
 import { useReadingTimeRecorder } from "../hooks/useReadingTimeRecorder";
 import { BookWorkspace } from "../components/bookWorkspace/BookWorkspace";
@@ -9,9 +9,16 @@ import { BookView } from "../renderer/BookView";
 import { FoliateView } from "../renderer/foliate/FoliateView";
 import { ReaderFloatActions } from "../components/reader/ReaderFloatActions";
 import { ReaderProgressBar } from "../components/reader/ReaderProgressBar";
+import { PageTurnOverlay } from "../components/reader/PageTurnOverlay";
 import { TypographyPopover } from "../components/reader/TypographyPopover";
+import { VisionPopover } from "../components/reader/VisionPopover";
 import { TocModal } from "../components/reader/TocModal";
-import { useReaderStore } from "../stores/readerStore";
+import {
+  useReaderStore,
+  READER_UI_TOP,
+  READER_UI_BOTTOM_CSS,
+} from "../stores/readerStore";
+import { useVisionProfile } from "../renderer/visual/einkProfile";
 import { useAiStore } from "../stores/aiStore";
 import { ErrorBoundary } from "../components/common/ErrorBoundary";
 import { ReaderAiPanel } from "../components/reader/ReaderAiPanel";
@@ -51,8 +58,23 @@ export function ReaderPage() {
   const setBookId = useReaderStore((s) => s.setBookId);
   const chapterTitle = useReaderStore((s) => s.chapterTitle);
   const progress = useReaderStore((s) => s.progress);
+  const viewMode = useReaderStore((s) => s.viewMode);
+  const setViewMode = useReaderStore((s) => s.setViewMode);
+  const visionMode = useReaderStore((s) => s.visionMode);
+  const setVisionMode = useReaderStore((s) => s.setVisionMode);
+  const colorTempFollow = useReaderStore((s) => s.colorTempFollow);
+  const setColorTempFollow = useReaderStore((s) => s.setColorTempFollow);
+  const warmth = useReaderStore((s) => s.warmth);
+  const setWarmth = useReaderStore((s) => s.setWarmth);
+  const intensity = useReaderStore((s) => s.intensity);
+  const setIntensity = useReaderStore((s) => s.setIntensity);
+  const restMinutes = useReaderStore((s) => s.restMinutes);
+  const setRestMinutes = useReaderStore((s) => s.setRestMinutes);
+  // 视觉模式作用于整个阅读界面：工具栏/底栏/浮层/正文统一切换，不只改文档内容。
+  const vision = useVisionProfile();
   const openPanel = useAiStore((s) => s.openPanel);
   const [typographyOpen, setTypographyOpen] = useState(false);
+  const [visionOpen, setVisionOpen] = useState(false);
   const [tocModalOpen, setTocModalOpen] = useState(false);
   const [tocModalTab] = useState<"search" | "toc" | "bookmarks">("toc");
   const [bookTitle, setBookTitle] = useState<string>("");
@@ -78,6 +100,7 @@ export function ReaderPage() {
   const bdLastFailed = useBreakdownStore((s) => s.lastFailed);
 
   const typographyBtnRef = useRef<HTMLButtonElement>(null);
+  const visionBtnRef = useRef<HTMLButtonElement>(null);
   const tocBtnRef = useRef<HTMLButtonElement>(null);
   // 拆书完成消息去重：记录上一次已提示的 lastDoneAt
   const doneAtRef = useRef(0);
@@ -95,6 +118,43 @@ export function ReaderPage() {
 
   // 阅读计时：累计真实阅读时长落库（学习中心统计/热力图数据源）
   useReadingTimeRecorder(bookId);
+
+  // 休息提醒（KOReader 方案 §5.4）：仅前台阅读累计，切后台/锁屏暂停；到点 toast 一次后
+  // 重新累计下一轮。不申请 WakeLock，熄屏由系统管理。interval 与监听成对清理。
+  useEffect(() => {
+    if (!restMinutes) return;
+    const intervalMs = restMinutes * 60 * 1000;
+    let accumulated = 0;
+    let lastTick = Date.now();
+    let running = document.visibilityState === "visible";
+
+    // 结算 [lastTick, now] 区间：只累计前台可见的那一段
+    const flush = () => {
+      const now = Date.now();
+      if (running) accumulated += now - lastTick;
+      lastTick = now;
+    };
+    const onVisibility = () => {
+      const nowVisible = document.visibilityState === "visible";
+      if (nowVisible === running) return;
+      flush(); // 用切换前的状态结算上一段，再切换运行状态
+      running = nowVisible;
+    };
+    const onTick = () => {
+      flush();
+      if (accumulated >= intervalMs) {
+        accumulated = 0; // 本轮到点只提示一次，随后开始下一轮
+        toast(t("vision.rhythm.toast", { minutes: restMinutes }));
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    const timer = window.setInterval(onTick, 1000);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [restMinutes, t]);
 
   // —— 专注模式（F-9-001）：遮罩弱化周边 + 按段落/离开上报阅读速度 ——
   const [focusMode, setFocusMode] = useState(false);
@@ -193,8 +253,10 @@ export function ReaderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusMode, bookId]);
 
-  // 工作区入口（单一权威入口）：横屏 → 右侧 1/3 侧边栏；竖屏 → 底部 Sheet
-  const openWorkspace = () => {
+  // 工作区入口（单一权威入口）：横屏 → 右侧 1/3 侧边栏；竖屏 → 底部 Sheet。
+  // 可选 tab 用于直达：无限画布从「学习」按钮两步可达（打开白板 tab → 打开画布）。
+  const openWorkspace = (tab?: WorkspaceTab) => {
+    if (tab) setWorkspaceTab(tab);
     if (isLandscape) setSideMode((m) => (m === "workspace" ? null : "workspace"));
     else setWorkspaceOpen(true);
   };
@@ -256,27 +318,76 @@ export function ReaderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId]);
 
-  // ===== 沉浸模式（F-沉浸）：工具栏覆盖于内容之上，点击中间弹出，5s 无操作自动隐藏 =====
-  // 注意：所有 hooks 必须在早退（!bookId）之前声明，保证每次渲染调用顺序一致。
-  const [headless, setHeadless] = useState(true);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const showUI = () => {
-    setHeadless(false);
-    // 显示后 5 秒无操作 → 自动隐藏，回到沉浸式阅读
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(() => setHeadless(true), 5000);
-  };
-
-  // 清理自动隐藏计时器
+  // ===== 横竖屏五阶段：冻结输入 → 捕获锚点 → 重排 → 回位 → 解冻 =====
+  // 锚点由各渲染器持续写入 readerStore.lastPosition（EPUB CFI / PDF pdf:N / Text fraction），
+  // 这里只负责输入冻结与 150ms 透明度过渡；回位由各渲染器自己的 ResizeObserver 完成。
+  // 过渡只用 opacity，禁用 transform scale（缩放会让文字模糊并触发额外重排）。
+  const [rotating, setRotating] = useState(false);
+  const rotateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    const onRotate = () => {
+      if (rotateTimerRef.current) clearTimeout(rotateTimerRef.current);
+      setRotating(true);
+      requestAnimationFrame(() => {
+        rotateTimerRef.current = setTimeout(() => setRotating(false), 150);
+      });
+    };
+    window.addEventListener("orientationchange", onRotate);
+    const mq = window.matchMedia?.("(orientation: portrait)");
+    mq?.addEventListener?.("change", onRotate);
     return () => {
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      window.removeEventListener("orientationchange", onRotate);
+      mq?.removeEventListener?.("change", onRotate);
+      if (rotateTimerRef.current) clearTimeout(rotateTimerRef.current);
     };
   }, []);
 
-  // 沉浸模式：工具栏显示后，任意交互（点击/触摸）都重置 5 秒倒计时，
-  // 真正"最后操作后 5 秒自动隐藏"，避免阅读时工具栏突兀消失。
+  // ===== 沉浸模式：头/悬浮按钮整体隐藏；进度条独立常驻两档明灭 =====
+  // 注意：所有 hooks 必须在早退（!bookId）之前声明，保证每次渲染调用顺序一致。
+  const [headless, setHeadless] = useState(true);
+  /** 供事件订阅闭包读取最新态：显隐监听只在挂载时绑定一次，不能捕获 state 快照。 */
+  const headlessRef = useRef(true);
+  /** 呼出时刻：双击手势随后合成的 click 不能被当成「点击菜单外」立刻收起。 */
+  const uiShownAtRef = useRef(0);
+  const [progressActive, setProgressActive] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const HIDE_MS = 5000;
+  const PROGRESS_FADE_MS = 2500;
+
+  /** 呼出态立即收起：点击菜单外 / 任意阅读手势走此路径，定时器仅作兜底。 */
+  const hideUI = () => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = null;
+    headlessRef.current = true;
+    setHeadless(true);
+  };
+
+  const showUI = () => {
+    uiShownAtRef.current = Date.now();
+    headlessRef.current = false;
+    setHeadless(false);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(hideUI, HIDE_MS);
+  };
+
+  /** 进度条被触碰/翻页 → 切清晰档，停手 2.5s 后褪回淡影。 */
+  const pulseProgress = () => {
+    setProgressActive(true);
+    if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+    progressTimerRef.current = setTimeout(() => setProgressActive(false), PROGRESS_FADE_MS);
+  };
+
+  // 清理计时器
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+    };
+  }, []);
+
+  // 工具栏显示后，任意交互重置隐藏倒计时
   useEffect(() => {
     if (headless) {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -284,39 +395,33 @@ export function ReaderPage() {
     }
     const reset = () => {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = setTimeout(() => setHeadless(true), 5000);
+      hideTimerRef.current = setTimeout(hideUI, HIDE_MS);
     };
-    // 工具栏交互（mousedown/touchstart）重置计时；滚动不重置（阅读动作）
     window.addEventListener("pointerdown", reset, { passive: true });
     return () => {
       window.removeEventListener("pointerdown", reset);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [headless]);
 
-  // —— 三分区点击统一处理（对齐主流阅读器交互）——
-  // 渲染器内部（iframe/canvas）的点击不会冒泡到外层 div，
-  // 所以各渲染器需主动派发 mjnexus:reader-tap-zone { ratio } 事件到 window。
-  // 外层 div 的 onClick 保留给 TextView 等非 iframe 渲染器兜底。
+  // —— 三分区点击：左右翻页（只闪进度条）；中间交给双击手势 ——
+  // 渲染器内部（iframe/canvas）点击不冒泡，各渲染器派发 mjnexus:reader-tap-zone { ratio }。
   const handleTapByRatio = (ratio: number) => {
-    // 左 30% → 上一页
+    // 呼出态下任意阅读点击先收起工具栏（点击菜单外关闭）；绝不在这里重新弹栏。
+    // 只读 ref，避免挂载期事件订阅捕获到过期的 headless 快照。
+    if (!headlessRef.current && Date.now() - uiShownAtRef.current > 600) hideUI();
     if (ratio < 0.3) {
-      window.dispatchEvent(
-        new CustomEvent("mjnexus:reader-flip", { detail: { direction: -1 } }),
-      );
-      showUI();
+      window.dispatchEvent(new CustomEvent("mjnexus:reader-flip", { detail: { direction: -1 } }));
+      pulseProgress();
       return;
     }
-    // 右 30% → 下一页
     if (ratio > 0.7) {
-      window.dispatchEvent(
-        new CustomEvent("mjnexus:reader-flip", { detail: { direction: 1 } }),
-      );
-      showUI();
+      window.dispatchEvent(new CustomEvent("mjnexus:reader-flip", { detail: { direction: 1 } }));
+      pulseProgress();
       return;
     }
-    // 中间 40% → 呼出工具栏
-    showUI();
+    // 中间 40%：单击只收起菜单；双击呼出由各渲染器的 double-tap 事件负责
   };
 
   // 监听各渲染器派发的 tap-zone 事件
@@ -329,6 +434,73 @@ export function ReaderPage() {
     return () => window.removeEventListener("mjnexus:reader-tap-zone", onTap);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 中间双击 → 弹头底菜单 + 进度条转清晰（EPUB/PDF 的双击手势统一派发此事件）
+  useEffect(() => {
+    const onDoubleTap = () => {
+      showUI();
+      pulseProgress();
+    };
+    window.addEventListener("mjnexus:reader-double-tap", onDoubleTap);
+    return () => window.removeEventListener("mjnexus:reader-double-tap", onDoubleTap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 翻页发生时闪一下进度条（覆盖热区直接翻页等不经 tap-zone 的路径）
+  useEffect(() => {
+    // 翻页只闪进度条：绝不弹工具栏；若处于呼出态则立即收起。
+    const onTurned = () => {
+      pulseProgress();
+      if (!headlessRef.current) hideUI();
+    };
+    window.addEventListener("mjnexus:reader-page-turned", onTurned);
+    return () => window.removeEventListener("mjnexus:reader-page-turned", onTurned);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // EPUB iframe 内上拉（iframe 触摸不冒泡到外层 div，由 FoliateView 派发）
+  useEffect(() => {
+    const onPullUp = () => {
+      if (viewMode === "paginated" && bookInfo?.format?.toLowerCase() !== "pdf") {
+        setViewMode("scroll");
+        pulseProgress();
+        if (!headlessRef.current) hideUI();
+      }
+    };
+    window.addEventListener("mjnexus:reader-pull-up", onPullUp);
+    return () => window.removeEventListener("mjnexus:reader-pull-up", onPullUp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, bookInfo?.format]);
+
+  // —— 上拉切模式（仅 paginated + 可分页格式）：内容区中下部按住上拉 → scroll ——
+  const pullStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const canSwitchMode = viewMode === "paginated" && bookInfo?.format?.toLowerCase() !== "pdf";
+
+  const onPullStart = (e: React.PointerEvent) => {
+    if (!canSwitchMode) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-reader-ui]")) return;
+    const rect = focusAreaRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    // 只认内容区中下部（y 在 55%~90%），避开顶部与底部进度条
+    const relY = (e.clientY - rect.top) / rect.height;
+    if (relY < 0.55 || relY > 0.9) return;
+    pullStartRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+  };
+  const onPullEnd = (e: React.PointerEvent) => {
+    const start = pullStartRef.current;
+    pullStartRef.current = null;
+    if (!start || !canSwitchMode) return;
+    const dy = start.y - e.clientY;
+    const dx = Math.abs(start.x - e.clientX);
+    const dt = Date.now() - start.t;
+    // 明显上拉（>80px）、方向垂直、时长可控（<1200ms）才切模式
+    if (dy > 80 && dx < 40 && dt < 1200) {
+      setViewMode("scroll");
+      pulseProgress();
+      if (!headlessRef.current) hideUI();
+    }
+  };
 
   // —— 朗读联动（v3.7.1）：打开书籍工作区（横屏侧栏 / 竖屏 Sheet，任意 tab）自动暂停，
   // 关闭工作区自动续播。按 "workspace" 原因记账，与路由离开的 "route-leave" 互不干扰。
@@ -359,13 +531,33 @@ export function ReaderPage() {
   return (
     // 阅读器页面：外层 MobileShell/AppLayout 已为系统状态栏让位（paddingTop: safe-area-inset-top），
     // 本容器直接 h-full 铺满剩余区域，内容即可全屏显示且不遮挡系统状态栏，也避免底部虚位。
-    <div className="relative h-full flex-col overflow-hidden bg-paper text-ink">
+    <div
+      className="relative h-full flex-col overflow-hidden bg-paper text-ink"
+      style={{
+        // 视觉模式是「整页」效果：非标准模式的背景/前景用模式令牌，标准模式保留
+        // readerStore 的 7 色主题；滤镜作用于整个界面（工具栏/正文/底栏/浮层）。
+        background: vision.background ?? undefined,
+        color: vision.mode === "standard" ? undefined : vision.foreground,
+        filter: vision.contentFilter === "none" ? undefined : vision.contentFilter,
+        transition: vision.reduceMotion ? "none" : "filter 200ms ease, background 200ms ease",
+      }}
+    >
+      {/* 软件色温夜间暖暗遮罩：整页统一，pointer-events:none 不拦截交互（非强制熄屏） */}
+      {vision.overlayColor && (
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{ background: vision.overlayColor }}
+          aria-hidden="true"
+        />
+      )}
       {/* 顶部导航：直接紧贴状态栏下沿；沉浸模式下上滑隐藏，覆盖在内容之上（不占 flex 空间） */}
       <div
+        data-reader-ui
         className={cn(
           "absolute inset-x-0 top-0 z-30 flex items-center gap-1.5 px-1 pt-1 pb-1 transition-transform duration-300",
           "bg-paper/95 backdrop-blur-sm",
-          headless ? "-translate-y-full" : "translate-y-0",
+          // hidden 终态必须不可命中：纯位移/透明层仍会吃掉点击，形成幽灵命中区。
+          headless ? "-translate-y-full pointer-events-none" : "translate-y-0 pointer-events-auto",
         )}
       >
         <button
@@ -412,6 +604,20 @@ export function ReaderPage() {
           <Type className="h-5 w-5" />
         </button>
 
+        {/* 阅读视觉面板入口（KOReader 方案 P0-2）：Eye 图标沿用 currentColor */}
+        <button
+          ref={visionBtnRef}
+          onClick={() => setVisionOpen((v) => !v)}
+          aria-label={t("vision.openPanel")}
+          aria-pressed={visionOpen}
+          className={cn(
+            "grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink/80 transition active:scale-95",
+            visionOpen ? "bg-ink/10 text-ink" : "hover:bg-ink/5",
+          )}
+        >
+          <Eye className="h-5 w-5" />
+        </button>
+
         {/* 专注模式开关注入工具栏 */}
         <button
           onClick={() => setFocusMode((v) => !v)}
@@ -426,9 +632,29 @@ export function ReaderPage() {
           <ScanEye className="h-5 w-5" />
         </button>
 
-        {/* 学习（工作区入口，取代文字按钮 → 图标）：横屏侧栏 / 竖屏 Sheet */}
+        {/* 翻页 / 滚动模式切换（菜单通道，与"中下部上拉"手势并存） */}
+        {bookInfo?.format?.toLowerCase() !== "pdf" && (
+          <button
+            onClick={() => {
+              setViewMode(viewMode === "paginated" ? "scroll" : "paginated");
+              pulseProgress();
+            }}
+            aria-label={viewMode === "paginated" ? t("reader.viewMode.switchToScroll") : t("reader.viewMode.switchToPages")}
+            title={viewMode === "paginated" ? t("reader.viewMode.switchToScroll") : t("reader.viewMode.switchToPages")}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink/80 transition active:scale-95 hover:bg-ink/5"
+          >
+            {viewMode === "paginated" ? (
+              <ScrollText className="h-5 w-5" />
+            ) : (
+              <BookOpen className="h-5 w-5" />
+            )}
+          </button>
+        )}
+
+        {/* 学习（工作区入口，取代文字按钮 → 图标）：直达白板 tab，
+            再点 BookWhiteboardTab 的「打开画布」即两步进入无限画布。 */}
         <button
-          onClick={openWorkspace}
+          onClick={() => openWorkspace("whiteboard")}
           aria-label={t("reader.study")}
           title={t("reader.study")}
           className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition active:scale-95"
@@ -446,14 +672,46 @@ export function ReaderPage() {
         onClose={() => setTypographyOpen(false)}
       />
 
+      {/* 阅读视觉浮层（Eye 按钮触发）：三态模式 / 软件色温 / 阅读节奏 */}
+      <VisionPopover
+        open={visionOpen}
+        anchorRef={visionBtnRef}
+        onClose={() => setVisionOpen(false)}
+        mode={visionMode}
+        onModeChange={setVisionMode}
+        tempFollow={colorTempFollow}
+        onTempFollowChange={setColorTempFollow}
+        warmth={warmth}
+        onWarmthChange={setWarmth}
+        intensity={intensity}
+        onIntensityChange={setIntensity}
+        restMinutes={restMinutes}
+        onRestMinutesChange={setRestMinutes}
+        docKind={bookInfo?.format?.toLowerCase() === "pdf" ? "pdf" : "epub"}
+      />
+
       {/* 阅读内容区 + 横屏右侧侧边栏。
           内容区绝对铺满全屏（沉浸式：头部/底部/悬浮均为覆盖层，不占布局空间） */}
       <div className="absolute inset-0 flex">
-        <div
-          ref={focusAreaRef}
-          className="relative flex-1 overflow-hidden"
-          onClick={onReaderAreaClick}
-        >
+        {/* 版心矩形：三渲染器共用同一安全矩形。垂直方向让出 UI 安全区
+            （顶部 44px 位于状态栏下沿；底部 20px + safe-area-bottom），
+            UI 覆盖层不压正文；水平方向仍由 flex-1 占满，侧栏在旁。 */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="shrink-0" style={{ height: READER_UI_TOP }} aria-hidden="true" />
+          <div
+            ref={focusAreaRef}
+            data-reader-surface
+            data-reader-mode={viewMode}
+            data-reader-format={bookInfo?.format?.toLowerCase()}
+            className={cn(
+              "relative min-h-0 flex-1 overflow-hidden transition-opacity duration-150",
+              rotating && "pointer-events-none opacity-[0.85]",
+            )}
+            onClick={onReaderAreaClick}
+            onPointerDown={onPullStart}
+            onPointerUp={onPullEnd}
+            onContextMenu={(e) => e.preventDefault()}
+          >
           {loadErr ? (
             /* S3-3.2：书信息加载失败 → 错误态 + 重试（不再静默降级） */
             <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
@@ -485,6 +743,12 @@ export function ReaderPage() {
           ) : (
             <FoliateView bookId={bookId} />
           )}
+          </div>
+          <div
+            className="shrink-0"
+            style={{ height: READER_UI_BOTTOM_CSS }}
+            aria-hidden="true"
+          />
         </div>
 
         {/* 横屏：右侧 1/3 侧边栏（工作区 / 问 AI） */}
@@ -515,7 +779,7 @@ export function ReaderPage() {
       {bdRunning && bdBookId === bookId && (
         <div className="absolute bottom-24 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border border-line bg-overlay px-2 py-1.5 text-[11px] text-overlay shadow-lg">
           <button
-            onClick={openWorkspace}
+            onClick={() => openWorkspace()}
             className="flex items-center gap-2 rounded-full px-2"
             aria-label={t("reader.breakdownViewProgress")}
           >
@@ -548,20 +812,25 @@ export function ReaderPage() {
         </div>
       )}
 
-      {/* 底部工具栏：右下角悬浮按钮 + 进度条（覆盖于内容之上）
-          沉浸模式下淡出隐藏（pointer-events 一并关闭，避免遮挡阅读） */}
+      {/* 右下角悬浮按钮：跟头部一起沉浸隐藏（AI 问书 + 光盘朗读） */}
       <div
         className={cn(
           "pointer-events-none absolute inset-0 z-20 transition-opacity duration-300",
           headless ? "invisible opacity-0" : "visible opacity-100",
         )}
       >
-        {/* 右下角悬浮：AI 问书 + 光盘朗读（播放器界面随播放弹出） */}
         <ReaderFloatActions cover={bookCover} onAskAi={openAskAi} />
-
-        {/* 阅读进度条（可拖动/点击跳页） */}
-        <ReaderProgressBar progress={progress} />
       </div>
+
+      {/* 进度条独立常驻：沉浸态两档明灭（淡影/清晰），始终可点可拖 */}
+      <ReaderProgressBar
+        progress={progress}
+        active={headless ? progressActive : null}
+        onInteract={pulseProgress}
+      />
+
+      {/* 拟真翻页覆盖层（EPUB 卷页 / PDF 滑入），只做视觉不改文档 */}
+      <PageTurnOverlay format={bookInfo?.format} />
 
       {/* 目录 / 搜索 / 书签 模态（顶部 ≡ 触发） */}
       <TocModal

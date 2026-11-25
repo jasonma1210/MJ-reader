@@ -9,7 +9,15 @@ import { useReaderStore } from "../../stores/readerStore";
  * - 支持分页的格式（如 PDF）额外显示「当前页 / 总页码」
  * - 拖动/点击 → 派发 mjnexus:reader-seek（fraction 0-1），各渲染器监听跳转
  */
-export function ReaderProgressBar({ progress }: { progress: number }) {
+interface ReaderProgressBarProps {
+  progress: number;
+  /** 沉浸态下的明灭档位：false=淡影(0.1)，true=清晰(0.6)。null=非沉浸态全显(1)。 */
+  active?: boolean | null;
+  /** 触碰进度条时通知父层切到清晰档并重置宽限期。 */
+  onInteract?: () => void;
+}
+
+export function ReaderProgressBar({ progress, active = null, onInteract }: ReaderProgressBarProps) {
   const { t } = useTranslation();
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -29,6 +37,7 @@ export function ReaderProgressBar({ progress }: { progress: number }) {
 
   const onPointerDown = (e: React.PointerEvent) => {
     setDragging(true);
+    onInteract?.();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const rect = trackRef.current?.getBoundingClientRect();
     if (rect) setPreview(Math.round(((e.clientX - rect.left) / rect.width) * 100));
@@ -49,8 +58,12 @@ export function ReaderProgressBar({ progress }: { progress: number }) {
 
   return (
     <div
-      className="pointer-events-auto absolute bottom-0 left-0 right-0 z-20 flex items-center gap-2 px-3"
-      style={{ paddingTop: "2px", paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2px)" }}
+      className="pointer-events-auto absolute bottom-0 left-0 right-0 z-20 flex items-center gap-2 px-3 transition-opacity duration-300"
+      style={{
+        paddingTop: "2px",
+        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2px)",
+        opacity: active === null ? 1 : active ? 0.6 : 0.1,
+      }}
     >
       <div
         ref={trackRef}

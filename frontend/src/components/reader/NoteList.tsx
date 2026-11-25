@@ -210,6 +210,18 @@ export function NoteList({ bookId, onClose }: { bookId: string; onClose?: () => 
                     <span className="text-xs font-bold text-accent">
                       {t(Badge.label)}
                     </span>
+                    {/* 语音笔记状态可见：已转写 / 暂无转写（列表侧不静默） */}
+                    {note.noteType === "voice" && (
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                          note.transcript
+                            ? "bg-success-soft text-success-strong"
+                            : "bg-paper text-ink-muted"
+                        }`}
+                      >
+                        {note.transcript ? t("notes.transcribed") : t("notes.noTranscript")}
+                      </span>
+                    )}
                     <span className="ml-auto text-[10px] text-ink-muted">
                       {note.createdAt
                         ? new Date(note.createdAt).toLocaleString("zh-CN", {
@@ -229,7 +241,7 @@ export function NoteList({ bookId, onClose }: { bookId: string; onClose?: () => 
                   {/* 语音笔记：优先展示转写，否则占位文本 */}
                   {note.noteType === "voice" ? (
                     <p className="mt-1.5 text-[11px] leading-relaxed text-ink-soft line-clamp-3">
-                      {note.transcript || t("notes.voicePlaceholder")}
+                      {note.transcript || note.content || t("notes.voicePlaceholder")}
                     </p>
                   ) : (
                     <p className="mt-1.5 text-[11px] leading-relaxed text-ink-soft line-clamp-3">

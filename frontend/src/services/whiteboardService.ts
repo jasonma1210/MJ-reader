@@ -43,6 +43,30 @@ export interface WhiteboardSummary {
   updatedAt: number;
 }
 
+/** 上板成功后派发的定位事件：白板页监听后选中并闪烁对应卡片 */
+export const BOARD_FOCUS_EVENT = "mjnexus:whiteboard-focus-card";
+
+/** 上板定位事件载荷（同时通过 URL ?focus= 传递，覆盖跨路由场景） */
+export interface BoardFocusDetail {
+  bookId: string;
+  cardId: string;
+  source: string;
+}
+
+/** 一键上板结果：统一书板定位 + 卡片 id（重复上板返回已有卡片，created=false） */
+export interface BookBoardAddResult {
+  boardId: string;
+  /** 统一卡片 id（= 传入 sourceId），供白板页定位闪烁 */
+  cardId: string;
+  source: string;
+  created: boolean;
+}
+
+/** 同一作用域可能残留多块历史画布：固定取最早创建的一块，避免上板/打开定位漂移 */
+export function pickCanonicalBoard<T extends { createdAt: number }>(boards: T[]): T | undefined {
+  return [...boards].sort((a, b) => a.createdAt - b.createdAt)[0];
+}
+
 /** 新建/保存画布入参 */
 export interface NewWhiteboard {
   id?: string;
@@ -205,14 +229,15 @@ export const whiteboardService = {
   },
 
   /** M4：将某本书的一条知识源卡片「一键上板」（≤2 步）。
-   *  查找/创建该书画布 → 去重（该书画布已挂同类同源卡则跳过）→ 挂板到右下空闲位。
-   *  返回是否真正新增（重复上板返回 false，供前端提示）。 */
-  async addToBookBoard(bookId: string, source: string, sourceId: string): Promise<boolean> {
-    if (!isTauri()) return false;
+   *  查找/创建该书画布 → 去重（已挂同类同源卡则直接返回已有卡片）→ 挂板到右下空闲位。
+   *  返回统一卡片 id 与画布 id，供调用方跳转定位；重复上板返回成功（created=false）。 */
+  async addToBookBoard(bookId: string, source: string, sourceId: string): Promise<BookBoardAddResult | null> {
+    if (!isTauri()) return null;
     const boards = await this.listBoards("book", bookId);
+    const canonical = pickCanonicalBoard(boards);
     let bid: string;
-    if (boards.length > 0) {
-      bid = boards[0].id;
+    if (canonical) {
+      bid = canonical.id;
     } else {
       bid = await this.saveBoard({
         title: "",
@@ -221,16 +246,17 @@ export const whiteboardService = {
         canvasState: undefined,
       });
     }
-    // 去重：该书画布已挂过同类同源卡则跳过
+    // 去重：该书画布已挂过同类同源卡则视为「已在板上」。
+    // 旧实现误报「重复上板」；现在返回成功并带上卡片 id，便于直接定位。
     const existing = await this.getCards(bid);
     const dup = existing.some((n) => n.source === source && n.cardId === sourceId);
-    if (dup) return false;
+    if (dup) return { boardId: bid, cardId: sourceId, source, created: false };
     const baseX = existing.reduce((m, n) => Math.max(m, n.x + n.w), 0);
     const baseY = existing.reduce((m, n) => Math.max(m, n.y + n.h), 0);
     const x = baseX > 0 ? baseX + 24 : 24;
     const y = baseY > 0 ? baseY + 24 : 24;
     await this.addCard(bid, { cardId: sourceId, source, x, y, w: 220, h: 160 });
-    return true;
+    return { boardId: bid, cardId: sourceId, source, created: true };
   },
 
   /** 整块画布节点布局批量写回 */

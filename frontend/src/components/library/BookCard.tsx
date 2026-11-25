@@ -111,7 +111,7 @@ export function BookCard({ book }: { book: Book }) {
   return (
     <div
       className={cn(
-        "relative flex flex-col gap-2 rounded-[var(--radius-lg)] border p-2 text-left shadow-sm transition",
+        "cv-list-item relative flex flex-col gap-2 rounded-[var(--radius-lg)] border p-2 text-left shadow-sm transition",
         selected ? "border-accent bg-accent-bg/40" : "border-line bg-paper",
         selectMode ? "cursor-pointer" : "",
       )}

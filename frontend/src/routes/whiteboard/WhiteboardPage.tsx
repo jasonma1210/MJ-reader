@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useJumpToSource } from "../../hooks/useJumpToSource";
+import { useBreakpoint } from "../../hooks/useLayoutMode";
 import { logError } from "../../utils/logError";
 import {
   AlignCenter,
@@ -29,8 +30,10 @@ import {
   ListTree,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
   Move,
   MousePointer2,
+  Presentation,
   Network,
   Pen,
   Pin,
@@ -56,13 +59,23 @@ import {
 import { type WhiteboardActionId } from "../../components/whiteboard/WhiteboardCardNode";
 import { MarkdownToolbar } from "../../components/whiteboard/MarkdownToolbar";
 import {
+  WhiteboardInspector,
+  type InspectorTab,
+} from "../../components/whiteboard/WhiteboardInspector";
+import {
+  WhiteboardTemplates,
+  type BoardTemplateId,
+} from "../../components/whiteboard/WhiteboardTemplates";
+import {
   whiteboardService,
-  type WhiteboardCard,
   type WhiteboardCardNode as NodeData,
   type WhiteboardContainer,
   type WhiteboardLink,
   parseCanvasState,
   serializeCanvasState,
+  pickCanonicalBoard,
+  BOARD_FOCUS_EVENT,
+  type BoardFocusDetail,
 } from "../../services/whiteboardService";
 import { notesService } from "../../services/notesService";
 import { highlightService } from "../../services/highlightService";
@@ -115,6 +128,29 @@ const REVEAL_STEP = 100;
 /** 新手引导本地标记（E：连线/分组使用引导，仅首次展示） */
 const GUIDE_KEY = "mjnexus.whiteboard.guide.v1";
 
+/** P2：手机底部抽屉主工具 id；「更多」不参与排序，始终固定在最后 */
+type CompactToolId = "view" | "select" | "note" | "pen" | "link";
+const DEFAULT_COMPACT_TOOLS: CompactToolId[] = ["view", "select", "note", "pen", "link"];
+const RECENT_TOOLS_KEY = "mjnexus.whiteboard.recentTools.v1";
+
+function loadRecentTools(): CompactToolId[] {
+  try {
+    const raw = localStorage.getItem(RECENT_TOOLS_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter(
+          (x): x is CompactToolId => DEFAULT_COMPACT_TOOLS.includes(x as CompactToolId),
+        );
+        return [...valid, ...DEFAULT_COMPACT_TOOLS.filter((x) => !valid.includes(x))];
+      }
+    }
+  } catch (e) {
+    logError("WhiteboardPage.loadRecentTools", e);
+  }
+  return [...DEFAULT_COMPACT_TOOLS];
+}
+
 /** 连线关系可选项（白板 Stage B 增强）：关系语义复用白板文档 relation_type */
 const LINK_RELATIONS: { id: string; labelKey: string }[] = [
   { id: "prerequisite", labelKey: "whiteboard.relation.prerequisite" },
@@ -147,29 +183,6 @@ interface CanvasViewport {
   x: number;
   y: number;
   scale: number;
-}
-
-/** 把解析出的统一卡片平铺成网格坐标（宽高定高，标题长卡片高度不变）；
- *  R6：offsetX/offsetY 用于把增量新卡铺在既有节点下方/右侧的空闲区域。 */
-function layOut(cards: WhiteboardCard[], cols: number, offsetX = 0, offsetY = 0): NodeData[] {
-  return cards.map((card, idx) => {
-    const col = idx % cols;
-    const row = Math.floor(idx / cols);
-    const splitBook = isSplitBookSource(card.source);
-    return {
-      id: `node-${card.cardId}`,
-      cardId: card.cardId,
-      source: card.source,
-      x: col * (NODE_W + NODE_GAP) + NODE_GAP + offsetX,
-      y: row * (NODE_H + NODE_GAP) + NODE_GAP + offsetY,
-      w: NODE_W,
-      // 拆书产物默认折叠为小卡，其余展开
-      h: splitBook ? COLLAPSED_H : NODE_H,
-      z: idx,
-      collapsed: splitBook,
-      card,
-    };
-  });
 }
 
 /** 组内成员判定：卡片中心点是否落在收纳组矩形内 */
@@ -216,6 +229,15 @@ export function WhiteboardPage() {
   const navigate = useNavigate();
   const { bookId: urlBookId } = useParams<{ bookId?: string }>();
   const jumpToSource = useJumpToSource();
+  const bp = useBreakpoint();
+  /** P0：手机竖屏采用精简工具集；其他端保持既有完整工具。 */
+  const compact = bp.isPhone && !bp.isLandscape;
+
+  /** P0 上板定位：URL ?focus= 跨路由生效，全局事件覆盖同页触发 */
+  const [searchParams] = useSearchParams();
+  const [focusTarget, setFocusTarget] = useState<string | null>(() => searchParams.get("focus"));
+  /** 真正驱动画布居中 + 闪烁的卡片 id（定位完成后清空，闪烁只播一次） */
+  const [focusCardId, setFocusCardId] = useState<string | null>(null);
 
   /** Issue 7：白板全屏态——隐藏应用壳侧边栏，画布铺满整屏；离开页面路由时复位 */
   const fullscreen = useWhiteboardStore((s) => s.fullscreen);
@@ -279,6 +301,23 @@ export function WhiteboardPage() {
   const [imageSaving, setImageSaving] = useState(false);
   // Req4「钉一钉」：多类型插入菜单（便签/富文本/网页/图片/在线视频/本地视频/思维导图）
   const [pinMenuOpen, setPinMenuOpen] = useState(false);
+  /** P0：手机竖屏“更多”抽屉开关 */
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  /** P1：统一卡片检查器 */
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("content");
+  /** P2：非手机端「更多」入口（模板 / 演示 / 反向关联） */
+  const [moreDesktopOpen, setMoreDesktopOpen] = useState(false);
+  /** P2：模板 / 演示模式 */
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [activeTemplate, setActiveTemplate] = useState<BoardTemplateId | null>(null);
+  const [focusMode, setFocusMode] = useState(false);
+  /** P2：右键空白处精简菜单 */
+  const [contextMenu, setContextMenu] = useState<{
+    left: number; top: number; clientX: number; clientY: number;
+  } | null>(null);
+  /** P2：手机底部主工具按最近使用排序 */
+  const [recentTools, setRecentTools] = useState<CompactToolId[]>(loadRecentTools);
   /** Req4：URL/富文本/思维导图录入弹窗（kind 区分提交时的 noteType） */
   const [pinModal, setPinModal] = useState<{
     kind: "web" | "onlineVideo" | "markdown" | "mindmap";
@@ -323,6 +362,53 @@ export function WhiteboardPage() {
     }
   }, []);
 
+  /** P0 上板定位：派发的全局事件供任何入口触发（阅读浮条「查看卡片」也走 URL ?focus=） */
+  useEffect(() => {
+    const onFocus = (e: Event) => {
+      const detail = (e as CustomEvent<BoardFocusDetail>).detail;
+      if (detail?.cardId) setFocusTarget(detail.cardId);
+    };
+    window.addEventListener(BOARD_FOCUS_EVENT, onFocus);
+    return () => window.removeEventListener(BOARD_FOCUS_EVENT, onFocus);
+  }, []);
+
+  /** 目标卡片随节点加载到位后：选中 + 居中 + 闪烁一次，随后收起避免长期高亮 */
+  useEffect(() => {
+    if (!focusTarget) return;
+    const node = nodes.find((n) => n.cardId === focusTarget);
+    if (!node) return;
+    setSelectedIds(new Set([node.id]));
+    setSelectedId(node.id);
+    const start = window.setTimeout(() => setFocusCardId(focusTarget), 60);
+    const clear = window.setTimeout(() => {
+      setFocusCardId(null);
+      setFocusTarget(null);
+    }, 2000);
+    return () => {
+      window.clearTimeout(start);
+      window.clearTimeout(clear);
+    };
+  }, [focusTarget, nodes]);
+
+  /** 手机竖屏「更多」抽屉：点击外部自动关闭 */
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const close = () => setMoreMenuOpen(false);
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [moreMenuOpen]);
+
+  /** 非手机端「更多」与右键菜单：点击外部自动关闭 */
+  useEffect(() => {
+    if (!moreDesktopOpen && !contextMenu) return;
+    const close = () => {
+      setMoreDesktopOpen(false);
+      setContextMenu(null);
+    };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [moreDesktopOpen, contextMenu]);
+
   /** 画布缩放系数，拖拽换算世界坐标用；boardId 供防抖落库闭包读取 */
   const viewportRef = useRef<CanvasViewport>({ x: 0, y: 0, scale: 1 });
   const boardIdRef = useRef<string | null>(null);
@@ -340,8 +426,6 @@ export function WhiteboardPage() {
   const [exporting, setExporting] = useState<"png" | "pdf" | null>(null);
   /** M7：拖拽对齐辅助线（axis='x' => 竖线在 world 坐标，轴='y' => 横线） */
   const [snapGuide, setSnapGuide] = useState<{ axis: "x" | "y"; world: number } | null>(null);
-  /** M7：反向关联面板开关 + 选中的某卡是否被引用（弱版双链） */
-  const [backlinkOpen, setBacklinkOpen] = useState(false);
   /** M7：笔记编辑弹窗里的卡片引用（@提及）选择器 */
   const [mentionPickOpen, setMentionPickOpen] = useState(false);
   /** M8：AI 编排-草稿态（AI 产物一律先草稿，确认后才上板） */
@@ -352,9 +436,6 @@ export function WhiteboardPage() {
   /** 布局 / 画布状态落库定时器 */
   const layoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canvasTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** 网格列数 */
-  const cols = 3;
-
   // ===== Phase1-1/1-2：卡片就地编辑 / 新建便签（共用同一编辑弹窗） =====
   const [editor, setEditor] = useState<{
     mode: "edit" | "create";
@@ -400,9 +481,6 @@ export function WhiteboardPage() {
     return () => window.removeEventListener("pointerdown", close);
   }, [pinMenuOpen]);
 
-  // M7 弱版双链 · 反向关联：选中某张卡片时自动弹出其反向关联面板（仅浏览模式）
-  // （该 effect 置于 backlinks useMemo 之后，避免 TDZ；backlinkOpen 状态声明见组件顶部）
-
   useEffect(() => {
     let alive = true;
     void bookService
@@ -428,9 +506,11 @@ export function WhiteboardPage() {
     try {
       // 1) 查找/创建画布
       const boards = await whiteboardService.listBoards(scopeType, scopeRef);
+      // 与 addToBookBoard 共用「最早创建的同 scope 画布」规则，保证上板/打开定位到同一块板
+      const canonical = pickCanonicalBoard(boards);
       let bid: string;
-      if (boards.length > 0) {
-        bid = boards[0].id;
+      if (canonical) {
+        bid = canonical.id;
       } else {
         bid = await whiteboardService.saveBoard({
           title: target === "all" ? t("whiteboard.allBoardTitle") : "", // 标题后端有兜底
@@ -473,16 +553,11 @@ export function WhiteboardPage() {
         kept.push(n);
       }
 
-      // 增量解析尚未挂板的新源卡
-      const newKeys = items.filter((it) => !seen.has(`${it.source}|${it.sourceId}`));
-      let newNodes: NodeData[] = [];
-      if (newKeys.length > 0) {
-        const newCards = await whiteboardService.resolveCardsBatch(newKeys);
-        const baseY = kept.reduce((m, n) => Math.max(m, n.y + n.h), 0);
-        newNodes = layOut(newCards, cols, 0, baseY > 0 ? baseY + NODE_GAP : 0);
-        newNodes.forEach((n) => seen.add(`${n.source}|${n.cardId}`));
-      }
-      const merged = [...kept, ...newNodes];
+      // 2026-11-25：白板恢复「显式上板才出现」语义。
+      // 旧逻辑会把作用域内所有 notes/highlights/knowledge 源卡自动铺板并 saveLayout 落库，
+      // 导致全新 app 的白板莫名堆满内容，且用户主动点「上板」后看不出任何变化。
+      // 现在只展示真正挂过板的节点（saved），源卡仅用于失效撤板判定。
+      const merged = kept;
 
       // Issue 4：套用卡片类型重分类覆盖（layout.source 保留原始值，仅覆盖白板内展示/过滤分类）
       sourceOverridesRef.current = cs.sourceOverrides ?? {};
@@ -523,7 +598,7 @@ export function WhiteboardPage() {
         logError("WhiteboardPage.splitAutoLink", e);
       }
 
-      // 4) 有失效节点先撤板落库（避免刷新复活）；有新卡则一并落库
+      // 4) 仅失效节点撤板落库（避免刷新复活）；不再自动铺卡落库。
       if (removedNodes.length > 0 && bid) {
         await Promise.all(
           removedNodes.map((n) =>
@@ -532,24 +607,6 @@ export function WhiteboardPage() {
               .catch(() => undefined),
           ),
         );
-      }
-      if (newNodes.length > 0 && bid) {
-        await whiteboardService
-          .saveLayout(
-            bid,
-            [...kept, ...newNodes].map((n) => ({
-              id: n.id,
-              cardId: n.cardId,
-              source: n.source,
-              x: n.x,
-              y: n.y,
-              w: n.w,
-              h: n.h,
-              z: n.z,
-              collapsed: n.collapsed,
-            })),
-          )
-          .catch(() => undefined);
       }
       setNodes(overridden);
       setLinks(cs.links);
@@ -864,14 +921,17 @@ export function WhiteboardPage() {
         if (has) next.delete(nodeId);
         else next.add(nodeId);
         setSelectedIds(next);
-        // 焦点跟进到最后点选的卡，反向关联/提及面板以其为准
+        // 多选时不打开检查器，避免批量操作入口被遮挡
         setSelectedId(nodeId);
+        setInspectorOpen(false);
         return;
       }
       if (!has) {
         setSelectedIds(new Set([nodeId]));
         setSelectedId(nodeId);
       }
+      setInspectorOpen(true);
+      setInspectorTab("content");
     },
     [mode, linkSourceId],
   );
@@ -1466,8 +1526,9 @@ export function WhiteboardPage() {
   /** 画布内新建便签（Phase1-2）：打开新建弹窗，落位到双击/按钮的登录坐标 */
   const openCreateNote = useCallback(
     (x: number, y: number) => {
-      setEditTitle("");
-      setEditBody("");
+      // P2：模板只影响新建卡片的标题前缀与正文骨架，不写入画布、不创建任何卡片。
+      setEditTitle(activeTemplate ? t(`whiteboard.template.${activeTemplate}.title`) : "");
+      setEditBody(activeTemplate ? t(`whiteboard.template.${activeTemplate}.body`) : "");
       setEditor({
         mode: "create",
         bookId: scope === "all" ? "" : scope,
@@ -1475,7 +1536,7 @@ export function WhiteboardPage() {
         y,
       });
     },
-    [scope],
+    [scope, activeTemplate, t],
   );
 
   /** 保存编辑/新建结果，同步源卡并刷新节点 */
@@ -1717,6 +1778,45 @@ export function WhiteboardPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [handleUndo, handleRedo]);
 
+  /** P2：PC 快捷键——Delete 删除选中（保留二次确认）、Escape 退出多选 / 演示 / 检查器 / 右键菜单 */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (contextMenu) {
+          setContextMenu(null);
+          return;
+        }
+        if (focusMode) {
+          setFocusMode(false);
+          return;
+        }
+        if (selectedIds.size > 0) {
+          setSelectedIds(new Set());
+          setSelectedId(null);
+          setInspectorOpen(false);
+          return;
+        }
+        if (inspectorOpen) setInspectorOpen(false);
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.size > 0) {
+        e.preventDefault();
+        setConfirmDeleteIds([...selectedIds]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [contextMenu, focusMode, selectedIds, inspectorOpen]);
+
   /** M7 自动布局-思维导图：沿连线把节点按层（level）与父级分组铺开（无连线的孤立卡留在零层）。
    *  根 = 无入边的节点；子级放右列、纵向在同一父级下方紧凑排列。 */
   const applyMindMap = useCallback(() => {
@@ -1779,32 +1879,24 @@ export function WhiteboardPage() {
   }, [nodes, links, scheduleLayoutSave]);
 
   /** M7 弱版双链 · 反向关联：选中卡被哪些卡「连线指向」以及「@提及」 */
-  const backlinks = useMemo(() => {
-    const sel = nodes.find((n) => n.id === selectedId);
-    if (!sel) return { incoming: [], mentions: [] };
-    const incoming: NodeData[] = [];
-    const mentions: NodeData[] = [];
-    for (const l of links) {
-      if (l.to === selectedId) {
-        const src = nodes.find((n) => n.id === l.from);
-        if (src) incoming.push(src);
-      }
-    }
-    const ref = `(#${sel.cardId})`;
-    for (const n of nodes) {
-      if (n.id === selectedId) continue;
-      if (n.card?.body && n.card.body.indexOf(ref) !== -1) mentions.push(n);
-    }
-    return { incoming, mentions };
-  }, [nodes, links, selectedId]);
+  const selectedNode = useMemo(
+    () => nodes.find((n) => n.id === selectedId) ?? null,
+    [nodes, selectedId],
+  );
 
-  /** M7 弱版双链 · @提及 跳转：由引用卡片 id 定位节点，选中并弹出反向面板 */
+  useEffect(() => {
+    if (mode !== "view") setInspectorOpen(false);
+  }, [mode]);
+
+  /** M7 弱版双链 · @提及 跳转：由引用卡片 id 定位节点，选中并打开检查器「关系」Tab */
   const handleMentionRef = useCallback(
     (cardId: string) => {
       const target = nodes.find((n) => n.cardId === cardId);
       if (target) {
         setSelectedId(target.id);
-        setBacklinkOpen(true);
+        setSelectedIds(new Set([target.id]));
+        setInspectorTab("relation");
+        setInspectorOpen(true);
       } else {
         toast(t("whiteboard.mentionMiss"));
       }
@@ -1812,14 +1904,36 @@ export function WhiteboardPage() {
     [nodes, t],
   );
 
-  // M7 弱版双链 · 反向关联：选中某张卡片时自动弹出其反向关联面板（仅浏览模式）
-  useEffect(() => {
-    if (!selectedId || mode !== "view") {
-      setBacklinkOpen(false);
+  /** P2：PC 右键空白处显示精简菜单；卡片本体交给卡片自身，不弹自定义菜单 */
+  const handleCanvasContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target instanceof Element && e.target.closest("[data-wb-card]")) return;
+      e.preventDefault();
+      const rect = canvasRef.current?.getBoundingClientRect();
+      setContextMenu({
+        left: e.clientX - (rect?.left ?? 0),
+        top: e.clientY - (rect?.top ?? 0),
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+    },
+    [],
+  );
+
+  /** P1：从菜单显式打开反向关联（检查器「关系」Tab），不再常驻右下 */
+  const openBacklinkInspector = useCallback(() => {
+    const id = selectedId ?? nodes[0]?.id ?? null;
+    if (!id) {
+      toast(t("whiteboard.empty"));
       return;
     }
-    setBacklinkOpen(true);
-  }, [selectedId, mode]);
+    setSelectedId(id);
+    setSelectedIds(new Set([id]));
+    setInspectorTab("relation");
+    setInspectorOpen(true);
+    setMoreMenuOpen(false);
+    setMoreDesktopOpen(false);
+  }, [selectedId, nodes, t]);
 
   /** 采纳单条草稿：上板为子卡片并记录，供撤销 */
   const adoptAiDraft = useCallback(
@@ -1909,10 +2023,78 @@ export function WhiteboardPage() {
   /** 是否存在拆书产物卡（knowledge/conceptCard/misquestion），用于一键折叠/展开按钮的可用性反馈 */
   const hasSplitBookNodes = nodes.some((n) => isSplitBookSource(n.source));
 
+  /** P1：手机竖屏单一来源筛选入口的值——手机端不再横铺 5 个 chips */
+  const singleSourceValue: CardSource | "all" =
+    sources.size === FILTERABLE_SOURCES.length
+      ? "all"
+      : ([...sources][0] as CardSource | undefined) ?? "all";
+  const handleSingleSourceChange = useCallback((value: string) => {
+    setSources(
+      value === "all"
+        ? new Set<CardSource>(FILTERABLE_SOURCES)
+        : new Set<CardSource>([value as CardSource]),
+    );
+  }, []);
+
+  /** P2：记录主工具最近使用；手机底部抽屉按最近排序，「更多」始终最后 */
+  const markToolUsed = useCallback((id: CompactToolId) => {
+    setRecentTools((prev) => {
+      const next = [id, ...prev.filter((x) => x !== id)];
+      try {
+        localStorage.setItem(RECENT_TOOLS_KEY, JSON.stringify(next));
+      } catch (e) {
+        logError("WhiteboardPage.saveRecentTools", e);
+      }
+      return next;
+    });
+  }, []);
+  const orderedCompactTools = [...DEFAULT_COMPACT_TOOLS].sort(
+    (a, b) => recentTools.indexOf(a) - recentTools.indexOf(b),
+  );
+  const compactToolDefs: Record<
+    CompactToolId,
+    { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }
+  > = {
+    view: {
+      icon: <Move className="h-5 w-5" />,
+      label: t("whiteboard.modeView"),
+      active: mode === "view" && elementTool === "select",
+      onClick: () => { markToolUsed("view"); handleModeChange("view"); setElementTool("select"); setMoreMenuOpen(false); },
+    },
+    select: {
+      icon: <MousePointer2 className="h-5 w-5" />,
+      label: t("whiteboard.element.select"),
+      active: mode === "view" && elementTool === "select",
+      onClick: () => { markToolUsed("select"); handleModeChange("view"); setElementTool("select"); setMoreMenuOpen(false); },
+    },
+    note: {
+      icon: <StickyNote className="h-5 w-5" />,
+      label: t("whiteboard.pin.note"),
+      active: false,
+      onClick: () => {
+        markToolUsed("note");
+        setMoreMenuOpen(false);
+        openCreateNote(-viewportRef.current.x / viewportRef.current.scale + NODE_GAP, -viewportRef.current.y / viewportRef.current.scale + NODE_GAP);
+      },
+    },
+    pen: {
+      icon: <Pen className="h-5 w-5" />,
+      label: t("whiteboard.element.pen"),
+      active: mode === "view" && elementTool === "pen",
+      onClick: () => { markToolUsed("pen"); handleModeChange("view"); setElementTool("pen"); setMoreMenuOpen(false); },
+    },
+    link: {
+      icon: <Link2 className="h-5 w-5" />,
+      label: t("whiteboard.modeLink"),
+      active: mode === "link",
+      onClick: () => { markToolUsed("link"); handleModeChange("link"); setElementTool("select"); setMoreMenuOpen(false); },
+    },
+  };
+
   return (
     <div className="flex h-full flex-col bg-paper">
-      {/* 顶栏：返回 + 标题 + 作用域 + 模式 + 刷新 */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
+      {/* 顶栏：返回 + 标题 + 作用域 + 模式 + 刷新（演示模式隐藏） */}
+      <div className={cn("flex flex-wrap items-center gap-2 border-b border-line px-4 py-3", focusMode && "hidden")}>
         <button
           onClick={() => navigate(-1)}
           className="rounded-lg p-1 text-ink-muted transition active:bg-paper-soft"
@@ -1934,22 +2116,38 @@ export function WhiteboardPage() {
             </option>
           ))}
         </select>
-        <button
-          onClick={() => void loadBoard(scope)}
-          className="rounded-lg p-1 text-ink-muted transition active:bg-paper-soft"
-          aria-label={t("whiteboard.refresh")}
-          disabled={loading}
-        >
-          <RefreshCcw className={cn("h-5 w-5", loading && "animate-spin")} />
-        </button>
+        {/* P1：手机竖屏单一来源筛选入口（其他端保留 chips） */}
+        {compact && nodes.length > 0 && (
+          <select
+            value={singleSourceValue}
+            onChange={(e) => handleSingleSourceChange(e.target.value)}
+            aria-label={t("whiteboard.sourceFilter")}
+            className="max-w-[34%] rounded-[var(--radius-md)] border border-line bg-paper-soft px-2 py-1 text-xs text-ink outline-none focus:border-accent"
+          >
+            <option value="all">{t("whiteboard.sourceFilterAll")}</option>
+            {FILTERABLE_SOURCES.map((s) => (
+              <option key={s} value={s}>{t(`whiteboard.source.${s}`)}</option>
+            ))}
+          </select>
+        )}
+        {!compact && (
+          <button
+            onClick={() => void loadBoard(scope)}
+            className="rounded-lg p-1 text-ink-muted transition active:bg-paper-soft"
+            aria-label={t("whiteboard.refresh")}
+            disabled={loading}
+          >
+            <RefreshCcw className={cn("h-5 w-5", loading && "animate-spin")} />
+          </button>
+        )}
         {/* Stage B：模式切换 */}
-        <div className="ml-auto flex items-center gap-1 rounded-[var(--radius-md)] border border-line bg-paper-soft p-0.5">
+        <div className={cn("items-center gap-1 rounded-[var(--radius-md)] border border-line bg-paper-soft p-0.5", compact ? "hidden" : "ml-auto flex")}>
           <ModeButton active={mode === "view"} icon={<Move className="h-4 w-4" />} label={t("whiteboard.modeView")} onClick={() => handleModeChange("view")} />
           <ModeButton active={mode === "link"} icon={<Link2 className="h-4 w-4" />} label={t("whiteboard.modeLink")} onClick={() => handleModeChange("link")} />
           <ModeButton active={mode === "container"} icon={<Shapes className="h-4 w-4" />} label={t("whiteboard.modeGroup")} onClick={() => handleModeChange("container")} />
         </div>
         {/* M3：图元工具条（view 模式）：选择/手绘/矩形/椭圆/文本 + 撤销/重做 */}
-        <div className="flex items-center gap-0.5 rounded-[var(--radius-md)] border border-line bg-paper-soft p-0.5">
+        <div className={cn("items-center gap-0.5 rounded-[var(--radius-md)] border border-line bg-paper-soft p-0.5", compact ? "hidden" : "flex")}>
           <ElementToolBtn
             active={elementTool === "select"}
             icon={<MousePointer2 className="h-4 w-4" />}
@@ -2003,7 +2201,7 @@ export function WhiteboardPage() {
           />
         </div>
         {/* Req4「钉一钉」：多类型插入菜单（便签/富文本/网页/图片/在线视频/本地视频/思维导图） */}
-        {boardId && (
+        {boardId && !compact && (
           <div className="relative" onPointerDown={(e) => e.stopPropagation()}>
             <button
               onClick={() => setPinMenuOpen((v) => !v)}
@@ -2070,7 +2268,7 @@ export function WhiteboardPage() {
             （「新建便签」独立按钮已移除：与「钉一钉」菜单的便签插入冲突，
             新建便签统一收敛到「钉一钉」下拉与画布双击，保持单入口一致） */}
         {/* Phase1-3：自动布局菜单 */}
-        <div className="relative">
+        <div className={cn("relative", compact && "hidden")}>
           <button
             onClick={() => setLayoutMenuOpen((v) => !v)}
             className="flex items-center gap-1 rounded-[var(--radius-md)] border border-line bg-paper-soft px-2 py-1 text-xs text-ink transition active:bg-line"
@@ -2119,6 +2317,7 @@ export function WhiteboardPage() {
           onClick={() => setAiPanelOpen((v) => !v)}
           className={cn(
             "relative flex shrink-0 items-center gap-1 rounded-[var(--radius-md)] border px-2 py-1 text-xs transition",
+            compact && "hidden",
             aiDrafts.length > 0 || aiPanelOpen
               ? "border-accent bg-accent/10 text-accent"
               : "border-line bg-paper-soft text-ink",
@@ -2134,7 +2333,7 @@ export function WhiteboardPage() {
           )}
         </button>
         {/* M6/修复：画布导出（PNG / PDF）——有状态开合，点击外部自动关闭 */}
-        <div className="relative" onPointerDown={(e) => e.stopPropagation()}>
+        <div className={cn("relative", compact && "hidden")} onPointerDown={(e) => e.stopPropagation()}>
           <button
             onClick={() => setExportOpen((v) => !v)}
             className="flex items-center gap-1 rounded-[var(--radius-md)] border border-line bg-paper-soft px-2 py-1 text-xs text-ink transition active:bg-line"
@@ -2172,11 +2371,54 @@ export function WhiteboardPage() {
             </div>
           )}
         </div>
+        {/* P1/P2：非手机端「更多」入口——模板 / 演示模式 / 反向关联 */}
+        <div className={cn("relative", compact && "hidden")} onPointerDown={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => setMoreDesktopOpen((v) => !v)}
+            className="flex items-center gap-1 rounded-[var(--radius-md)] border border-line bg-paper-soft px-2 py-1 text-xs text-ink transition active:bg-line"
+            aria-label={t("whiteboard.moreTitle")}
+            aria-expanded={moreDesktopOpen}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+            {t("common.more")}
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+          {moreDesktopOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-9 z-50 w-44 rounded-[var(--radius-md)] border border-line bg-paper py-1 shadow-lg"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => { setTemplateOpen(true); setMoreDesktopOpen(false); }}
+                className="block w-full px-3 py-2 text-left text-xs text-ink transition hover:bg-paper-soft"
+              >
+                {t("whiteboard.template.open")}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setFocusMode(true); setInspectorOpen(false); setMoreDesktopOpen(false); toast(t("whiteboard.present.hint")); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink transition hover:bg-paper-soft"
+              >
+                <Presentation className="h-3.5 w-3.5" />
+                {t("whiteboard.present.enter")}
+              </button>
+              <button
+                type="button"
+                onClick={openBacklinkInspector}
+                className="block w-full px-3 py-2 text-left text-xs text-ink transition hover:bg-paper-soft"
+              >
+                {t("whiteboard.backlink")}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* 搜索 + 来源过滤栏（D/G） */}
+      {/* 搜索 + 来源过滤栏（D/G），演示模式隐藏 */}
       {nodes.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+        <div className={cn("flex flex-wrap items-center gap-2 border-b border-line px-4 py-2", focusMode && "hidden")}>
           <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[var(--radius-md)] border border-line bg-paper-soft px-2 py-1">
             <Search className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
             <input
@@ -2191,7 +2433,7 @@ export function WhiteboardPage() {
               </button>
             )}
           </div>
-          {FILTERABLE_SOURCES.map((s) => {
+          {!compact && FILTERABLE_SOURCES.map((s) => {
             const active = sources.has(s);
             return (
               <button
@@ -2267,8 +2509,63 @@ export function WhiteboardPage() {
           const w = toWorld(e.clientX, e.clientY);
           openCreateNote(w.x, w.y);
         }}
+        onContextMenu={handleCanvasContextMenu}
         onPointerUp={() => setSnapGuide(null)}
       >
+        {/* P2：演示 / 专注模式——隐藏工具栏与检查器，只保留画布与卡片，并提供明确退出入口 */}
+        {focusMode && (
+          <button
+            type="button"
+            onClick={() => setFocusMode(false)}
+            aria-label={t("whiteboard.present.exit")}
+            className="absolute right-4 top-4 z-[80] flex items-center gap-1.5 rounded-[var(--radius-md)] border border-line bg-paper px-3 py-2 text-xs font-medium text-ink shadow-md transition active:bg-paper-soft"
+          >
+            <Minimize2 className="h-4 w-4" />
+            {t("whiteboard.present.exit")}
+          </button>
+        )}
+        {/* P2：PC 右键空白处的精简菜单（添加便签 / 自动整理 / 退出演示） */}
+        {contextMenu && (
+          <div
+            role="menu"
+            className="wb-context-menu absolute z-[85] w-44 rounded-[var(--radius-md)] border border-line bg-paper py-1 shadow-xl"
+            style={{ left: contextMenu.left, top: contextMenu.top }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const w = toWorld(contextMenu.clientX, contextMenu.clientY);
+                openCreateNote(w.x, w.y);
+                setContextMenu(null);
+              }}
+              className="block w-full px-3 py-2 text-left text-xs text-ink transition hover:bg-paper-soft"
+            >
+              {t("whiteboard.context.addNote")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { applyGrid(); setContextMenu(null); }}
+              className="block w-full px-3 py-2 text-left text-xs text-ink transition hover:bg-paper-soft"
+            >
+              {t("whiteboard.context.autoArrange")}
+            </button>
+            {focusMode && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { setFocusMode(false); setContextMenu(null); }}
+                className="block w-full px-3 py-2 text-left text-xs text-ink transition hover:bg-paper-soft"
+              >
+                {t("whiteboard.context.exitPresent")}
+              </button>
+            )}
+          </div>
+        )}
         {loading && nodes.length === 0 ? (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-ink-muted">
             {t("common.loading")}
@@ -2300,6 +2597,7 @@ export function WhiteboardPage() {
               onResize={handleResize}
               onToggleCollapse={handleToggleCollapse}
               onSourceChange={handleChangeSource}
+              advancedInInspector
               onGestureStart={handleGestureStart}
               onViewportChange={(v) => {
                 viewportRef.current = { x: v.x, y: v.y, scale: v.zoom };
@@ -2308,6 +2606,9 @@ export function WhiteboardPage() {
               onMentionRef={handleMentionRef}
               onRemoveLink={handleRemoveLink}
               onSelectContainer={handleRemoveContainer}
+              showControls={!compact}
+              showMiniMap={!compact}
+              focusCardId={focusCardId}
             />
 
             {/* M3：图元绘制层（手绘/形状/文本），置于卡片之上。仅在 view 模式下的绘图工具启用 */}
@@ -2397,7 +2698,7 @@ export function WhiteboardPage() {
             )}
 
             {/* G-01：多选批量操作浮动条（已选 N 张 + 对齐 + 删除 + 取消） */}
-            {selectedIds.size > 0 && mode === "view" && (
+            {selectedIds.size > 0 && mode === "view" && !focusMode && (
               <div
                 className="absolute left-1/2 top-3 z-[70] flex -translate-x-1/2 items-center gap-1 rounded-[var(--radius-md)] border border-line bg-paper px-2 py-1 shadow-lg"
                 onPointerDown={(e) => e.stopPropagation()}
@@ -2405,25 +2706,29 @@ export function WhiteboardPage() {
                 <span className="whitespace-nowrap px-1 text-xs font-medium text-ink-muted">
                   {t("whiteboard.batch.selected", { count: selectedIds.size })}
                 </span>
-                <button title={t("whiteboard.align.left")} aria-label={t("whiteboard.align.left")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("left")}>
-                  <AlignLeft className="h-3.5 w-3.5" />
-                </button>
-                <button title={t("whiteboard.align.hcenter")} aria-label={t("whiteboard.align.hcenter")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("hcenter")}>
-                  <AlignCenter className="h-3.5 w-3.5" />
-                </button>
-                <button title={t("whiteboard.align.right")} aria-label={t("whiteboard.align.right")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("right")}>
-                  <AlignRight className="h-3.5 w-3.5" />
-                </button>
-                <button title={t("whiteboard.align.top")} aria-label={t("whiteboard.align.top")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("top")}>
-                  <AlignStartVertical className="h-3.5 w-3.5" />
-                </button>
-                <button title={t("whiteboard.align.vcenter")} aria-label={t("whiteboard.align.vcenter")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("vcenter")}>
-                  <AlignCenterVertical className="h-3.5 w-3.5" />
-                </button>
-                <button title={t("whiteboard.align.bottom")} aria-label={t("whiteboard.align.bottom")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("bottom")}>
-                  <AlignEndVertical className="h-3.5 w-3.5" />
-                </button>
-                <div className="mx-0.5 h-4 w-px bg-line" />
+                {!compact && (
+                  <>
+                    <button title={t("whiteboard.align.left")} aria-label={t("whiteboard.align.left")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("left")}>
+                      <AlignLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <button title={t("whiteboard.align.hcenter")} aria-label={t("whiteboard.align.hcenter")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("hcenter")}>
+                      <AlignCenter className="h-3.5 w-3.5" />
+                    </button>
+                    <button title={t("whiteboard.align.right")} aria-label={t("whiteboard.align.right")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("right")}>
+                      <AlignRight className="h-3.5 w-3.5" />
+                    </button>
+                    <button title={t("whiteboard.align.top")} aria-label={t("whiteboard.align.top")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("top")}>
+                      <AlignStartVertical className="h-3.5 w-3.5" />
+                    </button>
+                    <button title={t("whiteboard.align.vcenter")} aria-label={t("whiteboard.align.vcenter")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("vcenter")}>
+                      <AlignCenterVertical className="h-3.5 w-3.5" />
+                    </button>
+                    <button title={t("whiteboard.align.bottom")} aria-label={t("whiteboard.align.bottom")} className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft hover:text-ink" onClick={() => applyAlignSelected("bottom")}>
+                      <AlignEndVertical className="h-3.5 w-3.5" />
+                    </button>
+                    <div className="mx-0.5 h-4 w-px bg-line" />
+                  </>
+                )}
                 <button
                   className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-danger/10"
                   onClick={() => setConfirmDeleteIds([...selectedIds])}
@@ -2488,19 +2793,90 @@ export function WhiteboardPage() {
           </>
         )}
         {/* Issue 7：白板左下角全屏切换——隐藏应用壳侧边栏、画布铺满整屏，再次点击恢复侧边栏 */}
-        <button
-          onClick={toggleFullscreen}
-          className="absolute bottom-4 left-4 z-[60] rounded-[var(--radius-md)] border border-line bg-paper p-2 text-ink-muted shadow-md transition hover:text-ink active:bg-paper-soft"
-          title={fullscreen ? t("whiteboard.exitFullscreen") : t("whiteboard.enterFullscreen")}
-          aria-label={fullscreen ? t("whiteboard.exitFullscreen") : t("whiteboard.enterFullscreen")}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {fullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
-        </button>
+        {!compact && !focusMode && (
+          <button
+            onClick={toggleFullscreen}
+            className="absolute bottom-4 left-4 z-[60] rounded-[var(--radius-md)] border border-line bg-paper p-2 text-ink-muted shadow-md transition hover:text-ink active:bg-paper-soft"
+            title={fullscreen ? t("whiteboard.exitFullscreen") : t("whiteboard.enterFullscreen")}
+            aria-label={fullscreen ? t("whiteboard.exitFullscreen") : t("whiteboard.enterFullscreen")}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {fullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+          </button>
+        )}
       </div>
 
-      {/* 底部提示 */}
-      <div className="border-t border-line px-4 py-2 text-xs text-ink-muted">
+      {compact && !focusMode && (
+        <div className="wb-phone-drawer shrink-0 border-t border-line bg-paper px-2 pt-2 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
+          {/* P0：手机竖屏主工具固定 6 个；P2：前 5 个按最近使用排序，「更多」始终最后 */}
+          <div
+            role="toolbar"
+            aria-label={t("whiteboard.phoneToolsAria")}
+            className="flex items-center justify-around gap-1"
+          >
+            {orderedCompactTools.map((id) => {
+              const def = compactToolDefs[id];
+              return (
+                <CompactToolBtn
+                  key={id}
+                  active={def.active}
+                  icon={def.icon}
+                  label={def.label}
+                  onClick={def.onClick}
+                />
+              );
+            })}
+            <div className="relative" onPointerDown={(e) => e.stopPropagation()}>
+              <CompactToolBtn
+                active={moreMenuOpen}
+                icon={<MoreHorizontal className="h-5 w-5" />}
+                label={t("whiteboard.phoneMoreAria")}
+                onClick={() => setMoreMenuOpen((v) => !v)}
+              />
+              {moreMenuOpen && (
+                <div
+                  role="menu"
+                  aria-label={t("whiteboard.moreTitle")}
+                  className="wb-phone-more absolute bottom-14 right-0 z-[75] w-48 overflow-y-auto rounded-[var(--radius-md)] border border-line bg-paper p-1 shadow-xl"
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  {/* 历史 / 编辑能力：从一级降级到更多，PC / 平板横屏不受影响 */}
+                  <CompactMoreItem label={t("whiteboard.element.undo")} onClick={() => { handleUnifiedUndo(); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.element.redo")} onClick={() => { handleUnifiedRedo(); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.refresh")} onClick={() => { void loadBoard(scope); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.modeGroup")} onClick={() => { setMode("container"); setElementTool("select"); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.element.rect")} onClick={() => { handleModeChange("view"); setElementTool("rect"); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.element.ellipse")} onClick={() => { handleModeChange("view"); setElementTool("ellipse"); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.element.text")} onClick={() => { handleModeChange("view"); setElementTool("text"); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.pin.markdown")} onClick={() => { setPinModal({ kind: "markdown", title: "", body: "" }); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.pin.web")} onClick={() => { setPinModal({ kind: "web", title: "", body: "" }); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.pin.image")} onClick={() => { setPinMediaKind("image"); setPinMediaTitle(""); setPinMediaOpen(true); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.pin.onlineVideo")} onClick={() => { setPinModal({ kind: "onlineVideo", title: "", body: "" }); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.pin.video")} onClick={() => { setPinMediaKind("video"); setPinMediaTitle(""); setPinMediaOpen(true); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.pin.mindmap")} onClick={() => { setPinModal({ kind: "mindmap", title: "", body: "" }); setMoreMenuOpen(false); }} />
+                  {/* 布局 / 整理：原一级布局下拉收进更多 */}
+                  <div className="my-1 border-t border-line" />
+                  <CompactMoreItem label={t("whiteboard.autoArrange")} onClick={() => { applyGrid(); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.align.mindmap")} onClick={() => { applyMindMap(); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.collapseSplitBooks")} onClick={() => { handleCollapseSplitBooks(true); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.expandSplitBooks")} onClick={() => { handleCollapseSplitBooks(false); setMoreMenuOpen(false); }} />
+                  {/* P1/P2：来源过滤已改为顶栏单一筛选入口；模板 / 演示 / 反向关联仍从更多进入 */}
+                  <div className="my-1 border-t border-line" />
+                  <CompactMoreItem label={t("whiteboard.template.open")} onClick={() => { setTemplateOpen(true); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.present.enter")} onClick={() => { setFocusMode(true); setInspectorOpen(false); setMoreMenuOpen(false); toast(t("whiteboard.present.hint")); }} />
+                  <CompactMoreItem label={t("whiteboard.backlink")} onClick={openBacklinkInspector} />
+                  <CompactMoreItem label={t("whiteboard.aiDraft")} onClick={() => { setAiPanelOpen(true); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.exportPng")} onClick={() => { void handleExport("png"); setMoreMenuOpen(false); }} />
+                  <CompactMoreItem label={t("whiteboard.exportPdf")} onClick={() => { void handleExport("pdf"); setMoreMenuOpen(false); }} />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 底部提示（演示模式隐藏） */}
+      <div className={cn("border-t border-line px-4 py-2 text-xs text-ink-muted", focusMode && "hidden")}>
         {mode === "link" && t("whiteboard.hintLink")}
         {mode === "container" && t("whiteboard.hintContainer")}
         {mode === "view" && t("whiteboard.hint")}
@@ -2942,59 +3318,51 @@ export function WhiteboardPage() {
         </div>
       )}
 
-      {/* M7 弱版双链 · 反向关联面板（浏览模式下选中卡片自动弹出） */}
-      {mode === "view" && backlinkOpen && selectedId && (
-        <div className="pointer-events-auto absolute bottom-16 right-4 z-[70] w-72 overflow-hidden rounded-[var(--radius-md)] border border-line bg-paper shadow-xl">
-          <div className="flex items-center justify-between border-b border-line px-3 py-2">
-            <p className="text-sm font-medium text-ink">{t("whiteboard.backlink")}</p>
-            <button
-              onClick={() => setBacklinkOpen(false)}
-              className="rounded p-0.5 text-ink-muted transition hover:bg-paper-soft"
-              aria-label={t("whiteboard.backlinkClose")}
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="max-h-56 overflow-auto py-1">
-            {backlinks.incoming.length === 0 && backlinks.mentions.length === 0 ? (
-              <p className="px-3 py-2 text-xs text-ink-muted">{t("whiteboard.backlinkEmpty")}</p>
-            ) : (
-              <>
-                {backlinks.incoming.length > 0 && (
-                  <p className="px-3 pb-1 pt-1 text-[10px] uppercase tracking-wide text-ink-muted">
-                    {t("whiteboard.backlinkIncoming")}
-                  </p>
-                )}
-                {backlinks.incoming.map((src) => (
-                  <button
-                    key={src.id}
-                    onClick={() => setSelectedId(src.id)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-ink transition hover:bg-paper-soft"
-                  >
-                    <Link2 className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
-                    <span className="truncate">{src.card?.title || src.card?.body || src.cardId}</span>
-                  </button>
-                ))}
-                {backlinks.mentions.length > 0 && (
-                  <p className="px-3 pb-1 pt-1 text-[10px] uppercase tracking-wide text-ink-muted">
-                    {t("whiteboard.backlinkMentions")}
-                  </p>
-                )}
-                {backlinks.mentions.map((n) => (
-                  <button
-                    key={n.id}
-                    onClick={() => setSelectedId(n.id)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-ink transition hover:bg-paper-soft"
-                  >
-                    <AtSign className="h-3.5 w-3.5 shrink-0 text-accent" />
-                    <span className="truncate">{n.card?.title || n.card?.body || n.cardId}</span>
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-        </div>
+      {/* P1：统一卡片检查器。手机竖屏底部抽屉，平板横屏 / PC 右侧面板。 */}
+      {inspectorOpen && selectedNode && mode === "view" && !focusMode && (
+        <WhiteboardInspector
+          node={selectedNode}
+          variant={compact ? "bottom" : "right"}
+          tab={inspectorTab}
+          onTabChange={setInspectorTab}
+          onClose={() => setInspectorOpen(false)}
+          onChangeSource={handleChangeSource}
+          onEdit={(node) => {
+            setInspectorOpen(false);
+            handleOpenEditor(node);
+          }}
+          onLinkRequest={(node, dir) => {
+            setInspectorOpen(false);
+            setLinkPicker({ cardId: node.id, dir });
+          }}
+          onAction={(node, actionId) => void handleAction(node, actionId)}
+          actionBusy={actionBusyId === selectedNode.id}
+          nodes={nodes}
+          links={links}
+          onSelectRelated={(nodeId) => {
+            setSelectedId(nodeId);
+            setInspectorTab("content");
+          }}
+          onMentionRef={handleMentionRef}
+        />
       )}
+
+      {/* P2：模板选择面板；仅设置新建卡片的标题/正文结构，不自动铺卡。 */}
+      <WhiteboardTemplates
+        open={templateOpen}
+        onClose={() => setTemplateOpen(false)}
+        active={activeTemplate}
+        onPick={(id) => {
+          setActiveTemplate(id);
+          toast(
+            id
+              ? t("whiteboard.template.applied", {
+                  name: t(`whiteboard.template.${id}.name`),
+                })
+              : t("whiteboard.template.none"),
+          );
+        }}
+      />
 
       {/* M8：AI 编排写板面板（草稿态列表 + 采纳/拒绝 + 撤销联动） */}
       {aiPanelOpen && (
@@ -3126,6 +3494,45 @@ export function WhiteboardPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/** P0：手机竖屏底部抽屉工具按钮，保证 44px 以上触控命中区 */
+function CompactToolBtn({
+  active,
+  icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "flex h-11 min-w-11 flex-col items-center justify-center gap-0.5 rounded-[var(--radius-md)] px-1.5 text-[10px] transition",
+        active ? "bg-accent text-accent-fg" : "text-ink-muted active:bg-paper-soft",
+      )}
+    >
+      {icon}
+      <span className="max-w-12 truncate">{label}</span>
+    </button>
+  );
+}
+
+function CompactMoreItem({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="block w-full rounded-[var(--radius-md)] px-3 py-2 text-left text-xs text-ink transition active:bg-paper-soft"
+    >
+      {label}
+    </button>
   );
 }
 

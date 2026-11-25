@@ -337,7 +337,7 @@ function renderWithMentions(
   return parts;
 }
 
-const ACTION_ICONS: Record<WhiteboardActionId, React.ReactNode> = {
+export const ACTION_ICONS: Record<WhiteboardActionId, React.ReactNode> = {
   summary: <AlignLeft className="h-4 w-4" />,
   translate: <Languages className="h-4 w-4" />,
   explain: <FileText className="h-4 w-4" />,
@@ -385,6 +385,8 @@ interface WhiteboardCardNodeProps {
   onToggleCollapse?: (node: NodeData) => void;
   /** Issue 4：点击左上角类型标签切换卡片来源分类 */
   onChangeSource?: (nodeId: string, source: string) => void;
+  /** P1：高级动作已收进统一检查器，节点只保留编辑/折叠/删除等高频动作 */
+  advancedInInspector?: boolean;
 }
 
 export function WhiteboardCardNode({
@@ -408,6 +410,7 @@ export function WhiteboardCardNode({
   onMentionRef,
   onToggleCollapse,
   onChangeSource,
+  advancedInInspector = false,
 }: WhiteboardCardNodeProps) {
   const { t } = useTranslation();
   const drag = useRef<{ startX: number; startY: number; moved: boolean } | null>(null);
@@ -572,7 +575,7 @@ export function WhiteboardCardNode({
     >
       <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
         {/* Issue 4：卡片类型标签——点击可切换来源分类（左上角），钉一钉新建默认「笔记」 */}
-        {onChangeSource ? (
+        {onChangeSource && !advancedInInspector ? (
           <div className="relative" onPointerDown={(e) => e.stopPropagation()}>
             <button
               onClick={(e) => {
@@ -615,7 +618,7 @@ export function WhiteboardCardNode({
           </span>
         )}
         {/* v1.1：上一程(父)/下一程(子) 依赖连线入口（与 FlexNote 便签依赖对齐） */}
-        {onLinkRequest && (
+        {onLinkRequest && !advancedInInspector && (
           <span className="ml-0.5 flex items-center overflow-hidden rounded bg-paper-soft" title={t("whiteboard.linkDep")}>
             <button
               onClick={(e) => {
@@ -673,7 +676,7 @@ export function WhiteboardCardNode({
           </button>
         )}
         {/* Stage B：AI Action 菜单触发按钮 */}
-        {onAction && (
+        {onAction && !advancedInInspector && (
           <button
             onClick={toggleMenu}
             className="ml-auto rounded p-0.5 text-ink-muted transition hover:bg-paper-soft active:bg-paper-soft"
@@ -799,7 +802,7 @@ export function WhiteboardCardNode({
       </div>
 
       {/* Stage B：AI Action 下拉菜单 */}
-      {menuOpen && onAction && (
+      {menuOpen && onAction && !advancedInInspector && (
         <div
           className="absolute right-1 top-8 z-50 min-w-32 overflow-hidden rounded-[var(--radius-md)] border border-line bg-paper shadow-lg"
           onPointerDown={(e) => e.stopPropagation()}

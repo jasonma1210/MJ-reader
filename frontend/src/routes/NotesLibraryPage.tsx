@@ -2,6 +2,14 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Search, Download, Check } from "lucide-react";
 import { notesService } from "../services/notesService";
+import { bookService } from "../services/bookService";
+import {
+  aggregateHighlights,
+  buildHighlightsMarkdown,
+  type HighlightMarkdownLabels,
+} from "../export/highlightsAggregator";
+import { toast } from "../utils/toast";
+import { logError } from "../utils/logError";
 import { aiRelatedKnowledge, type RelatedKnowledgeView } from "../services/coachService";
 import { useAiStore } from "../stores/aiStore";
 import { NoteCard } from "../components/notes/NoteCard";
@@ -32,6 +40,8 @@ export function NotesLibraryPage() {
   const [query, setQuery] = useState("");
   const [exported, setExported] = useState(false);
   const [chapterFilter, setChapterFilter] = useState<string>("all");
+  const [exportingHighlights, setExportingHighlights] = useState(false);
+  const [highlightsExported, setHighlightsExported] = useState(false);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: notes.length };
@@ -90,12 +100,49 @@ export function NotesLibraryPage() {
     setTimeout(() => setExported(false), 2500);
   };
 
+  // P1-8：导出全库高亮（逐本聚合，失败隔离；零 CMD/lib.rs 改动）
+  const exportHighlights = async () => {
+    if (exportingHighlights) return;
+    setExportingHighlights(true);
+    try {
+      const books = await bookService.getBooks();
+      const groups = await aggregateHighlights(
+        books.map((b) => ({ id: b.id, title: b.title })),
+      );
+      const labels: HighlightMarkdownLabels = {
+        documentTitle: t("highlights.title"),
+        color: t("tags.color"),
+        note: t("notes.myUnderstanding"),
+      };
+      const md = buildHighlightsMarkdown(groups, labels);
+      if (!md) {
+        toast(t("highlights.empty"));
+        return;
+      }
+      // 与笔记导出同构的 Blob + a.download 链路，文件名以 highlights- 区分。
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `highlights-${Date.now()}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setHighlightsExported(true);
+      setTimeout(() => setHighlightsExported(false), 2500);
+    } catch (e) {
+      logError("NotesLibraryPage.exportHighlights", e);
+      toast(t("common.error"));
+    } finally {
+      setExportingHighlights(false);
+    }
+  };
+
   const openNote = notes.find((n) => n.id === openId) ?? null;
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-auto bg-paper px-4 pb-4 pt-3">
       {/* 标题已由 Shell 的 SubBackHeader 统一渲染（notes.title），此处不再重复；仅保留导出操作 */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-2">
         <button
           onClick={exportNotes}
           disabled={filtered.length === 0}
@@ -108,6 +155,22 @@ export function NotesLibraryPage() {
           ) : (
             <>
               <Download className="h-3.5 w-3.5" /> {t("notes.exportMarkdown")}
+            </>
+          )}
+        </button>
+        {/* P1-8：全库高亮导出（与笔记导出并列，文件名 highlights-<timestamp>.md） */}
+        <button
+          onClick={() => void exportHighlights()}
+          disabled={exportingHighlights}
+          className="flex items-center gap-1 rounded-full bg-paper-soft px-3 py-1.5 text-xs font-medium text-ink-soft transition hover:bg-line-soft disabled:opacity-40"
+        >
+          {highlightsExported ? (
+            <>
+              <Check className="h-3.5 w-3.5 text-success-strong" /> {t("notes.exported")}
+            </>
+          ) : (
+            <>
+              <Download className="h-3.5 w-3.5" /> {t("highlights.exportMarkdown")}
             </>
           )}
         </button>
@@ -176,7 +239,7 @@ export function NotesLibraryPage() {
                   <button
                     key={n.id}
                     onClick={() => setOpenId(n.id)}
-                    className="block w-full text-left"
+                    className="cv-list-item block w-full text-left"
                   >
                     <NoteCard note={n} />
                   </button>

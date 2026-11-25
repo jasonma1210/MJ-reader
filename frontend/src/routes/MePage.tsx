@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import {
   ChevronRight,
+  Check,
   Cpu,
   Shield,
   Mic,
@@ -18,6 +19,8 @@ import {
 import { useMeStore } from "../stores/meStore";
 import { Profile } from "../components/me/Profile";
 import { isIOS } from "../utils/platform";
+import i18n, { setLanguage } from "../i18n";
+import { toast } from "../utils/toast";
 
 /** 设置行：点击跳转子页面 */
 function SettingRow({
@@ -83,17 +86,35 @@ function RowDivider() {
 
 /**
  * 我的页（U3 两级归类收敛）：
- * AI 能力 / 隐私与关于 —— 2 张分组卡片。
+ * 使用引导 / AI 能力 / 语言 / 隐私与关于 —— 4 张分组卡片。
  * 云端同步（云同步）与阅读偏好栏位已按要求移除：主题入口迁至书架右上角，
  * 阅读效果（滚动/分页）与排版调整收敛进阅读器 T 图标浮层。
  */
 export function MePage() {
   const { t } = useTranslation();
   const load = useMeStore((s) => s.load);
+  const [langOpen, setLangOpen] = useState(false);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 当前语言：SUPPORTED = ["zh-CN", "en"]（i18n/index.ts:6）
+  const currentLang: "zh-CN" | "en" = i18n.language.startsWith("zh") ? "zh-CN" : "en";
+  const currentLangLabel =
+    currentLang === "zh-CN" ? t("me.languageOpts.zh") : t("me.languageOpts.en");
+
+  // 切换即时生效：setLanguage 负责持久化 + changeLanguage；toast 在新语言下取文案。
+  const onSelectLanguage = (lang: "zh-CN" | "en") => {
+    setLanguage(lang);
+    setLangOpen(false);
+    void i18n.changeLanguage(lang).then(() => {
+      const name = i18n.t(
+        lang === "zh-CN" ? "me.languageOpts.zh" : "me.languageOpts.en",
+      );
+      toast(i18n.t("me.languageChanged", { language: name }));
+    });
+  };
 
   return (
     <div className="flex h-full flex-col gap-1 overflow-auto bg-paper px-4 pb-4 pt-3">
@@ -165,7 +186,41 @@ export function MePage() {
         />
       </SettingGroup>
 
-      {/* 2. 隐私与关于：数据备份 + 关于 */}
+      {/* 2. 语言：二选一弹层，切换即时生效、不重启应用 */}
+      <SettingGroup title={t("me.settings.language")}>
+        <div className="relative">
+          <SettingRow
+            icon={Globe}
+            label={t("me.settings.language")}
+            value={currentLangLabel}
+            onClick={() => setLangOpen((v) => !v)}
+          />
+          {langOpen && (
+            <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[var(--radius-md)] border border-line bg-paper p-1 shadow-lg">
+              {(["zh-CN", "en"] as const).map((lang) => (
+                <button
+                  key={lang}
+                  onClick={() => onSelectLanguage(lang)}
+                  className="flex w-full items-center justify-between gap-2 rounded-[var(--radius-sm)] px-2 py-2 text-left text-sm text-ink transition hover:bg-paper-soft"
+                >
+                  <span>
+                    {t(
+                      lang === "zh-CN"
+                        ? "me.languageOpts.zh"
+                        : "me.languageOpts.en",
+                    )}
+                  </span>
+                  {lang === currentLang && (
+                    <Check className="h-4 w-4 shrink-0 text-accent" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </SettingGroup>
+
+      {/* 3. 隐私与关于：数据备份 + 关于 */}
       <SettingGroup title={t("me.groups.privacyAbout")}>
         <SettingRow
           icon={Database}

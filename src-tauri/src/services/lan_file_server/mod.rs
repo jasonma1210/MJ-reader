@@ -44,6 +44,112 @@ const LAN_FILE_MAX_UPLOAD_BYTES: u64 = 200 * 1024 * 1024;
 ///   前端 XHR 触发 onerror 而显示「上传失败: 网络错误」）
 const LAN_FILE_HTTP_BODY_LIMIT: usize = 220 * 1024 * 1024;
 
+/// 从 multipart 的 Content-Disposition 原始字节里解析上传文件名。
+///
+/// 为什么不用 `multer::Field::file_name()`：它内部走 `HeaderValue::to_str()`，
+/// 非 UTF-8 字节（国内浏览器/Windows 常以 GBK 发送 filename）会直接返回 None，
+/// 导致文件名被替换成 `received_<timestamp>`；若上游先做了 from_utf8_lossy，
+/// 则会把不可逆的 U+FFFD 写进书名。这里直接读 header 原始字节，按 UTF-8 →
+/// GB18030 → RFC 5987 percent-decode 顺序解码，尽量保住用户上传的真实文件名。
+pub(crate) fn parse_upload_filename(header_bytes: &[u8]) -> Option<String> {
+    // header 形如：form-data; name="file"; filename="中文.pdf"
+    // 或：form-data; name="file"; filename*=UTF-8''%E4%B8%AD%E6%96%87.pdf
+    let lower: Vec<u8> = header_bytes.iter().map(|b| b.to_ascii_lowercase()).collect();
+
+    // 1) RFC 5987：filename*=charset'lang'percent-encoded
+    if let Some(pos) = find_subslice(&lower, b"filename*=") {
+        let tail = &header_bytes[pos + b"filename*=".len()..];
+        let parts: Vec<&[u8]> = tail.splitn(3, |b| *b == b'\'').collect();
+        if parts.len() == 3 {
+            let charset = String::from_utf8_lossy(parts[0]).to_string();
+            let decoded = percent_decode(parts[2]);
+            let enc = encoding_rs::Encoding::for_label(charset.as_bytes())
+                .unwrap_or(encoding_rs::UTF_8);
+            let (text, _, _) = enc.decode(&decoded);
+            let name = trim_quotes(text.trim());
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+
+    // 2) 普通 filename="..."：原始字节先试 UTF-8，再试 GB18030
+    if let Some(pos) = find_subslice(&lower, b"filename=\"") {
+        let start = pos + b"filename=\"".len();
+        if let Some(end_rel) = header_bytes[start..].iter().position(|b| *b == b'"') {
+            let raw = &header_bytes[start..start + end_rel];
+            return decode_filename_bytes(raw);
+        }
+    }
+    // 部分客户端不加引号：filename=xxx.pdf（到分号或行尾）
+    if let Some(pos) = find_subslice(&lower, b"filename=") {
+        let start = pos + b"filename=".len();
+        let end = header_bytes[start..]
+            .iter()
+            .position(|b| *b == b';' || *b == b'\r' || *b == b'\n')
+            .unwrap_or(header_bytes.len() - start);
+        let raw = &header_bytes[start..start + end];
+        return decode_filename_bytes(raw);
+    }
+    None
+}
+
+fn decode_filename_bytes(raw: &[u8]) -> Option<String> {
+    if raw.is_empty() {
+        return None;
+    }
+    if let Ok(s) = std::str::from_utf8(raw) {
+        let t = trim_quotes(s.trim());
+        if !t.is_empty() && !t.contains('\u{FFFD}') {
+            return Some(t.to_string());
+        }
+    }
+    let (gbk, _, had_errors) = encoding_rs::GB18030.decode(raw);
+    let t = trim_quotes(gbk.trim());
+    if !t.is_empty() && !had_errors {
+        return Some(t.to_string());
+    }
+    // 都失败时诚实返回 lossy 结果（不臆造），交由上层净化。
+    let lossy = String::from_utf8_lossy(raw);
+    let t = trim_quotes(lossy.trim());
+    if t.is_empty() { None } else { Some(t.to_string()) }
+}
+
+fn trim_quotes(s: &str) -> &str {
+    s.trim_matches('"').trim()
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    (0..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
+}
+fn percent_decode(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        if input[i] == b'%' && i + 2 < input.len() {
+            let hex = |b: u8| -> Option<u8> {
+                match b {
+                    b'0'..=b'9' => Some(b - b'0'),
+                    b'a'..=b'f' => Some(b - b'a' + 10),
+                    b'A'..=b'F' => Some(b - b'A' + 10),
+                    _ => None,
+                }
+            };
+            if let (Some(hi), Some(lo)) = (hex(input[i + 1]), hex(input[i + 2])) {
+                out.push(hi * 16 + lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(input[i]);
+        i += 1;
+    }
+    out
+}
+
 /// 服务器共享状态。Clone 廉价（Arc 内部共享）。
 #[derive(Clone)]
 struct LanServerState {
@@ -274,11 +380,17 @@ async fn handle_upload(
     while let Ok(Some(field)) = multipart.next_field().await {
         let mut field = field;
 
-        // 文件名：优先 field.file_name，否则 fallback "received_<timestamp>"；
-        // 净化：仅移除路径分隔符等危险字符，其余原样保留（不改名）
-        let raw_name = field
-            .file_name()
-            .map(|s| s.to_string())
+        // 文件名：从 Content-Disposition 原始字节解析（UTF-8 / GB18030 / RFC 5987）。
+        // 不能用 multer 的 file_name()：它对 GBK filename 返回 None（会产生
+        // received_<timestamp> 假名），对 lossy 字节则会写入不可逆 U+FFFD 乱码。
+        let cd_bytes = field
+            .headers()
+            .get(axum::http::header::CONTENT_DISPOSITION)
+            .map(|v| v.as_bytes())
+            .unwrap_or_default();
+        let raw_name = parse_upload_filename(cd_bytes)
+            .or_else(|| field.file_name().map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("received_{}", chrono::Utc::now().timestamp()));
         let safe_name = raw_name
             .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");

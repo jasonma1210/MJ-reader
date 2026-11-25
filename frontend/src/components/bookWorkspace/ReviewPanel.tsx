@@ -360,7 +360,7 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
                   <button
                     onClick={() => {
                       void whiteboardService.addToBookBoard(bookId, "misquestion", w.id).then((added) => {
-                        toast(added ? t("selection.boardDone") : t("selection.boardDup"));
+                        toast(added ? t("selection.boardDone") : t("selection.boardFailed"));
                       });
                     }}
                     className="flex items-center gap-1 rounded-full bg-paper-soft px-2 py-0.5 text-[10px] font-medium text-ink-soft transition hover:text-ink"

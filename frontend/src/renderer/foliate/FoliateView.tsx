@@ -5,12 +5,12 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { logError } from "../../utils/logError";
 import i18n from "../../i18n";
 import { useReaderStore } from "../../stores/readerStore";
+import { useVisionProfile, type VisionProfile } from "../visual/einkProfile";
 import {
   FONT_FAMILY_MAP,
   LINE_HEIGHT_STEPS,
-  PARA_SPACING_STEPS,
   TEXT_COLOR_PRESETS,
-  BG_COLOR_PRESETS,
+  resolveReaderInsets,
   type FontFamilyKey,
 } from "../../stores/readerStore";
 import { useHighlightStore } from "../../stores/highlightStore";
@@ -28,6 +28,16 @@ import type { TocNode } from "../../services/aiService";
 import { openFoliateBook } from "./documentLoader";
 import { loadBookFile } from "../../utils/bookFileLoader";
 import { maybeSaveFirstPageCover } from "../../utils/textCover";
+
+/** 注入正文样式所需的视觉字段（primitive 子集，便于 effect deps 逐项列出，不传整个 profile 对象） */
+type VisionStyle = Pick<
+  VisionProfile,
+  | "mode"
+  | "background"
+  | "foreground"
+  | "reduceMotion"
+  | "greyscaleHighlights"
+>;
 
 /**
  * 基于 foliate-js 的统一渲染器（移植自 frontend-deprecated，适配新前端 store 契约）：
@@ -223,6 +233,18 @@ export function FoliateView({ bookId }: { bookId: string }) {
    * 仅在 text()（新一次朗读起点）和 next()（拿到新一屏）时更新。
    */
   const deliveredTextRef = useRef("");
+  /**
+   * 最新视觉样式：load 事件监听器在开书 effect（deps=[bookId]）内注册，无法直接闭包
+   * 捕获频繁变化的视觉字段；用 ref 读取当前值，避免视觉切换重建整本书。
+   */
+  const visionStyleRef = useRef<VisionStyle | null>(null);
+  /**
+   * 重排回位令牌：字号变化与 flow 切换会并发触发 foliate 重排（各自 render + 定位），
+   * 只有最后一次回位允许执行，避免多次 goTo 互相覆盖导致锚点错乱。
+   */
+  const relayoutTokenRef = useRef(0);
+  /** applyFlow 声明早于 injectContentStyles，用 ref 转发避免 TDZ；切 flow 后需按新 flow 重注入。 */
+  const injectStylesRef = useRef<(fontSize: number, vision: VisionStyle) => void>(() => {});
 
   const setProgress = useReaderStore((s) => s.setProgress);
   const viewMode = useReaderStore((s) => s.viewMode);
@@ -256,10 +278,41 @@ export function FoliateView({ bookId }: { bookId: string }) {
   }, []);
 
   /**
+   * 重排后回位：WebKit(iOS) 下 flow / margin 变化触发的 foliate 同步 render 会读到
+   * 尚未 reflow 的 getClientRects，#scrollToAnchor 因而定位到错误页，表现为正文贴顶 /
+   * 贴底、与顶部栏或进度条重叠。双 rAF 等布局稳定后，用组件自己在 relocate 中记录的
+   * CFI（foliate view 实例上并无 cfi/fraction getter，旧代码读这两个字段恒为 undefined）
+   * 精确回位一次。token 保证并发重排时只有最后一次回位生效。
+   */
+  const recenterAfterRelayout = useCallback(() => {
+    const token = ++relayoutTokenRef.current;
+    const view = viewRef.current;
+    if (!view) return;
+    const cfi = currentCfiRef.current;
+    const fraction = currentFractionRef.current;
+    const target: string | { fraction: number } | null = cfi
+      ? cfi
+      : fraction > 0
+        ? { fraction }
+        : null;
+    if (!target) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (relayoutTokenRef.current !== token || viewRef.current !== view) return;
+        try {
+          void view.goTo(target).catch((e) => logError("FoliateView.recenter.goTo", e));
+        } catch (e) {
+          logError("FoliateView.recenter.goTo", e);
+        }
+      });
+    });
+  }, []);
+
+  /**
    * 阅读效果（T 图标浮层首项）：滚动 / 分页。
    * foliate-paginator 以 `flow` attribute 区分：`"scrolled"`=滚动流式，其余=分页。
    * 切换 through attributeChangedCallback → render()，帕格内自动重排；
-   * 切换前记录 CFI，应用后跳回，避免位置跳到书首。
+   * 随后用已记录的阅读位置回位，避免 WebKit 下同步 render 读旧 rect 造成贴边。
    */
   const applyFlow = useCallback(() => {
     const paginator = viewRef.current?.renderer as HTMLElement | undefined;
@@ -267,18 +320,14 @@ export function FoliateView({ bookId }: { bookId: string }) {
     const flow =
       useReaderStore.getState().viewMode === "scroll" ? "scrolled" : "paginated";
     if (paginator.getAttribute("flow") === flow) return;
-    const before = viewRef.current?.cfi ?? viewRef.current?.fraction;
     paginator.setAttribute("flow", flow);
-    if (before != null) {
-      const target: string | { fraction: number } =
-        typeof before === "string" ? before : { fraction: before as number };
-      try {
-        void viewRef.current?.goTo(target).catch(() => undefined);
-      } catch (e) {
-        logError("FoliateView.applyFlow.goTo", e);
-      }
-    }
-  }, []);
+    // 切 flow 后必须按新 flow 重注入 margin / touch-action，再回位：
+    // 否则回位落在旧留白与旧手势约束上，正是「切滚动再切回翻页被遮挡」的成因。
+    const s = useReaderStore.getState();
+    const style = visionStyleRef.current;
+    if (style) injectStylesRef.current(s.fontSize, style);
+    recenterAfterRelayout();
+  }, [recenterAfterRelayout]);
 
   // 阅读效果切换（滚动/分页）：T 图标浮层「阅读效果」选项变化时即时应答
   useEffect(() => {
@@ -287,24 +336,31 @@ export function FoliateView({ bookId }: { bookId: string }) {
   }, [viewMode, applyFlow]);
 
   const injectContentStyles = useCallback(
-    (fontSize: number) => {
+    (fontSize: number, vision: VisionStyle) => {
       if (!viewRef.current?.renderer?.setStyles) return;
       const s = useReaderStore.getState();
       const fontFamily =
         FONT_FAMILY_MAP[s.fontFamily as FontFamilyKey] ?? FONT_FAMILY_MAP.system;
       const lineHeight =
         LINE_HEIGHT_STEPS.find((x) => x.key === s.lineHeightKey)?.value ?? 1.7;
-      // 边距：第二控制项（小/中/大 → 左右留白 px）
-      const margin =
-        PARA_SPACING_STEPS.find((x) => x.key === s.paraSpacingKey)?.value ?? 0.8;
-      const marginX = Math.round(margin * 24); // 0.4→10px / 0.8→19px / 1.4→34px
+      // 版心内边距：绝对量、≤1字、上下<左右（见 resolveReaderInsets）。
+      // UI 安全区（顶部 44px / 底部 20px+safe）已由 ReaderPage 的版心矩形扣除，
+      // 这里只放版心内边距，绝不重复叠加，否则正文会被挤成窄带。
+      // 分页上下留白必须走 paginator 的 margin attribute（body 的上下 padding 只在首尾列生效）。
+      const { insetX, insetY } = resolveReaderInsets(fontSize, s.paraSpacingKey);
+      // foliate 用「固定高度 + overflow:hidden」做 CSS 多列分页：留白若小于一行高度，
+      // WebKit 会把首行/末行切在列边界（表现为文字只显示上半截）。其默认 48px
+      // 正是为此预留。这里以「用户版心边距 insetY」与「一行高度」取大者：
+      // 上下视觉边距仍远小于左右，且不再截行；4K 平板横屏实测可复现原截断。
+      const linePx = Math.ceil(fontSize * lineHeight);
+      const pageSizeInset = Math.max(insetY, linePx);
       // 文字色：优先历史预设 key，否则视为主题自带 hex（深/浅背景下跟随主题）
       const presetText =
         TEXT_COLOR_PRESETS.find((x) => x.key === s.textColorKey)?.color;
       const textColor = presetText ?? (s.textColorKey || "#1a1a1a");
-      const bgColor =
-        BG_COLOR_PRESETS.find((x) => x.key === s.bgColorKey)?.color ??
-        BG_COLOR_PRESETS[0].color;
+      // 视觉模式：standard 沿用 readerStore 配套前景，保证深灰/暗夜背景仍可读；
+      // simulated/ink 使用模式令牌前景（见 visionTokens）。
+      const fgColor = vision.mode === "standard" ? textColor : vision.foreground;
       // 竖排（P0-1）：正文纵向书写，右侧起栏；与行距/字号并存
       const verticalCss = s.verticalWriting
         ? `
@@ -312,20 +368,47 @@ export function FoliateView({ bookId }: { bookId: string }) {
       body > * { max-height: 100% !important; }
       p { margin: 0 0.6em 0 0 !important; }`
         : "";
+      // 禁动画（simulated/ink）：软件滤镜档关闭正文动效
+      const reduceMotionCss = vision.reduceMotion
+        ? `
+      *, *::before, *::after {
+        animation-duration: 0s !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0s !important;
+      }`
+        : "";
+      // 夜间暖暗遮罩已上移到 ReaderPage 根容器（整页统一），iframe 内不再重复施加。
+      const overlayCss = "";
+      // 灰度高亮：iframe 内仅能覆盖选中态；foliate 高亮矩形绘制在 iframe 外 overlayer，
+      // 面板以 vision.highlight.greyscale 文案说明此能力差异（不改 SVG painter）。
+      const greyscaleCss = vision.mode === "ink"
+        ? `::selection { background: ${vision.greyscaleHighlights[2]} !important; color: #000000 !important; }`
+        : "";
       const css = `:root {
-        --flow-padding: 8px ${marginX}px;
+        --flow-padding: 8px ${insetX}px;
         --flow-max-width: 100%;
         --flow-line-height: ${lineHeight};
         --flow-font-size: ${fontSize}px;
       }
-      html, body { overflow-x: hidden !important; }
+      html, body {
+        overflow-x: hidden !important;
+        /* 按模式接管手势：翻页 none 禁用原生滚动/双击缩放，滚动 pan-y 保留原生惯性
+           与无障碍；-webkit-touch-callout 关掉 iOS 长按系统菜单，但保留 user-select
+           以支持本项目自研长按选字浮条。 */
+        touch-action: ${s.viewMode === "scroll" ? "pan-y" : "none"} !important;
+        -webkit-touch-callout: none !important;
+      }
       body {
         margin: 0 !important; padding: 0 !important; width: 100% !important;
         height: auto !important; min-height: 100% !important;
         box-sizing: border-box !important; overflow: visible !important;
-        background: ${bgColor} !important;
-        color: ${textColor} !important;
+        background: ${vision.background} !important;
+        color: ${fgColor} !important;
         font-family: ${fontFamily} !important;
+        text-align: ${s.textAlign} !important;
+        letter-spacing: ${s.letterSpacing}em !important;
+        /* 滤镜由 ReaderPage 根容器统一施加于整页；iframe 内不再重复，避免双重叠加 */
+        filter: none !important;
       }
       body > * { max-width: 100% !important; box-sizing: border-box !important; }
       .body, body {
@@ -338,17 +421,38 @@ export function FoliateView({ bookId }: { bookId: string }) {
         object-fit: contain !important; box-sizing: border-box !important;
       }
       p { margin: 0.6em 0; }
+      /* CSS 多列分页的列边界若落在行中间，WebKit 会把该行切成上下两半。
+         让块级内容整体落到下一列，切分尽量发生在段落间隙。 */
+      p, h1, h2, h3, h4, h5, h6, blockquote, li {
+        break-inside: avoid !important;
+        page-break-inside: avoid !important;
+      }
       h1, h2, h3, h4, h5, h6 { margin: 0.8em 0 0.4em; line-height: 1.3; }
       .section-body { overflow: visible !important; }
-      ${verticalCss}`;
+      ${verticalCss}
+      ${reduceMotionCss}
+      ${overlayCss}
+      ${greyscaleCss}`;
       try {
+        // 顺序关键：先用 setStyles 落地新字号/行距，再由 margin attribute 触发 foliate
+        // render()。若反过来（旧代码），render 会以旧字号排版，随后字号变化才经
+        // ResizeObserver 二次 expand，WebKit 下锚点错位、正文贴边被顶部栏/进度条遮挡。
         viewRef.current.renderer!.setStyles(css);
+        const paginator = viewRef.current?.renderer as HTMLElement | undefined;
+        // foliate 把 margin attribute 直接写入 CSS 变量 --_margin，该变量用于
+        // grid-template-rows: minmax(var(--_margin), 1fr)，是 <length> 上下文，
+        // 必须带 px 单位；纯数字会让上下轨道塌陷（文字贴边 / 被截半行）。
+        const insetAttr = `${pageSizeInset}px`;
+        if (paginator?.setAttribute && paginator.getAttribute("margin") !== insetAttr) {
+          paginator.setAttribute("margin", insetAttr);
+        }
       } catch (e) {
         logError("FoliateView.injectContentStyles", e);
       }
     },
     [],
   );
+  injectStylesRef.current = injectContentStyles;
 
   // 高亮同步：把 highlightStore 的增删映射到 foliate 绘制
   const syncHighlights = useCallback(() => {
@@ -516,6 +620,10 @@ export function FoliateView({ bookId }: { bookId: string }) {
       try {
         if (delta < 0) view.prev();
         else view.next();
+        // 通知 ReaderPage 叠加拟真翻页动画（本组件不关心视觉，只报告"翻页已发生"）
+        window.dispatchEvent(
+          new CustomEvent("mjnexus:reader-page-turned", { detail: { direction: delta } }),
+        );
       } catch (e) {
         logError("FoliateView.flipPage", e);
       }
@@ -610,6 +718,18 @@ export function FoliateView({ bookId }: { bookId: string }) {
         if (timer !== null) window.clearTimeout(timer);
         timer = window.setTimeout(emitSelection, 250);
       };
+      // click 与 touchend 都会走到双击判定；iOS WKWebView 在 double-tap 时可能抑制
+      // 第二次 click，故两者都检测，并用一个短窗去重，避免重复弹菜单 / 单次点击误判。
+      let lastDoubleEmitAt = 0;
+      const emitDoubleTap = () => {
+        const now = Date.now();
+        if (now - lastDoubleEmitAt < 700) return;
+        lastDoubleEmitAt = now;
+        window.dispatchEvent(new Event("mjnexus:reader-double-tap"));
+      };
+      // 两条路径各自维护 lastTap：若共用，单次点击的 touchend + click 会因时间戳相同
+      // 被误判成双击（同一 x、Δt≈0）。
+      let lastTap = { x: 0, t: 0 };
       const handleDocClick = (e: Event) => {
         // 空白处点击 → 取消高亮选中描边；命中高亮（show-annotation 已置标志）则保留
         if (highlightHitRef.current) {
@@ -617,24 +737,103 @@ export function FoliateView({ bookId }: { bookId: string }) {
         } else {
           useHighlightStore.getState().setActive(null);
         }
-        // 统一三分区点击事件：ReaderPage 监听后做翻页/呼出工具栏
-        const ce = e as MouseEvent | TouchEvent;
-        let clientX = 0;
-        if ("clientX" in ce) clientX = ce.clientX;
-        else if ("touches" in ce && ce.touches.length > 0) clientX = ce.touches[0].clientX;
-        else if ("changedTouches" in ce && ce.changedTouches.length > 0) clientX = ce.changedTouches[0].clientX;
-        const vw = doc.defaultView?.innerWidth ?? 0;
-        if (vw > 0 && clientX > 0) {
-          const ratio = clientX / vw;
-          window.dispatchEvent(new CustomEvent("mjnexus:reader-tap-zone", { detail: { ratio } }));
+        // 选字优先：存在非折叠选区时不派发翻页/菜单手势
+        const sel = doc.defaultView?.getSelection?.();
+        if (sel && !sel.isCollapsed) {
+          window.dispatchEvent(new Event("mjnexus:foliate-tap"));
+          return;
+        }
+        const ce = e as MouseEvent;
+        // ⚠️ 参照系：分页模式下 foliate 把 iframe 展开成「整本书所有页」的宽度，
+        // 故 clientX 是整本书内坐标，iframe.innerWidth 是总宽。直接用 clientX/innerWidth
+        // 算出的 ratio 实为阅读进度（读到前 30% 时点正中间也 <0.3），中间双击永远判不出。
+        // 正解：clientX 加上 iframe 相对屏幕的左偏移，换算成屏幕坐标，再除以可见容器宽度。
+        // 该算法在滚动模式同样成立（此时 frameRect.left ≈ hostRect.left）。
+        const frame = doc.defaultView?.frameElement as HTMLElement | null;
+        const frameRect = frame?.getBoundingClientRect();
+        const hostRect = containerRef.current?.getBoundingClientRect();
+        if (frameRect && hostRect && hostRect.width > 0) {
+          const screenX = ce.clientX + frameRect.left;
+          const ratio = Math.max(0, Math.min(1, (screenX - hostRect.left) / hostRect.width));
+          const now = Date.now();
+          // 中间 40% 双击（两次 <400ms、位置相近）→ 弹菜单；单击保持无动作。
+          // iOS WKWebView 双触的 click 间隔受 300ms 延迟影响，故放宽到 400ms。
+          if (ratio >= 0.3 && ratio <= 0.7) {
+            if (now - lastTap.t < 400 && Math.abs(screenX - lastTap.x) < 48) {
+              emitDoubleTap();
+              lastTap = { x: 0, t: 0 };
+            } else {
+              lastTap = { x: screenX, t: now };
+            }
+          } else {
+            lastTap = { x: 0, t: 0 };
+            window.dispatchEvent(new CustomEvent("mjnexus:reader-tap-zone", { detail: { ratio } }));
+          }
         }
         window.dispatchEvent(new Event("mjnexus:foliate-tap"));
       };
 
+      // iframe 内触摸不冒泡到外层，上拉切模式需在此检测并派发事件给 ReaderPage。
+      // 与选字互斥：存在非折叠选区时不判定为上拉。
+      let pullStart: { x: number; y: number; t: number } | null = null;
+      let lastTouchTap = { x: 0, t: 0 };
+      const onTouchStartForPull = (e: Event) => {
+        const te = e as TouchEvent;
+        const touch = te.touches?.[0];
+        if (touch) pullStart = { x: touch.clientX, y: touch.clientY, t: Date.now() };
+      };
+      const onTouchEndForPull = (e: Event) => {
+        const start = pullStart;
+        pullStart = null;
+        if (!start) return;
+        const sel = doc.defaultView?.getSelection?.();
+        if (sel && !sel.isCollapsed) return;
+        const te = e as TouchEvent;
+        const touch = te.changedTouches?.[0];
+        if (!touch) return;
+        const dy = touch.clientY - start.y; // 正=下滑，负=上拉
+        const dx = Math.abs(start.x - touch.clientX);
+        const dt = Date.now() - start.t;
+
+        // 轻触（位移小、时长短）→ 双击中间 40% 兜底判定。iOS WKWebView 在
+        // double-tap 时可能抑制第二次 click，只靠 click 路径会失效。坐标换算与
+        // click 同参照系；与「上拉」互斥（上拉 dy<-80，轻触 |dy|<30）。
+        if (dt < 300 && dx < 30 && Math.abs(dy) < 30) {
+          const frame = doc.defaultView?.frameElement as HTMLElement | null;
+          const frameRect = frame?.getBoundingClientRect();
+          const hostRect = containerRef.current?.getBoundingClientRect();
+          if (frameRect && hostRect && hostRect.width > 0) {
+            const screenX = touch.clientX + frameRect.left;
+            const ratio = Math.max(0, Math.min(1, (screenX - hostRect.left) / hostRect.width));
+            if (ratio >= 0.3 && ratio <= 0.7) {
+              const now = Date.now();
+              if (now - lastTouchTap.t < 400 && Math.abs(screenX - lastTouchTap.x) < 48) {
+                emitDoubleTap();
+                lastTouchTap = { x: 0, t: 0 };
+              } else {
+                lastTouchTap = { x: screenX, t: now };
+              }
+            } else {
+              lastTouchTap = { x: 0, t: 0 };
+            }
+          }
+          return;
+        }
+        lastTouchTap = { x: 0, t: 0 };
+        if (dy < -80 && dx < 40 && dt < 1200) {
+          window.dispatchEvent(new Event("mjnexus:reader-pull-up"));
+        }
+      };
+      doc.addEventListener("touchstart", onTouchStartForPull, { passive: true });
+      doc.addEventListener("touchend", onTouchEndForPull, { passive: true });
       doc.addEventListener("mouseup", schedule);
       doc.addEventListener("touchend", schedule);
       doc.addEventListener("selectionchange", schedule);
       doc.addEventListener("click", handleDocClick);
+      // Android 长按/右键系统菜单一律拦截（iOS WKWebView 不触发 contextmenu，
+      // 由 CSS -webkit-touch-callout:none 负责）。不阻断原生文字选区，选字浮条照常工作。
+      const onContextMenu = (e: Event) => e.preventDefault();
+      doc.addEventListener("contextmenu", onContextMenu);
       // 轮询兜底（v3.6.3）：安卓原生长按选字手柄拖拽期间，部分 ROM 不派发
       // selectionchange/mouseup/touchend → 选区不被浮条感知。低频轮询若检测到
       // 非折叠文字选区即调度，与事件驱动互为补充，保证 EPUB 浮条也能可靠弹出。
@@ -661,10 +860,13 @@ export function FoliateView({ bookId }: { bookId: string }) {
             logError("FoliateView.clearPollTimer", e);
           }
         }
+        doc.removeEventListener("touchstart", onTouchStartForPull);
+        doc.removeEventListener("touchend", onTouchEndForPull);
         doc.removeEventListener("mouseup", schedule);
         doc.removeEventListener("touchend", schedule);
         doc.removeEventListener("selectionchange", schedule);
         doc.removeEventListener("click", handleDocClick);
+        doc.removeEventListener("contextmenu", onContextMenu);
         flagged.__mjSelectionBound = false;
         registerReaderTocProvider(null);
       });
@@ -680,7 +882,8 @@ export function FoliateView({ bookId }: { bookId: string }) {
       window.dispatchEvent(
         new CustomEvent("mjnexus:reader-toc", { detail: { nodes: tocNodes } }),
       );
-      injectContentStyles(useReaderStore.getState().fontSize);
+      const style = visionStyleRef.current;
+      if (style) injectContentStyles(useReaderStore.getState().fontSize, style);
       const loadedDoc = detail?.doc as Document | undefined;
       if (loadedDoc) {
         currentDocRef.current = loadedDoc;
@@ -713,7 +916,16 @@ export function FoliateView({ bookId }: { bookId: string }) {
         color?: string;
         style?: string;
       };
-      const color = resolveHighlightColor(annotation.color ?? "yellow");
+      const storedColor = annotation.color ?? "yellow";
+      const baseColor = resolveHighlightColor(storedColor);
+      // 墨水黑白模式：持久高亮也转高对比灰度（原 5 色在灰度屏上难辨）。
+      // 选中态的 ::selection 已在 injectContentStyles 覆盖；此处覆盖 SVG overlayer 绘制的持久高亮。
+      const visionRef = visionStyleRef.current;
+      const grayIndex = ["yellow", "green", "blue", "pink", "red"].indexOf(storedColor);
+      const color =
+        visionRef?.mode === "ink" && grayIndex >= 0
+          ? `${visionRef.greyscaleHighlights[grayIndex]}88`
+          : baseColor;
       const basePainter: (
         rects: OverlayRect[],
         options?: Record<string, unknown>,
@@ -830,6 +1042,8 @@ export function FoliateView({ bookId }: { bookId: string }) {
             resizeTimerRef.current = window.setTimeout(() => {
               applyColumnCount();
               applyContentViewport(currentDocRef.current);
+              // 旋转/侧栏开合同样会重排，与字号/flow 共用 token 回位，避免正文错位。
+              recenterAfterRelayout();
             }, 120);
           })
         : null;
@@ -991,6 +1205,7 @@ export function FoliateView({ bookId }: { bookId: string }) {
       highlightCfiRef.current.clear();
       useHighlightStore.getState().setActive(null);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId]);
 
   // 切后台/退出前立即保存进度（Android 进程可能被杀）
@@ -1029,9 +1244,49 @@ export function FoliateView({ bookId }: { bookId: string }) {
   const verticalWriting = useReaderStore((s) => s.verticalWriting);
   const textColorKey = useReaderStore((s) => s.textColorKey);
   const bgColorKey = useReaderStore((s) => s.bgColorKey);
+  // KOReader 视觉方案（P0-3/P0-4/P1-7）：新增 primitive 订阅；effect deps 一律放 primitive，
+  // 不放整个 profile 对象（useVisionProfile 内部已用 useMemo + primitive 解析）。
+  const visionMode = useReaderStore((s) => s.visionMode);
+  const colorTempFollow = useReaderStore((s) => s.colorTempFollow);
+  const warmth = useReaderStore((s) => s.warmth);
+  const intensity = useReaderStore((s) => s.intensity);
+  const textAlign = useReaderStore((s) => s.textAlign);
+  const letterSpacing = useReaderStore((s) => s.letterSpacing);
+  const vision = useVisionProfile();
+  const {
+    mode: profileMode,
+    background,
+    foreground,
+    reduceMotion,
+    greyscaleHighlights,
+  } = vision;
+
+  // 每次渲染同步最新样式，供开书 load 事件监听器读取（不进 effect deps）
+  visionStyleRef.current = {
+    mode: profileMode,
+    background,
+    foreground,
+    reduceMotion,
+    greyscaleHighlights,
+  };
+
   useEffect(() => {
-    injectContentStyles(fontSize);
-  }, [fontSize, fontFamily, lineHeightKey, paraSpacingKey, textColorKey, bgColorKey, verticalWriting, injectContentStyles]);
+    injectContentStyles(fontSize, {
+      mode: profileMode,
+      background,
+      foreground,
+      reduceMotion,
+      greyscaleHighlights,
+    });
+    // 字号/行距变化会重排 PDF 之外的 EPUB 分页；WebKit 下同样存在旧 rect 定位问题，
+    // 与 flow 切换共用 token 回位（只有最后一次生效）。
+    recenterAfterRelayout();
+  }, [
+    fontSize, fontFamily, lineHeightKey, paraSpacingKey, textColorKey, bgColorKey,
+    verticalWriting, visionMode, colorTempFollow, warmth, intensity, textAlign,
+    letterSpacing, profileMode, background, foreground, reduceMotion,
+    greyscaleHighlights, injectContentStyles, recenterAfterRelayout,
+  ]);
 
   // 高亮仓库变更 → 同步绘制
   useEffect(() => {
@@ -1102,6 +1357,11 @@ export function FoliateView({ bookId }: { bookId: string }) {
       try {
         if (d.direction < 0) view.prev();
         else view.next();
+        window.dispatchEvent(
+          new CustomEvent("mjnexus:reader-page-turned", {
+            detail: { direction: d.direction < 0 ? -1 : 1 },
+          }),
+        );
       } catch (err) {
         logError("FoliateView.flip", err);
       }
@@ -1154,7 +1414,7 @@ export function FoliateView({ bookId }: { bookId: string }) {
             onPointerDown={(e) => hotZoneDown(e, -1)}
             onPointerUp={hotZoneUp}
             onPointerCancel={hotZoneCancel}
-            className="absolute inset-y-0 left-0 z-[5] w-[18%] cursor-pointer touch-none"
+            className="absolute inset-y-0 left-0 z-[5] w-[30%] cursor-pointer touch-none"
           />
           <button
             type="button"
@@ -1163,7 +1423,7 @@ export function FoliateView({ bookId }: { bookId: string }) {
             onPointerDown={(e) => hotZoneDown(e, 1)}
             onPointerUp={hotZoneUp}
             onPointerCancel={hotZoneCancel}
-            className="absolute inset-y-0 right-0 z-[5] w-[18%] cursor-pointer touch-none"
+            className="absolute inset-y-0 right-0 z-[5] w-[30%] cursor-pointer touch-none"
           />
         </>
       )}

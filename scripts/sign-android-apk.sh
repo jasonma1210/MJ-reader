@@ -16,7 +16,12 @@ fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KEY="$ROOT/signing/mjreader-release.jks"
 ALIAS="mjreader"
-PASS="123456"
+# 口令不入库：由本地环境变量提供（可写入 gitignore 的 ~/.zshrc 或 CI Secret）。
+PASS="${MJREADER_KEYSTORE_PASS:-}"
+if [ -z "$PASS" ]; then
+  echo "MJREADER_KEYSTORE_PASS is required" >&2
+  exit 1
+fi
 SRC="$1"
 OUT="$2"
 

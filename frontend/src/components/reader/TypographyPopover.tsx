@@ -11,8 +11,13 @@ import {
   PARA_SPACING_STEPS,
   VIEW_MODE_STEPS,
   formatSupportsPagination,
+  LETTER_SPACING_MIN,
+  LETTER_SPACING_MAX,
+  LETTER_SPACING_STEP,
+  TEXT_ALIGN_OPTIONS,
   type FontFamilyKey,
   type ViewMode,
+  type TextAlign,
 } from "../../stores/readerStore";
 
 /** 固定版式格式（PDF / Office）：不支持字号/字体/行距/边距等排版调整 → 置灰不可点。
@@ -63,6 +68,11 @@ export function TypographyPopover({
   const setViewMode = useReaderStore((s) => s.setViewMode);
   const verticalWriting = useReaderStore((s) => s.verticalWriting);
   const setVerticalWriting = useReaderStore((s) => s.setVerticalWriting);
+  // P1-7：对齐四档 + 字距（仅 EPUB 等流式排版生效）
+  const textAlign = useReaderStore((s) => s.textAlign);
+  const setTextAlign = useReaderStore((s) => s.setTextAlign);
+  const letterSpacing = useReaderStore((s) => s.letterSpacing);
+  const setLetterSpacing = useReaderStore((s) => s.setLetterSpacing);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const [fontPickerOpen, setFontPickerOpen] = useState(false);
@@ -294,6 +304,38 @@ export function TypographyPopover({
         </div>
       </section>
 
+      {/* 对齐 + 字距（P1-7）：仅 EPUB 等流式排版生效；PDF/固定版式隐藏控件并标注 */}
+      {fixed ? (
+        <section className="px-5 pb-3">
+          <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
+            {t("reader.align")} / {t("reader.letterSpacing")}
+          </div>
+          <div className="rounded-lg bg-overlay-soft px-3 py-2 text-[11px] text-overlay/70">
+            {t("reader.pdf.onlyEpub")}
+          </div>
+        </section>
+      ) : (
+        <section className="space-y-2 px-5 pb-3">
+          <SegmentedRow
+            label={t("reader.align")}
+            value={textAlign}
+            options={TEXT_ALIGN_OPTIONS.map((k) => ({ key: k, label: "", mark: "" }))}
+            onChange={(k) => setTextAlign(k as TextAlign)}
+            labels={["L", "C", "J", "R"]}
+          />
+          <div>
+            <div className="mb-1 text-[11px] text-overlay">
+              {t("reader.letterSpacing")}
+            </div>
+            <SpacingSlider
+              ariaLabel={t("reader.letterSpacing")}
+              value={letterSpacing}
+              onChange={setLetterSpacing}
+            />
+          </div>
+        </section>
+      )}
+
       {/* 背景（护眼主题：绿色/暖色/暗色等 6 种，适合阅读） */}
       <section className="px-5 pb-4">
         <div className="mb-1.5 text-[11px] tracking-wider text-overlay">背景</div>
@@ -378,6 +420,64 @@ function SegmentedRow<K extends string>({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** 字距滑块：-0.05em .. 0.15em，step 0.01em（复用字号滑块的视觉写法） */
+function SpacingSlider({
+  ariaLabel,
+  value,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const pct =
+    (value - LETTER_SPACING_MIN) / (LETTER_SPACING_MAX - LETTER_SPACING_MIN);
+  const setPct = (p: number) => {
+    const raw = LETTER_SPACING_MIN + p * (LETTER_SPACING_MAX - LETTER_SPACING_MIN);
+    const stepped = Math.round(raw / LETTER_SPACING_STEP) * LETTER_SPACING_STEP;
+    onChange(
+      Number(
+        Math.min(LETTER_SPACING_MAX, Math.max(LETTER_SPACING_MIN, stepped)).toFixed(2),
+      ),
+    );
+  };
+  return (
+    <div className="relative flex items-center rounded-full bg-overlay-soft px-3 py-2">
+      <div className="absolute left-3 right-12 top-1/2 h-1 -translate-y-1/2 rounded-full bg-overlay-fg/15" />
+      <div
+        className="absolute left-3 top-1/2 h-1 -translate-y-1/2 rounded-full bg-accent"
+        style={{ width: `calc((100% - 48px) * ${pct})` }}
+      />
+      <div
+        role="slider"
+        aria-label={ariaLabel}
+        aria-valuemin={LETTER_SPACING_MIN}
+        aria-valuemax={LETTER_SPACING_MAX}
+        aria-valuenow={value}
+        tabIndex={0}
+        onPointerDown={(e) => {
+          const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+          const move = (ev: PointerEvent) => {
+            const x = Math.min(rect.right - 36, Math.max(rect.left + 12, ev.clientX));
+            setPct((x - rect.left - 12) / Math.max(1, rect.width - 48));
+          };
+          const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up);
+        }}
+        className="absolute top-1/2 grid h-6 w-6 -translate-y-1/2 -translate-x-1/2 cursor-grab place-items-center rounded-full bg-paper-pure shadow ring-1 ring-overlay-border active:cursor-grabbing"
+        style={{ left: `calc(12px + (100% - 48px) * ${pct})` }}
+      />
+      <span className="ml-auto w-12 text-right text-[11px] text-overlay">
+        {value.toFixed(2)}em
+      </span>
     </div>
   );
 }

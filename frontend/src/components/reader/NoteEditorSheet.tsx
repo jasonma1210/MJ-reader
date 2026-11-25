@@ -131,6 +131,8 @@ export function NoteEditorSheet({
 }) {
   const { t } = useTranslation();
   const [content, setContent] = useState("");
+  /** ASR 转写原文：必须单独落进 transcript 字段，voice 笔记列表只认它 */
+  const [transcript, setTranscript] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -192,7 +194,11 @@ export function NoteEditorSheet({
     setTranscribing(true);
     try {
       const text = await transcribeBlob(blob, "zh");
-      if (text) setContent((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+      if (text) {
+        // 正文与 transcript 双写：列表对 voice 类型只读 transcript，缺它就会显示"暂无转写"。
+        setTranscript(text);
+        setContent((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+      }
     } catch (e) {
       const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
       toast(t("notes.asrFailed", { msg }));
@@ -240,7 +246,7 @@ export function NoteEditorSheet({
         style: "highlight",
         chapterIndex: 0,
       });
-      await notesService.saveNote({
+      const savedOk = await notesService.saveNote({
         bookId,
         content:
           content.trim() ||
@@ -255,7 +261,13 @@ export function NoteEditorSheet({
             : "annotation",
         knowledgeNodeId: boundNodeId,
         mediaUrl,
+        transcript: transcript || null,
       });
+      // 落库失败必须显式提示，不能无条件 setSaved(true) 假成功。
+      if (!savedOk) {
+        toast(t("notes.saveFailed"));
+        return;
+      }
       // 错题溯源：建立 高亮 ↔ 题库题目 关联（fire-and-forget）
       void linkHighlightToQuestions(highlightId, bookId, selectedText);
       setSaved(true);
@@ -267,6 +279,7 @@ export function NoteEditorSheet({
   const handleClose = () => {
     onClose();
     setContent("");
+    setTranscript("");
     setTags([]);
     setSaved(false);
     setAudioUrl(null);
@@ -308,6 +321,7 @@ export function NoteEditorSheet({
             {noteMode === "handwrite" && <HandwritingCanvas onSaved={setHandwriteUrl} />}
 
             {noteMode === "voice" && (
+              <>
               <div className="flex items-center gap-2">
                 {!recording ? (
                   <button
@@ -334,6 +348,22 @@ export function NoteEditorSheet({
                   />
                 )}
               </div>
+              {/* 转写状态可见：失败仅提示，保留语音不阻塞保存（见 autoTranscribe） */}
+              {(transcribing || transcript) && !saving && (
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="flex items-center gap-1.5 text-[11px] text-ink-muted"
+                >
+                  {transcribing ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Check className="h-3 w-3 text-success-strong" />
+                  )}
+                  {transcribing ? t("notes.transcribing") : t("notes.transcribed")}
+                </p>
+              )}
+              </>
             )}
 
             {noteMode === "text" && (
@@ -383,6 +413,16 @@ export function NoteEditorSheet({
               </>
             )}
 
+            {saving && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="flex items-center gap-1.5 text-[11px] text-ink-muted"
+              >
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {t("notes.saving")}
+              </p>
+            )}
             <button
               onClick={() => void save()}
               disabled={saving || (!content.trim() && !audioUrl && !handwriteUrl)}

@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -10,7 +10,9 @@ import {
   type NodeProps,
   Handle,
   Position,
+  useReactFlow,
   useStore,
+  useNodesInitialized,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { WhiteboardCardNode, type WhiteboardActionId } from "./WhiteboardCardNode";
@@ -19,6 +21,10 @@ import type {
   WhiteboardContainer,
   WhiteboardLink,
 } from "../../services/whiteboardService";
+import { cn } from "../../utils/cn";
+
+/** 低于此规模不做视口裁剪：小画布全量渲染的交互更稳定，也避免测量抖动。 */
+const VIRTUALIZE_NODE_THRESHOLD = 200;
 
 /**
  * react-flow 画布适配层（计划 v1.1 M1）。
@@ -52,7 +58,10 @@ function WhiteboardCardNodeRF({ data }: NodeProps<Node<WbCardNodeData>>) {
     h: d.h,
   };
   return (
-    <div className="relative h-full w-full" style={{ width: d.w, height: d.h }}>
+    <div
+      className={cn("relative h-full w-full", d.flash && "wb-card-focus-flash")}
+      style={{ width: d.w, height: d.h }}
+    >
       {/* M7 连线锚点：四向 source/target Handle，边缘吸附起点/终点（不可交互，仅作几何锚定） */}
       {(["left", "right", "top", "bottom"] as Position[]).map((pos) => (
         <Handle
@@ -97,6 +106,7 @@ function WhiteboardCardNodeRF({ data }: NodeProps<Node<WbCardNodeData>>) {
           onMentionRef={d.onMentionRef}
           onToggleCollapse={d.onToggleCollapse}
           onChangeSource={d.onSourceChange}
+          advancedInInspector={d.advancedInInspector}
         />
       </div>
     </div>
@@ -131,6 +141,26 @@ function WhiteboardGroupRF({ data, selected }: NodeProps<Node<WbGroupNodeData>>)
 
 const GroupNodeMemo = memo(WhiteboardGroupRF);
 
+/** 上板定位：画布就绪后把目标节点居中（与卡片闪烁样式配合，解决「点了上板看不到」）。 */
+function FocusNodeSync({ nodeId }: { nodeId: string | null }) {
+  const { setCenter, getInternalNode } = useReactFlow();
+  useEffect(() => {
+    if (!nodeId) return;
+    // 节点数据由父组件异步加载，延迟一帧等 RF 内部测量完成
+    const timer = window.setTimeout(() => {
+      const n = getInternalNode(nodeId);
+      if (!n) return;
+      void setCenter(
+        n.position.x + (n.measured?.width ?? 220) / 2,
+        n.position.y + (n.measured?.height ?? 160) / 2,
+        { zoom: 1, duration: 400 },
+      );
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [nodeId, setCenter, getInternalNode]);
+  return null;
+}
+
 interface WbCardNodeData {
   [key: string]: unknown;
   node: NodeData;
@@ -140,6 +170,8 @@ interface WbCardNodeData {
   linkSource: boolean;
   linkMode: boolean;
   containerMode: boolean;
+  /** 上板后定位闪烁 */
+  flash: boolean;
   actionBusy: boolean;
   deleteBusy: boolean;
   onMove: (nodeId: string, dx: number, dy: number) => void;
@@ -159,6 +191,8 @@ interface WbCardNodeData {
   onToggleCollapse?: (node: NodeData) => void;
   /** Issue 4：切换卡片类型（左上角标签） */
   onSourceChange?: (nodeId: string, source: string) => void;
+  /** P1：高级动作已收进检查器，节点只保留高频动作 */
+  advancedInInspector?: boolean;
 }
 
 interface WbGroupNodeData {
@@ -202,11 +236,18 @@ interface WhiteboardCanvasRFProps {
   onToggleCollapse?: (node: NodeData) => void;
   /** Issue 4：切换卡片类型（左上角标签） */
   onSourceChange?: (nodeId: string, source: string) => void;
+  /** P1：高级动作收进统一检查器（节点只保留编辑/折叠/删除） */
+  advancedInInspector?: boolean;
   // 视口 / 连线删除
   onViewportChange?: (v: RfViewport) => void;
   onRemoveLink?: (linkId: string) => void;
   onSelectContainer?: (containerId: string) => void;
   wrapRef?: React.Ref<HTMLDivElement>;
+  /** 端侧收敛：手机竖屏隐藏缩放控件与缩略图，保留双指手势 */
+  showControls?: boolean;
+  showMiniMap?: boolean;
+  /** 上板定位：对应 cardId 的节点居中并闪烁 */
+  focusCardId?: string | null;
 }
 
 const nodeTypes = {
@@ -223,6 +264,8 @@ export function WhiteboardCanvasRF(props: WhiteboardCanvasRFProps) {
     mode, selectedIds, linkSourceId, actionBusyId, deletingId,
     onMove, onSelect, onOpen, onRequestOpen, onLinkRequest, onResize, onGestureStart, onEdit, onAction, onDelete,
     onMentionRef, onViewportChange, onRemoveLink, onSelectContainer, wrapRef, onToggleCollapse, onSourceChange,
+    advancedInInspector = false,
+    showControls = true, showMiniMap = true, focusCardId = null,
   } = props;
 
   const rfNodes: Node[] = useMemo(() => {
@@ -254,14 +297,16 @@ export function WhiteboardCanvasRF(props: WhiteboardCanvasRFProps) {
         linkSource: linkSourceId === n.id,
         linkMode: mode === "link",
         containerMode: mode === "container",
+        flash: !!focusCardId && focusCardId === n.cardId,
         actionBusy: actionBusyId === n.id,
         deleteBusy: deletingId === n.id,
         onMove, onSelect, onOpen, onRequestOpen, onLinkRequest, onResize, onGestureStart, onEdit, onAction, onDelete, onMentionRef, onToggleCollapse, onSourceChange,
+        advancedInInspector,
       } as WbCardNodeData,
     }));
     return [...groupNodes, ...cardNodes];
-  }, [nodes, containers, selectedIds, linkSourceId, mode, actionBusyId, deletingId,
-    onMove, onSelect, onOpen, onRequestOpen, onLinkRequest, onResize, onGestureStart, onEdit, onAction, onDelete, onMentionRef, onToggleCollapse, onSourceChange]);
+  }, [nodes, containers, selectedIds, linkSourceId, mode, focusCardId, actionBusyId, deletingId,
+    onMove, onSelect, onOpen, onRequestOpen, onLinkRequest, onResize, onGestureStart, onEdit, onAction, onDelete, onMentionRef, onToggleCollapse, onSourceChange, advancedInInspector]);
 
   const rfEdges: Edge[] = useMemo(() => {
     const ids = new Set(nodes.map((n) => `node-${n.id}`));
@@ -324,6 +369,12 @@ export function WhiteboardCanvasRF(props: WhiteboardCanvasRFProps) {
     }
   }, [mode, onSelectContainer]);
 
+  // 1.0 内存底座：大画布启用视口虚拟化。等待全部节点完成一次测量后再开启，
+  // 避免 ReactFlow 因缺少节点尺寸而在首次渲染时把画布算成空白。
+  const nodesInitialized = useNodesInitialized();
+  const virtualize =
+    rfNodes.length > VIRTUALIZE_NODE_THRESHOLD && nodesInitialized;
+
   return (
     <div className="absolute inset-0" ref={wrapRef}>
       <ReactFlow
@@ -339,12 +390,23 @@ export function WhiteboardCanvasRF(props: WhiteboardCanvasRFProps) {
         elementsSelectable={false}
         panOnDrag={mode !== "container"}
         zoomOnDoubleClick={false}
+        onlyRenderVisibleElements={virtualize}
         proOptions={{ hideAttribution: true }}
         fitView={false}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1.4} color="var(--color-line-soft)" />
-        <Controls showInteractive={false} />
-        <MiniMap pannable zoomable position="bottom-right" nodeColor={() => "var(--color-line)"} maskColor="var(--color-paper)" bgColor="var(--color-paper-soft)" />
+        <FocusNodeSync nodeId={focusCardId ? `node-${focusCardId}` : null} />
+        {showControls && <Controls showInteractive={false} />}
+        {showMiniMap && (
+          <MiniMap
+            pannable
+            zoomable
+            position="bottom-right"
+            nodeColor={() => "var(--color-line)"}
+            maskColor="var(--color-paper)"
+            bgColor="var(--color-paper-soft)"
+          />
+        )}
       </ReactFlow>
     </div>
   );

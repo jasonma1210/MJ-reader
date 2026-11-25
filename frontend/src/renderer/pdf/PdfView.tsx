@@ -6,6 +6,7 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { loadBookFile } from "../../utils/bookFileLoader";
 import { logError } from "../../utils/logError";
 import { friendlyError } from "../../utils/friendlyError";
+import { toast } from "../../utils/toast";
 import { resolveReaderTypography, useReaderStore } from "../../stores/readerStore";
 import { useHighlightStore } from "../../stores/highlightStore";
 import { registerReaderTextProvider } from "../../utils/readerTextSource";
@@ -17,7 +18,9 @@ import {
 import { findTextRange } from "../../utils/textRangeFinder";
 import type { TocNode } from "../../services/aiService";
 import { settingsService } from "../../services/settingsService";
-import { usePdfPageCache } from "./usePdfPageCache";
+import { useVisionProfile } from "../visual/einkProfile";
+import { usePdfPageCache, ensurePageTextContent } from "./usePdfPageCache";
+import { reflowTextContentToHtml } from "./reflow/pdfReflow";
 import { PdfPageCanvas, type PdfPageCanvasHandle } from "./PdfPageCanvas";
 import type { PdfHighlightEntry } from "./pdfHighlightOverlay";
 
@@ -30,6 +33,26 @@ pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(
 const MAX_IMAGE_SIZE = 1048576;
 const LARGE_PDF_THRESHOLD = 10 * 1024 * 1024;
 const MAX_SCALE = 2.0;
+
+type PdfViewMode = "original" | "reflow";
+
+// P1-6：隐藏章节以每本书的 localStorage 列表为准（目录「更多」菜单写入
+// mjnexus:reader-toc-hide 事件，仅重排视图可隐藏）。过滤在 buildPdfToc.walk() 落地。
+const HIDDEN_TOC_PREFIX = "mjnexus.pdf.hiddenToc.";
+function readHiddenTocTitles(bookId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(`${HIDDEN_TOC_PREFIX}${bookId}`);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((x): x is string => typeof x === "string")
+        : [],
+    );
+  } catch (e) {
+    logError("PdfView.readHiddenTocTitles", e);
+    return new Set();
+  }
+}
 
 /** 字节 → base64（分块避免大数组拼接导致调用栈溢出） */
 function bytesToBase64(bytes: Uint8Array): string {
@@ -58,8 +81,12 @@ interface PdfOutlineItem {
 async function buildPdfToc(
   pdf: PDFDocumentProxy,
   outline: PdfOutlineItem[] | undefined | null,
+  bookId: string,
 ): Promise<{ nodes: TocNode[]; pageMap: Map<string, number> }> {
   const pageMap = new Map<string, number>();
+  // P1-6：隐藏章节过滤在 walk() 的 push 前，pageMap.set 紧随其后，同一判断同时跳过二者，
+  // 避免「目录隐藏了但页码映射还在」导致隐藏章节仍可被跳转（偏移）。
+  const hiddenTitles = readHiddenTocTitles(bookId);
   if (!Array.isArray(outline) || outline.length === 0) return { nodes: [], pageMap };
 
   async function resolvePage(dest: unknown): Promise<number | null> {
@@ -77,7 +104,8 @@ async function buildPdfToc(
       // getPageIndex(ref) 返回 0 基索引；非可见页（如封面翻转）抛错按无定位处理
       const index = await pdf.getPageIndex({ num, gen: first.gen ?? 0 });
       return Number.isFinite(index) && index >= 0 ? index + 1 : null;
-    } catch {
+    } catch (e) {
+      logError("PdfView.resolvePage", e);
       return null;
     }
   }
@@ -86,7 +114,7 @@ async function buildPdfToc(
     const out: TocNode[] = [];
     for (const item of items) {
       const title = (item.title ?? "").trim();
-      if (!title) continue;
+      if (!title || hiddenTitles.has(title)) continue;
       const page = await resolvePage(item.dest);
       const node: TocNode = { title };
       if (typeof page === "number" && page > 0) {
@@ -121,6 +149,19 @@ const resolveHighlightColor = (color: string): string =>
 
 export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string }) {
   const { t } = useTranslation();
+  // P0-3：视觉真源，只取 primitive 依赖；filter 作用于容器而非 canvas 像素，且不挂 html.dark。
+  // P0-6 的预取范围/并发由 usePdfPageCache 内部按同一 einkProfile 平台配置解析。
+  const vision = useVisionProfile();
+  const pdfSlotStyle = useCallback(
+    (base?: React.CSSProperties): React.CSSProperties => ({
+      position: "relative",
+      display: "inline-block",
+      // 视觉滤镜已上移到 ReaderPage 根容器（整页统一），此处不再局部施加。
+      transitionDuration: vision.reduceMotion ? "0ms" : "200ms",
+      ...base,
+    }),
+    [vision.reduceMotion],
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<PDFDocumentProxy | null>(null);
   const loadingTaskRef = useRef<{ destroy: () => Promise<void> } | null>(null);
@@ -138,6 +179,14 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
   const renderWaiterRef = useRef<(() => void) | null>(null);
   /** PDF 书签目录：title→页码。目录项点击（scroll-to {title}）据此定位 */
   const pdfTocMapRef = useRef<Map<string, number>>(new Map());
+  /** 视图模式镜像，供 rAF / 全局事件回调读取最新值（避免 useCallback 闭包过期） */
+  const viewModeRef = useRef<PdfViewMode>("original");
+  /** 当前页是否有文字层；false 时重排开关置灰并回退原页 */
+  const noTextLayerRef = useRef(false);
+  /** 重排视图容器（只读展示，不写 highlights.cfi_range） */
+  const reflowContainerRef = useRef<HTMLDivElement>(null);
+  /** 滚动停止约 120ms 后再 render 的防抖句柄 */
+  const renderDebounceRef = useRef<number | null>(null);
   // 手势翻页：滑动起点 / 双击计时
   const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const lastTapRef = useRef<{ x: number; y: number; t: number } | null>(null);
@@ -147,6 +196,25 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
   const [totalPages, setTotalPages] = useState(0);
   const [loadProgress, setLoadProgress] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  /** P1-1：PDF 视图模式，默认原页；两模式互斥渲染 */
+  const [viewMode, setViewMode] = useState<PdfViewMode>("original");
+
+  // P1-6：向目录面板广播当前是否重排视图，决定「隐藏章节」入口是否可见。
+  // 原页视图下隐藏章节无意义，故不暴露入口（避免「有开关无功能」）。
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("mjnexus:pdf-reflow-mode", { detail: { enabled: viewMode === "reflow" } }),
+    );
+    return () => {
+      window.dispatchEvent(
+        new CustomEvent("mjnexus:pdf-reflow-mode", { detail: { enabled: false } }),
+      );
+    };
+  }, [viewMode]);
+  /** P1-5：当前页无文字层 → 开关置灰 + 内联提示 + 回退原页 */
+  const [noTextLayer, setNoTextLayer] = useState(false);
+  /** 当前页重排 HTML（仅 reflow 模式消费） */
+  const [reflowHtml, setReflowHtml] = useState("");
 
   const setProgress = useReaderStore((s) => s.setProgress);
   const setPageInfo = useReaderStore((s) => s.setPageInfo);
@@ -189,6 +257,40 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
     return unsub;
   }, [bookId, syncHighlights]);
 
+  /** 当前可见正文：重排模式读重排容器（只读），原页模式读 canvas 文本层 */
+  const readVisibleText = useCallback(() => {
+    if (viewModeRef.current === "reflow" && !noTextLayerRef.current) {
+      return reflowContainerRef.current?.innerText ?? "";
+    }
+    return pageCanvasRef.current?.textLayer?.innerText ?? "";
+  }, []);
+
+  /** 解析 outline → TocNode + pageMap，注册到真实目录链路（TocModal:187 → TocList:52-60） */
+  const applyPdfToc = useCallback(
+    async (pdf: PDFDocumentProxy, isCancelled: () => boolean = () => false) => {
+      try {
+        const outline = await pdf.getOutline();
+        if (isCancelled()) return;
+        const { nodes, pageMap } = await buildPdfToc(
+          pdf,
+          outline as PdfOutlineItem[] | null,
+          bookId,
+        );
+        if (isCancelled()) return;
+        pdfTocMapRef.current = pageMap;
+        if (nodes.length > 0) {
+          registerReaderTocProvider(() => nodes);
+          window.dispatchEvent(
+            new CustomEvent("mjnexus:reader-toc", { detail: { nodes } }),
+          );
+        }
+      } catch (e) {
+        logError("PdfView.getOutline", e);
+      }
+    },
+    [bookId],
+  );
+
   async function renderPageInternal(num: number) {
     if (renderingRef.current) {
       pendingPageRef.current = num;
@@ -197,10 +299,18 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
     renderingRef.current = true;
     try {
       const pdf = pdfRef.current;
-      const slot = pageCanvasRef.current;
-      if (!pdf || !slot) return;
+      if (!pdf) return;
 
       const entry = await pageCache.get(num, pdf);
+
+      // P1-5：无文字层检测统一走 ensurePageTextContent。取文本为空 → 本页不可重排，
+      // 开关置灰并回退原页；有文字层才进入重排展示。
+      const textContent = await ensurePageTextContent(entry);
+      const hasText = textContent.items.some(
+        (item) => "str" in item && typeof item.str === "string" && item.str.trim().length > 0,
+      );
+      noTextLayerRef.current = !hasText;
+      setNoTextLayer(!hasText);
 
       if (!initialScaleSetRef.current && containerRef.current) {
         const page = entry.page;
@@ -213,9 +323,19 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
         initialScaleSetRef.current = true;
       }
 
-      const renderScale = Math.min(scaleRef.current, MAX_SCALE);
-      const viewport = entry.page.getViewport({ scale: renderScale });
-      await slot.renderPage(entry, viewport, renderScale, num);
+      const reflowMode = viewModeRef.current === "reflow";
+      if (reflowMode && hasText) {
+        // 重排视图：只读展示当前页重排 HTML，不渲染 canvas、不写 highlights.cfi_range。
+        setReflowHtml(reflowTextContentToHtml(textContent).html);
+      } else {
+        // 原页视图，或重排模式下本页无文字层 → 回退原页 canvas（提示条由 noTextLayer 驱动）。
+        if (reflowMode) setReflowHtml("");
+        const slot = pageCanvasRef.current;
+        if (!slot) return;
+        const renderScale = Math.min(scaleRef.current, MAX_SCALE);
+        const viewport = entry.page.getViewport({ scale: renderScale });
+        await slot.renderPage(entry, viewport, renderScale, num);
+      }
 
       currentPageRef.current = num;
       setCurrentPage(num);
@@ -224,10 +344,7 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
       useReaderStore
         .getState()
         .setLastPosition({ bookId, fraction: num / Math.max(1, pdf.numPages), cfi: `pdf:${num}` });
-      registerReaderTextProvider(() => {
-        const tl = pageCanvasRef.current?.textLayer;
-        return tl?.innerText ?? "";
-      });
+      registerReaderTextProvider(readVisibleText);
       // 跟读续页等待器：新页渲染完成 → 交还 next()
       const waiter = renderWaiterRef.current;
       if (waiter) {
@@ -272,23 +389,65 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
   }
 
   const renderPage = useCallback((num: number) => {
+    // 滚动停止约 120ms 后再 render：连续滑动只绘制最终页，避免中间页反复解码。
     if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
-    rafIdRef.current = requestAnimationFrame(() => {
-      rafIdRef.current = null;
-      void renderPageInternal(num);
-    });
+    if (renderDebounceRef.current !== null) window.clearTimeout(renderDebounceRef.current);
+    renderDebounceRef.current = window.setTimeout(() => {
+      renderDebounceRef.current = null;
+      rafIdRef.current = requestAnimationFrame(() => {
+        rafIdRef.current = null;
+        void renderPageInternal(num);
+      });
+    }, 120);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 横竖屏 / 侧栏开合后重算缩放：原实现 fitScale 只算一次，旋转后 PDF 顶到 UI 安全区。
+  // 版心矩形已由 ReaderPage 扣除 UI 安全区，这里只需在当前版心内重新 fit 并重渲当前页。
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onViewportChange = () => {
+      if (!pdfRef.current) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        initialScaleSetRef.current = false;
+        renderPage(currentPageRef.current);
+      }, 160);
+    };
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      let lastW = 0;
+      let lastH = 0;
+      ro = new ResizeObserver((entries) => {
+        const cr = entries[0]?.contentRect;
+        if (!cr) return;
+        if (Math.abs(cr.width - lastW) < 1 && Math.abs(cr.height - lastH) < 1) return;
+        lastW = cr.width;
+        lastH = cr.height;
+        onViewportChange();
+      });
+      ro.observe(containerRef.current);
+    }
+    window.addEventListener("orientationchange", onViewportChange);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("orientationchange", onViewportChange);
+      if (timer) clearTimeout(timer);
+    };
+  }, [renderPage]);
+
   // 跟读适配器 + 阅读位置源（v3.5：TTS 逐句高亮跟随 / 自动翻页续读 / 精确页码书签）
   useEffect(() => {
-    const text = () => pageCanvasRef.current?.textLayer?.innerText ?? "";
+    const text = readVisibleText;
     registerReaderFollowAdapter({
       text,
       locate(sentence) {
-        const tl = pageCanvasRef.current?.textLayer;
-        if (!tl) return false;
-        const range = findTextRange(tl, sentence);
+        const root =
+          viewModeRef.current === "reflow" && !noTextLayerRef.current
+            ? reflowContainerRef.current
+            : (pageCanvasRef.current?.textLayer ?? null);
+        if (!root) return false;
+        const range = findTextRange(root, sentence);
         if (!range) return false;
         try {
           const sel = window.getSelection();
@@ -337,10 +496,9 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
             renderWaiterRef.current = null;
           }
           cp = currentPageRef.current;
-          const tl = pageCanvasRef.current?.textLayer;
-          const pageText = tl?.innerText?.trim() ?? "";
+          const pageText = readVisibleText().trim();
           // 页面确实前进到 target 且该页有文字 → 交还下一页正文；否则（空白页/未渲染完）继续找
-          if (cp === target && pageText) return tl!.innerText;
+          if (cp === target && pageText) return pageText;
           if (cp >= totalPages) break;
         }
         return null;
@@ -365,7 +523,33 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
       registerReaderFollowAdapter(null);
       registerReaderLocationProvider(null);
     };
-  }, [totalPages, renderPage]);
+  }, [totalPages, renderPage, readVisibleText]);
+
+  // P1-6：目录「更多」菜单派发隐藏事件（仅重排视图可用）。写入持久化后重建 TOC，
+  // walk() 在 push 前过滤隐藏章节并同步跳过 pageMap.set，避免隐藏章节仍可跳转。
+  useEffect(() => {
+    const onHideChapter = (e: Event) => {
+      const d = (e as CustomEvent<{ bookId?: string; title?: string }>).detail;
+      const title = d?.title?.trim();
+      if (!title || (d?.bookId && d.bookId !== bookId)) return;
+      if (viewModeRef.current !== "reflow") return;
+      try {
+        const key = `${HIDDEN_TOC_PREFIX}${bookId}`;
+        const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+        const prev = Array.isArray(parsed)
+          ? parsed.filter((x): x is string => typeof x === "string")
+          : [];
+        localStorage.setItem(key, JSON.stringify([...new Set([...prev, title])]));
+        const pdf = pdfRef.current;
+        if (pdf) void applyPdfToc(pdf);
+      } catch (err) {
+        logError("PdfView.hideChapter", err);
+      }
+    };
+    window.addEventListener("mjnexus:reader-toc-hide", onHideChapter as EventListener);
+    return () =>
+      window.removeEventListener("mjnexus:reader-toc-hide", onHideChapter as EventListener);
+  }, [bookId, applyPdfToc]);
 
   useEffect(() => {
     let cancelled = false;
@@ -418,25 +602,8 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
 
         // 提取 PDF 原生书签（outline）作为内在目录，注册给目录 Tab（无需 AI 生成）。
         // 有 outline 的书应显示其真实章节；解析失败/无书签则回退到 ai_toc。
-        pdf
-          .getOutline()
-          .then((outline) => {
-            if (cancelled) return;
-            return buildPdfToc(pdf, outline as PdfOutlineItem[] | null).then(
-              ({ nodes, pageMap }) => {
-                pdfTocMapRef.current = pageMap;
-                if (nodes.length > 0) {
-                  registerReaderTocProvider(() => nodes);
-                  window.dispatchEvent(
-                    new CustomEvent("mjnexus:reader-toc", {
-                      detail: { nodes },
-                    }),
-                  );
-                }
-              },
-            );
-          })
-          .catch((e) => logError("PdfView.getOutline", e));
+        // P1-6：隐藏章节过滤已在 buildPdfToc.walk() 内按 bookId 生效。
+        void applyPdfToc(pdf, () => cancelled);
 
         // 恢复上次阅读进度 → 定位页码（内存缓存优先）
         let targetPage = 1;
@@ -481,6 +648,10 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
         cancelAnimationFrame(rafIdRef.current);
         rafIdRef.current = null;
       }
+      if (renderDebounceRef.current !== null) {
+        window.clearTimeout(renderDebounceRef.current);
+        renderDebounceRef.current = null;
+      }
       pageCache.clearAll();
       pageCanvasRef.current?.clear();
       // 高亮选中描边（5.4）：卸载时重置 active，避免跨书残留
@@ -499,7 +670,7 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
       }
       const task = loadingTaskRef.current;
       if (task) {
-        task.destroy().catch(() => {});
+        task.destroy().catch((e) => logError("PdfView.destroy", e));
         loadingTaskRef.current = null;
       }
       pdfRef.current = null;
@@ -544,7 +715,14 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
       if (dir === 0 || totalPages <= 0) return;
       const cur = currentPageRef.current ?? 1;
       const next = cur + dir;
-      if (next >= 1 && next <= totalPages) renderPage(next);
+      if (next >= 1 && next <= totalPages) {
+        renderPage(next);
+        window.dispatchEvent(
+          new CustomEvent("mjnexus:reader-page-turned", {
+            detail: { direction: dir < 0 ? -1 : 1 },
+          }),
+        );
+      }
     };
     window.addEventListener("mjnexus:reader-flip", onFlip);
     return () => {
@@ -571,7 +749,27 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
 
   const go = (delta: number) => {
     const next = currentPageRef.current + delta;
-    if (next >= 1 && next <= totalPages) renderPage(next);
+    if (next >= 1 && next <= totalPages) {
+      renderPage(next);
+      window.dispatchEvent(
+        new CustomEvent("mjnexus:reader-page-turned", {
+          detail: { direction: delta < 0 ? -1 : 1 },
+        }),
+      );
+    }
+  };
+
+  /** P1-1：切换视图模式。无文字层时给出明确提示（不静默吞掉点击），
+   *  并回退原页；切换即重渲当前页，避免残留 canvas。 */
+  const changeViewMode = (mode: PdfViewMode) => {
+    if (mode === "reflow" && noTextLayer) {
+      toast(t("reader.pdf.noTextLayer"));
+      return;
+    }
+    if (mode === viewModeRef.current) return;
+    viewModeRef.current = mode;
+    setViewMode(mode);
+    renderPage(currentPageRef.current);
   };
 
   // 分页点击翻页热区：左=上一页 / 右=下一页；轻触即翻页（滑动/选字不受影响）。
@@ -620,7 +818,14 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
     const now = Date.now();
     if (dist < 30 && dt < 300) {
       if (last && now - last.t < 300 && Math.hypot(t.clientX - last.x, t.clientY - last.y) < 40) {
-        toggleZoom();
+        // 区域分流：中间 40% 双击弹菜单；左右两侧双击保留原来的缩放
+        const rect = containerRef.current?.getBoundingClientRect();
+        const ratio = rect && rect.width > 0 ? (t.clientX - rect.left) / rect.width : 0;
+        if (ratio >= 0.3 && ratio <= 0.7) {
+          window.dispatchEvent(new Event("mjnexus:reader-double-tap"));
+        } else {
+          toggleZoom();
+        }
         lastTapRef.current = null;
         return;
       }
@@ -697,15 +902,64 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
         </div>
       )}
 
-      <div className="pdf-page-slot relative" style={{ position: "relative", display: "inline-block" }}>
-        <PdfPageCanvas
-          ref={pageCanvasRef}
-          pageNum={1}
-          highlightEntries={highlightsRef}
-          interactive
-          currentPageRef={currentPageRef}
+      {/* P1-1：PDF 视图模式开关（原页 / 重排，默认原页）；无文字层时重排置灰 */}
+      {totalPages > 0 && !loading && !error && (
+        <div
+          className="absolute left-1/2 top-2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full bg-black/40 p-0.5 text-xs text-white"
+          role="group"
+          aria-label={t("reader.pdf.mode.title")}
+        >
+          {(["original", "reflow"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              // 不用原生 disabled：否则点击被吞、无任何反馈（用户报「重排按钮无法使用」）。
+              // 改为 aria-disabled + 视觉弱化，点击时由 changeViewMode 给出明确 toast。
+              aria-disabled={mode === "reflow" && noTextLayer}
+              title={mode === "reflow" && noTextLayer ? t("reader.pdf.noTextLayer") : undefined}
+              aria-pressed={viewMode === mode}
+              onClick={(e) => {
+                e.stopPropagation();
+                changeViewMode(mode);
+              }}
+              className={`rounded-full px-3 py-1 transition-colors ${
+                mode === "reflow" && noTextLayer ? "cursor-not-allowed opacity-60" : ""
+              } ${
+                viewMode === mode ? "bg-white/25 text-white" : "text-white/75"
+              }`}
+            >
+              {t(mode === "original" ? "reader.pdf.mode.original" : "reader.pdf.mode.reflow")}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* P1-1：两模式互斥渲染。无文字层时即便处于 reflow 也回退原页。 */}
+      {!(viewMode === "reflow" && !noTextLayer) && (
+        <div className="pdf-page-slot relative" style={pdfSlotStyle()}>
+          <PdfPageCanvas
+            ref={pageCanvasRef}
+            pageNum={1}
+            highlightEntries={highlightsRef}
+            interactive
+            currentPageRef={currentPageRef}
+          />
+        </div>
+      )}
+      {viewMode === "reflow" && !noTextLayer && (
+        <div
+          ref={reflowContainerRef}
+          className="pdf-reflow-container relative h-full w-full overflow-auto px-6 py-12"
+          style={pdfSlotStyle({ display: "block", width: "100%", height: "100%" })}
+          dangerouslySetInnerHTML={{ __html: reflowHtml }}
         />
-      </div>
+      )}
+      {/* P1-5：无文字层降级提示，与置灰开关同时出现 */}
+      {viewMode === "reflow" && noTextLayer && !loading && !error && (
+        <div className="absolute left-1/2 top-12 z-20 -translate-x-1/2 rounded bg-black/60 px-3 py-1.5 text-xs text-white">
+          {t("reader.pdf.noTextLayer")}
+        </div>
+      )}
 
       {/* 分页点击翻页热区：左=上一页 / 右=下一页；透明背景不遮挡页面 */}
       <button

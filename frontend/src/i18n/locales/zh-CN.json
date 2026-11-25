@@ -266,11 +266,27 @@
     "highlighted": "已高亮",
     "noteSelectFirst": "请先选择要批注的文本",
     "viewMode": {
-      "noPageHint": "当前格式无原生页码，仅支持滚动模式"
+      "noPageHint": "当前格式无原生页码，仅支持滚动模式",
+      "switchToScroll": "切换为上下滚动",
+      "switchToPages": "切换为左右翻页"
     },
     "breakdownStop": "中止",
     "breakdownViewProgress": "查看进度",
-    "breakdownStopped": "已中止拆书"
+    "breakdownStopped": "已中止拆书",
+    "align": "对齐",
+    "letterSpacing": "字距",
+    "pdf": {
+      "mode": {
+        "title": "PDF 视图模式",
+        "original": "原页",
+        "reflow": "重排"
+      },
+      "noTextLayer": "该 PDF 无文字层，无法重排，已保持原页",
+      "onlyEpub": "该设置仅对 EPUB 生效"
+    },
+    "toc": {
+      "hideChapter": "隐藏此章节"
+    }
   },
   "aiModel": {
     "title": "AI 模型",
@@ -406,6 +422,7 @@
   },
   "highlights": {
     "title": "高亮",
+    "exportMarkdown": "导出高亮为 Markdown",
     "empty": "暂无高亮。选中文字后点「标注」添加。",
     "page": "第 {{page}} 页",
     "location": "位置 {{loc}}",
@@ -446,6 +463,10 @@
     "boardDone": "已上板",
     "boardDup": "该划线已在白板",
     "boardFailed": "上板失败",
+    "boardDoneWithView": "已上板 · 查看卡片",
+    "boardView": "查看卡片",
+    "more": "更多",
+    "moreAi": "更多 · AI",
     "makeCard": "制卡",
     "quizMe": "考我",
     "cardSaved": "已存入复习队列",
@@ -462,7 +483,10 @@
     "inlineAttachHl": "附到高亮",
     "inlineNoteSaved": "已存为笔记",
     "inlineHlAttached": "已附到高亮备注",
-    "inlineSaveFailed": "保存失败，请重试"
+    "inlineSaveFailed": "保存失败，请重试",
+    "inlineCopy": "复制",
+    "inlineCopied": "已复制",
+    "inlineCopyFailed": "复制失败，请重试"
   },
   "ai": {
     "title": "AI 助手",
@@ -723,6 +747,7 @@
     "masteryPct": "（掌握 {{pct}}%）",
     "saveNote": "保存旁注",
     "savedToLibrary": "旁注已保存到笔记库",
+    "saveFailed": "保存失败，请重试",
     "done": "完成",
     "exported": "已导出",
     "exportMarkdown": "导出 Markdown",
@@ -742,6 +767,10 @@
     "voicePlaceholder": "[语音]（暂无转写，点击跳转原文播放）",
     "voiceLabel": "录音",
     "transcribing": "转写中…",
+    "transcribed": "已转写",
+    "noTranscript": "暂无转写",
+    "saving": "保存中…",
+    "saveOk": "保存成功",
     "asrFailed": "语音转写失败：{{msg}}",
     "playPlayback": "播放录音",
     "pausePlayback": "暂停播放",
@@ -1024,7 +1053,8 @@
       "aimodelHint": "AI 模型能力将在后续版本开放，当前不可配置。",
       "theme": "外观与护眼",
       "language": "语言",
-      "about": "关于与隐私"
+      "about": "关于与隐私",
+      "vision": "阅读视觉"
     },
     "theme": {
       "light": "暖白（亮）",
@@ -1162,10 +1192,13 @@
     "guide": {
       "title": "使用引导",
       "sub": "重看配置 AI / ASR / OCR 与学习方法"
-    }
+    },
+    "languageChanged": "语言已切换为 {{language}}"
   },
   "splash": {
-    "tagline": "AI 驱动的沉浸式阅读与记忆"
+    "tagline": "AI 驱动的沉浸式阅读与记忆",
+    "skip": "跳过启动动画",
+    "skipHint": "点击任意位置可跳过"
   },
   "onboarding": {
     "skip": "跳过",
@@ -1535,6 +1568,13 @@
   "whiteboard": {
     "title": "知识白板",
     "hintShort": "把笔记、标注与知识节点铺在无限白板上",
+    "moreTitle": "更多工具",
+    "phoneToolsAria": "白板底部工具栏",
+    "phoneMoreAria": "更多白板工具",
+    "autoArrange": "自动整理",
+    "sourceFilter": "来源筛选",
+    "cardLocated": "已定位到卡片",
+    "cardNotFound": "当前白板未找到该卡片",
     "scopeLabel": "作用域",
     "scopeAll": "全库",
     "refresh": "刷新",
@@ -1607,6 +1647,61 @@
     "backlinkMentions": "通过 @提及 引用",
     "backlinkEmpty": "该卡片暂无反向关联（未被连线或被 @提及）",
     "backlinkClose": "关闭反向关联",
+    "inspector": {
+      "title": "卡片检查器",
+      "open": "打开卡片检查器",
+      "tab": {
+        "content": "内容",
+        "relation": "关系",
+        "ai": "AI"
+      },
+      "source": "来源分类",
+      "outgoing": "本卡片指向",
+      "aiHint": "选择一个动作，结果会先进入 AI 草稿，确认采纳后才作为子卡片上板。",
+      "relationEmpty": "暂无关联卡片"
+    },
+    "template": {
+      "open": "白板模板",
+      "title": "选择白板模板",
+      "hint": "模板只影响新建卡片的标题与初始结构，不会自动铺卡，也不会改动已有内容。",
+      "reading": {
+        "name": "读书笔记",
+        "desc": "按摘录、想法、疑问组织笔记",
+        "title": "读书笔记 · ",
+        "body": "## 摘录\n\n\n## 我的想法\n\n\n## 疑问\n\n"
+      },
+      "concept": {
+        "name": "概念图",
+        "desc": "以核心概念为中心向外延伸",
+        "title": "概念：",
+        "body": "## 定义\n\n\n## 关联概念\n\n\n## 例子\n\n"
+      },
+      "mistake": {
+        "name": "错题本",
+        "desc": "记录题目、错因与正确解法",
+        "title": "错题 · ",
+        "body": "## 题目\n\n\n## 错因\n\n\n## 正确解法\n\n"
+      },
+      "chapter": {
+        "name": "章节地图",
+        "desc": "按章节梳理要点与结构",
+        "title": "章节 · ",
+        "body": "## 本章要点\n\n\n## 关键概念\n\n\n## 待复习\n\n"
+      },
+      "applied": "已应用模板「{{name}}」，新建卡片将使用该结构",
+      "none": "不使用模板"
+    },
+    "focusMode": {
+      "enter": "演示模式",
+      "exit": "退出演示",
+      "hint": "演示模式隐藏工具栏与检查器，仅保留画布"
+    },
+    "shortcutMenu": {
+      "title": "画布快捷菜单",
+      "addNote": "添加便签",
+      "autoArrange": "自动整理",
+      "exitFocus": "退出演示"
+    },
     "mentionInsert": "引用卡片",
     "mentionPickPlaceholder": "选择要引用的卡片…",
     "mentionMiss": "未找到被引用的卡片",
@@ -1716,6 +1811,17 @@
       "conceptCard": "概念卡",
       "misquestion": "错题"
     },
+    "present": {
+      "enter": "演示 / 专注模式",
+      "exit": "退出演示",
+      "hint": "已隐藏工具栏与检查器，按 Esc 或点击右上角退出演示。"
+    },
+    "context": {
+      "addNote": "添加便签",
+      "autoArrange": "自动整理",
+      "exitPresent": "退出演示"
+    },
+    "sourceFilterAll": "全部来源",
     "cardUndo": "撤销卡片操作 (⌘Z)",
     "cardRedo": "重做卡片操作 (⇧⌘Z)",
     "batch": {
@@ -2079,5 +2185,42 @@
   },
   "quiz": {
     "tokenCostWarning": "生成题目将消耗一定量 AI 词元（每题约 100-200 tokens），确认继续？"
+  },
+  "vision": {
+    "panel": {
+      "title": "阅读视觉"
+    },
+    "openPanel": "打开阅读视觉面板",
+    "mode": {
+      "title": "视觉模式",
+      "standard": "彩屏标准",
+      "simulated": "仿彩多色",
+      "ink": "墨水黑白",
+      "hint": "以下为软件滤镜效果，不改变屏幕硬件发光"
+    },
+    "temp": {
+      "title": "软件色温",
+      "auto": "跟随时间",
+      "manual": "手动固定",
+      "daytime": "日间偏冷（07:00–17:00）",
+      "dusk": "黄昏暖纸张（17:00–21:00）",
+      "night": "夜间暖暗（21:00–07:00）",
+      "warmth": "冷暖",
+      "intensity": "滤镜强度",
+      "disclaimer": "软件滤镜，非硬件前光；暗遮罩为叠加层，不强制熄屏"
+    },
+    "rhythm": {
+      "title": "阅读节奏",
+      "rest": "休息提醒",
+      "off": "关闭",
+      "m30": "每 30 分钟",
+      "m45": "每 45 分钟",
+      "m60": "每 60 分钟",
+      "toast": "已连续阅读 {{minutes}} 分钟，休息一下眼睛",
+      "wakelock": "本应用不申请屏幕常亮，熄屏由系统管理"
+    },
+    "highlight": {
+      "greyscale": "黑白模式下高亮（含已保存的）以高对比灰度显示"
+    }
   }
 }
