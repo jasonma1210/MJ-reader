@@ -80,6 +80,11 @@ pub async fn save_study_note(
 ) -> AppResult<StudyNote> {
     // v2.0（优化14）：后端参数校验，防止非法输入（负索引 / 超长标题）写入数据库
     validate_study_note_input(chapter_index, page_index, &title)?;
+    // W1：id 是媒体文件名与入库记录的共同主键，必须显式传入且非空，
+    // 否则会出现「媒体落在 A.id、记录写成空 id」的孤儿附件。
+    if id.trim().is_empty() || id.len() > 128 {
+        return Err(AppError::General("笔记 id 必须为 1..=128 字符".to_string()));
+    }
 
     let pool = &*state.db;
     let now = chrono::Utc::now().timestamp();
@@ -158,7 +163,7 @@ pub async fn update_study_note_content(
     let row = sqlx::query(
         "UPDATE study_notes \
          SET title = COALESCE(?, title), content = ?, updated_at = ? \
-         WHERE id = ? AND deleted_at IS NULL",
+         WHERE id = ? AND deleted_at IS NULL AND tombstone = 0",
     )
     .bind(&title)
     .bind(&content)
@@ -336,7 +341,7 @@ pub async fn list_study_notes(
     let pool = &*state.db;
     let rows = sqlx::query(
         "SELECT id, book_id, chapter_index, page_index, title, content, tags, linked_highlight_id, linked_flashcard_id, created_at, updated_at, note_type, media_url, transcript, knowledge_node_id, source
-         FROM study_notes WHERE book_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC",
+         FROM study_notes WHERE book_id = ? AND deleted_at IS NULL AND tombstone = 0 ORDER BY updated_at DESC",
     )
     .bind(&book_id)
     .fetch_all(pool)
@@ -376,7 +381,7 @@ pub async fn delete_study_note(
     let pool: &SqlitePool = &state.db;
     // v1.1.1 Stage 2 实现：删除笔记前先查询 media_url，删除后级联清理媒体文件
     let media_url: Option<String> = sqlx::query_scalar::<_, String>(
-        "SELECT media_url FROM study_notes WHERE id = ? AND deleted_at IS NULL",
+        "SELECT media_url FROM study_notes WHERE id = ? AND deleted_at IS NULL AND tombstone = 0",
     )
     .bind(&id)
     .fetch_optional(pool)
@@ -388,8 +393,9 @@ pub async fn delete_study_note(
         .bind(&id)
         .execute(pool)
         .await?;
-    // P1-2 软删除：不真删，打标 deleted_at（回收站语义）
-    sqlx::query("UPDATE study_notes SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
+    // P1-2 软删除：不真删，打标 deleted_at（回收站语义）；W1：同步打 CRDT 墓碑，
+    // 所有列表/解析查询统一过滤 tombstone = 0，避免软删笔记在同步/回填后复活。
+    sqlx::query("UPDATE study_notes SET deleted_at = ?, tombstone = 1 WHERE id = ? AND deleted_at IS NULL")
         .bind(chrono::Utc::now().timestamp())
         .bind(&id)
         .execute(pool)
@@ -451,7 +457,7 @@ pub struct KnowledgeGraphEdge {
 /// 按 to_title 解析 note_id（用于从 [[title]] 反向解析到现有笔记）
 async fn resolve_note_by_title(pool: &SqlitePool, title: &str) -> Option<String> {
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM study_notes WHERE title = ? COLLATE NOCASE AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1",
+        "SELECT id FROM study_notes WHERE title = ? COLLATE NOCASE AND deleted_at IS NULL AND tombstone = 0 ORDER BY updated_at DESC LIMIT 1",
     )
     .bind(title)
     .fetch_optional(pool)
@@ -493,7 +499,7 @@ pub async fn list_related_notes(
     for id in ids {
         let note_row = sqlx::query(
             "SELECT id, book_id, chapter_index, page_index, title, content, tags, linked_highlight_id, linked_flashcard_id, created_at, updated_at, note_type, media_url, transcript, knowledge_node_id, source
-             FROM study_notes WHERE id = ? AND deleted_at IS NULL",
+             FROM study_notes WHERE id = ? AND deleted_at IS NULL AND tombstone = 0",
         )
         .bind(&id)
         .fetch_optional(pool)
@@ -578,14 +584,14 @@ pub async fn get_knowledge_graph(
     // 1. 拉取笔记节点
     let note_rows = if include_all {
         sqlx::query(
-            "SELECT id, book_id, title FROM study_notes WHERE deleted_at IS NULL ORDER BY updated_at DESC",
+            "SELECT id, book_id, title FROM study_notes WHERE deleted_at IS NULL AND tombstone = 0 ORDER BY updated_at DESC",
         )
         .fetch_all(pool)
         .await?
     } else {
         let bid = book_id.clone().unwrap_or_default();
         sqlx::query(
-            "SELECT id, book_id, title FROM study_notes WHERE book_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC",
+            "SELECT id, book_id, title FROM study_notes WHERE book_id = ? AND deleted_at IS NULL AND tombstone = 0 ORDER BY updated_at DESC",
         )
         .bind(&bid)
         .fetch_all(pool)
@@ -605,7 +611,7 @@ pub async fn get_knowledge_graph(
             "SELECT nl.id, nl.from_note_id, nl.to_note_id, nl.to_title, nl.link_type, nl.created_at
              FROM note_links nl
              JOIN study_notes sn ON sn.id = nl.from_note_id
-             WHERE (sn.book_id = ? OR (nl.to_book_id IS NOT NULL AND nl.to_book_id = ?)) AND sn.deleted_at IS NULL",
+             WHERE (sn.book_id = ? OR (nl.to_book_id IS NOT NULL AND nl.to_book_id = ?)) AND sn.deleted_at IS NULL AND sn.tombstone = 0",
         )
         .bind(&bid)
         .bind(&bid)
@@ -805,14 +811,14 @@ async fn expand_graph_entities(
     let link_rows = if include_all {
         sqlx::query(
             "SELECT id, linked_highlight_id FROM study_notes
-             WHERE deleted_at IS NULL AND linked_highlight_id IS NOT NULL AND linked_highlight_id <> ''",
+             WHERE deleted_at IS NULL AND tombstone = 0 AND linked_highlight_id IS NOT NULL AND linked_highlight_id <> ''",
         )
         .fetch_all(pool)
         .await?
     } else {
         sqlx::query(
             "SELECT id, linked_highlight_id FROM study_notes
-             WHERE deleted_at IS NULL AND book_id = ? AND linked_highlight_id IS NOT NULL AND linked_highlight_id <> ''",
+             WHERE deleted_at IS NULL AND tombstone = 0 AND book_id = ? AND linked_highlight_id IS NOT NULL AND linked_highlight_id <> ''",
         )
         .bind(bid)
         .fetch_all(pool)
@@ -846,13 +852,13 @@ async fn expand_graph_entities(
     // tags 存的是逗号分隔字符串。同一标签被多本书的笔记引用时，
     // 它就成为跨书的枢纽节点——这是本次扩展真正的价值点。
     let tag_rows = if include_all {
-        sqlx::query("SELECT id, tags FROM study_notes WHERE deleted_at IS NULL AND tags IS NOT NULL AND tags <> ''")
+        sqlx::query("SELECT id, tags FROM study_notes WHERE deleted_at IS NULL AND tombstone = 0 AND tags IS NOT NULL AND tags <> ''")
             .fetch_all(pool)
             .await?
     } else {
         sqlx::query(
             "SELECT id, tags FROM study_notes
-             WHERE deleted_at IS NULL AND book_id = ? AND tags IS NOT NULL AND tags <> ''",
+             WHERE deleted_at IS NULL AND tombstone = 0 AND book_id = ? AND tags IS NOT NULL AND tags <> ''",
         )
         .bind(bid)
         .fetch_all(pool)
@@ -919,8 +925,9 @@ async fn expand_graph_entities(
 /// 返回绝对路径（相对路径无法被 Tauri 的 asset:// 协议 / convertFileSrc 正确解析），
 /// 前端 convertFileSrc(media_url) 即可渲染；DB 存本机绝对路径（本地 app_data，不跨设备同步）。
 #[tauri::command]
-pub fn save_study_note_media(
+pub async fn save_study_note_media(
     app: AppHandle,
+    state: State<'_, AppState>,
     note_id: String,
     note_type: String,
     data_url: String,
@@ -953,6 +960,10 @@ pub fn save_study_note_media(
     let file_name = format!("{}.{}", safe_note_id, ext);
     let file_path = media_dir.join(&file_name);
     std::fs::write(&file_path, &bytes)?;
+    // W2：媒体落盘后按档位执行配额清理（最久未用优先）；刚写入文件受保护。
+    if let Err(e) = crate::services::media_quota::enforce_all(&app, None, Some(&file_path)) {
+        log::warn!("[mediaQuota] 笔记媒体写入后配额清理失败: {}", e);
+    }
     log::info!(
         "Saved study note media: {} ({} bytes, type={})",
         file_path.display(),
@@ -960,10 +971,153 @@ pub fn save_study_note_media(
         note_type
     );
 
+    // W1：媒体落盘与入库共用同一个 note_id；写入侧同步生成完整性清单。
+    // 清单失败只记日志，不影响媒体保存主流程（失败隔离）。
+    if let Err(e) = crate::services::file_integrity::record_file(
+        &*state.db,
+        "note_media",
+        &note_id,
+        &file_path,
+    )
+    .await
+    {
+        log::warn!("[file_integrity] 笔记媒体清单记录失败 {}: {}", note_id, e);
+    }
+
     // 返回绝对路径：asset:// 协议要求绝对路径才能映射到 $APPDATA 作用域内资源
     let abs = file_path.to_string_lossy().into_owned();
     log::debug!("Study note media absolute path: {}", abs);
     Ok(abs)
+}
+
+/// W1 回填报告（camelCase 对齐前端 notesService.reconcileNoteMedia）
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconcileNoteMediaReport {
+    pub scanned: i64,
+    pub fixed: i64,
+    pub missing: i64,
+    pub failed: i64,
+}
+
+enum ReconcileOutcome {
+    Consistent,
+    Fixed,
+    Missing,
+    Failed(String),
+}
+
+/// 单条回填：从不内部 panic；任何异常转成 Failed 交给上层计数 + 日志。
+async fn reconcile_one_note_media(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    note_id: &str,
+    note_type: Option<&str>,
+    media_url: &str,
+) -> ReconcileOutcome {
+    let current = match resolve_media_path(app, media_url) {
+        Ok(p) => p,
+        Err(e) => return ReconcileOutcome::Failed(e.to_string()),
+    };
+    let safe_id = match sanitize_file_segment(note_id) {
+        Ok(id) => id,
+        Err(e) => return ReconcileOutcome::Failed(e.to_string()),
+    };
+    let known_dir = |s: &str| matches!(s, "voice" | "handwrite" | "image" | "video");
+    let sub_dir = match note_type.filter(|t| known_dir(t)) {
+        Some(t) => t.to_string(),
+        None => current
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .filter(|n| known_dir(n))
+            .unwrap_or("image")
+            .to_string(),
+    };
+    let ext: String = current
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect())
+        .filter(|e: &String| !e.is_empty())
+        .unwrap_or_else(|| "bin".to_string());
+
+    let app_data = match app.path().app_data_dir() {
+        Ok(p) => p,
+        Err(e) => return ReconcileOutcome::Failed(e.to_string()),
+    };
+    let expected_dir = app_data.join("notes").join(&sub_dir);
+    let expected_dir = expected_dir.canonicalize().unwrap_or(expected_dir);
+    let expected = expected_dir.join(format!("{}.{}", safe_id, ext));
+    if current == expected {
+        return ReconcileOutcome::Consistent;
+    }
+
+    if !current.exists() && !expected.exists() {
+        return ReconcileOutcome::Missing;
+    }
+    if current.exists() && !expected.exists() {
+        if let Err(e) = std::fs::rename(&current, &expected) {
+            return ReconcileOutcome::Failed(format!("rename {:?} -> {:?}: {}", current, expected, e));
+        }
+    }
+    // 两侧都有文件时保留历史文件（不静默删用户数据），只把 DB 指向规范路径。
+
+    if let Err(e) = sqlx::query("UPDATE study_notes SET media_url = ? WHERE id = ?")
+        .bind(expected.to_string_lossy().into_owned())
+        .bind(note_id)
+        .execute(pool)
+        .await
+    {
+        return ReconcileOutcome::Failed(format!("update media_url for {}: {}", note_id, e));
+    }
+    if let Err(e) = crate::services::file_integrity::record_file(
+        pool,
+        "note_media",
+        note_id,
+        &expected,
+    )
+    .await
+    {
+        log::warn!("[file_integrity] 回填媒体清单失败 {}: {}", note_id, e);
+    }
+    ReconcileOutcome::Fixed
+}
+
+/// W1（2026-11-25 数据正确性）：回填历史「note id 与媒体文件名不一致」记录。
+///
+/// 逐条处理，单条缺失/无权限/非法 id 只计入计数并 warn，绝不 panic、不中断其余记录。
+#[tauri::command]
+pub async fn reconcile_note_media(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<ReconcileNoteMediaReport> {
+    let pool = &*state.db;
+    let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, note_type, media_url FROM study_notes \
+         WHERE deleted_at IS NULL AND tombstone = 0 AND media_url IS NOT NULL AND media_url <> ''",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut report = ReconcileNoteMediaReport {
+        scanned: rows.len() as i64,
+        fixed: 0,
+        missing: 0,
+        failed: 0,
+    };
+    for (note_id, note_type, media_url) in rows {
+        let Some(media_url) = media_url else { continue };
+        match reconcile_one_note_media(&app, pool, &note_id, note_type.as_deref(), &media_url).await {
+            ReconcileOutcome::Fixed => report.fixed += 1,
+            ReconcileOutcome::Missing => report.missing += 1,
+            ReconcileOutcome::Failed(e) => {
+                log::warn!("[reconcile_note_media] 笔记 {} 回填失败: {}", note_id, e);
+                report.failed += 1;
+            }
+            ReconcileOutcome::Consistent => {}
+        }
+    }
+    Ok(report)
 }
 
 /// 删除多模态学习备注媒体文件（笔记删除时调用，保留为内部清理函数）。

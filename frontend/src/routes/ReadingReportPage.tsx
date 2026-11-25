@@ -5,6 +5,8 @@ import { ArrowLeft, Clock, Highlighter, StickyNote, MessageSquareText, Gauge, Fl
 import { Surface } from "../components/ui/Surface";
 import { Button } from "../components/ui/Button";
 import { EmptyState, LoadingState, ErrorState } from "../components/common/states/index";
+import { MobileSheet } from "../components/common/MobileSheet";
+import { useBreakpoint } from "../hooks/useLayoutMode";
 import { errMsg } from "../utils/toast";
 import { cn } from "../utils/cn";
 import {
@@ -25,6 +27,9 @@ export function ReadingReportPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation();
+  // W8 端侧分级：手机竖屏统计两列、热力图筛选收进更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
   const [report, setReport] = useState<ReadingReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +68,10 @@ export function ReadingReportPage() {
       <div>
         <button
           onClick={() => navigate(-1)}
-          className="mb-1 inline-flex items-center gap-1 text-sm font-medium text-ink-muted transition hover:text-ink"
+          className={cn(
+            "mb-1 inline-flex items-center gap-1 text-sm font-medium text-ink-muted transition hover:text-ink",
+            phonePortrait && "min-h-[var(--touch-target)]",
+          )}
         >
           <ArrowLeft className="h-4 w-4" />
           {t("common.back")}
@@ -194,7 +202,7 @@ function HeatmapSection({ bookId }: { bookId: string }) {
     <Surface pad="md" className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-ink">{t("readingReport.heatmap")}</span>
-        <div className="flex gap-1">
+        <MobileSheet title={t("readingReport.heatmap")}>
           {HEATMAP_KINDS.map((k) => (
             <button
               key={k}
@@ -207,7 +215,7 @@ function HeatmapSection({ bookId }: { bookId: string }) {
               {t(`readingReport.kind.${k}`)}
             </button>
           ))}
-        </div>
+        </MobileSheet>
       </div>
       {loading ? (
         <LoadingState fill={false} className="py-6" />

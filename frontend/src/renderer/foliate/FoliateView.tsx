@@ -3,6 +3,10 @@ import "foliate-js/view.js";
 import { Overlayer } from "foliate-js/overlayer.js";
 import { Loader2, AlertCircle } from "lucide-react";
 import { logError } from "../../utils/logError";
+import {
+  MEMORY_RELEASE_EVENT,
+  MEMORY_RESTORE_EVENT,
+} from "../../hooks/useMemoryGuard";
 import i18n from "../../i18n";
 import { useReaderStore } from "../../stores/readerStore";
 import { useVisionProfile, type VisionProfile } from "../visual/einkProfile";
@@ -1235,6 +1239,46 @@ export function FoliateView({ bookId }: { bookId: string }) {
       window.removeEventListener("pagehide", flush);
     };
   }, []);
+
+  // 内存守卫：foliate-js 没有公开的 section 缓存淘汰 API，因此只释放可回收的
+  // 搜索索引，并把 CFI/fraction 留在 readerStore.lastPosition 作为进度真源；
+  // 回前台按同一 CFI 重新定位（同位置为幂等），不重置到书首。
+  useEffect(() => {
+    const onRelease = () => {
+      const view = viewRef.current;
+      if (!view) return;
+      try {
+        view.clearSearch?.();
+      } catch (e) {
+        logError("FoliateView.memoryRelease", e);
+      }
+      const cfi = currentCfiRef.current;
+      const fraction = currentFractionRef.current;
+      if (fraction > 0) {
+        useReaderStore.getState().setLastPosition({
+          bookId,
+          fraction,
+          cfi: cfi || undefined,
+        });
+      }
+    };
+    const onRestore = () => {
+      const view = viewRef.current;
+      const cfi = currentCfiRef.current;
+      if (!view || !cfi) return;
+      try {
+        void view.goTo(cfi);
+      } catch (e) {
+        logError("FoliateView.memoryRestore", e);
+      }
+    };
+    window.addEventListener(MEMORY_RELEASE_EVENT, onRelease);
+    window.addEventListener(MEMORY_RESTORE_EVENT, onRestore);
+    return () => {
+      window.removeEventListener(MEMORY_RELEASE_EVENT, onRelease);
+      window.removeEventListener(MEMORY_RESTORE_EVENT, onRestore);
+    };
+  }, [bookId]);
 
   // 排版（v3.6.2 排版面板）变化 → 重新注入内容样式
   const fontSize = useReaderStore((s) => s.fontSize);

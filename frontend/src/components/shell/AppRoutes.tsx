@@ -17,6 +17,8 @@ import { AgeModePage } from "../../routes/me/AgeModePage";
 import { BackupPage } from "../../routes/me/BackupPage";
 import { AboutPage } from "../../routes/me/AboutPage";
 import { GuidePage } from "../../routes/me/GuidePage";
+import { StorageManagePage } from "../../routes/me/StorageManagePage";
+import { StudyGoalsPage } from "../../routes/me/StudyGoalsPage";
 import { KnowledgeAgentPage } from "../../routes/ai/KnowledgeAgentPage";
 import { TagsPage } from "../../routes/TagsPage";
 import { MasteryPage } from "../../routes/MasteryPage";
@@ -26,6 +28,7 @@ import { TeachingPage } from "../../routes/TeachingPage";
 // 第三、四梯队（P1 路径体系 + P1/P2 阅读增强与输出；Compare 已冻结入 _parked）
 import { LearningPathPage } from "../../routes/LearningPathPage";
 import { OutputPage } from "../../routes/OutputPage";
+import { KnowledgePackPage } from "../../routes/KnowledgePackPage";
 import { ReadingReportPage } from "../../routes/ReadingReportPage";
 
 /**
@@ -80,6 +83,7 @@ export function AppRoutes() {
         {/* 第三、四梯队：路径体系 / 知识输出 / 阅读报告（Compare 冻结：V2 收编为会话产出存笔记） */}
         <Route path="/path" element={<LearningPathPage />} />
         <Route path="/output" element={<OutputPage />} />
+        <Route path="/knowledge-pack" element={<KnowledgePackPage />} />
         <Route path="/report/:bookId" element={<ReadingReportPage />} />
         <Route path="/me" element={<MePage />} />
         {/* 我的页面子路由 */}
@@ -91,6 +95,8 @@ export function AppRoutes() {
         <Route path="/me/backup" element={<BackupPage />} />
         <Route path="/me/about" element={<AboutPage />} />
         <Route path="/me/guide" element={<GuidePage />} />
+        <Route path="/me/storage" element={<StorageManagePage />} />
+        <Route path="/me/study-goals" element={<StudyGoalsPage />} />
         <Route path="/whiteboard" element={<WhiteboardPage />} />
         <Route path="/whiteboard/:bookId" element={<WhiteboardPage />} />
         {/* AI 配置 */}

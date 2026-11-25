@@ -81,7 +81,7 @@ const WHITELIST = [
   "/whiteboard", "/whiteboard/:bookId",
   "/practice", "/teaching",
   "/me/asr", "/me/ocr", "/me/websearch", "/me/age", "/me/backup", "/me/about",
-  "/me/guide",
+  "/me/guide", "/me/storage", "/me/study-goals", "/knowledge-pack",
   "/ai-config", "/ai-config/remote", "/ai-config/ondevice", "/ai-config/ollama",
   "/*",
 ];

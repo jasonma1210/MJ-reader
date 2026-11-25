@@ -84,8 +84,8 @@ if (platform === "ios") {
 
   const systemReasonKey =
     systemStatus === "unsupported_platform"
-      ? "ai.asrSystemUnavailableBuild"
-      : "ai.asrSystemUnavailableDevice";
+      ? "asr.systemUnavailableBuild"
+      : "asr.systemUnavailableDevice";
 
   const shouldSwitch = selectedMode === "system";
   return {
@@ -105,4 +105,79 @@ export function normalizeSystemAsrStatus(raw: unknown): SystemAsrStatus {
     return raw;
   }
   return "denied";
+}
+
+/** 识别语言能力：iOS 系统识别（SFSpeechRecognizer）语言由系统语言设置决定。 */
+export interface AsrLanguageCapability {
+  /** 是否跟随系统语言 */
+  followSystem: boolean;
+  /** 固定语言标签；null 表示由系统/模型决定 */
+  language: string | null;
+  /** 说明文案 i18n key（跟随系统时给出明确提示） */
+  reasonKey: string | null;
+}
+
+export function resolveAsrLanguageCapability(
+  platform: AsrPlatform,
+  systemLanguage?: string | null,
+): AsrLanguageCapability {
+  if (platform === "ios") {
+    return {
+      followSystem: true,
+      language: null,
+      reasonKey: "asr.iosLanguageFollow",
+    };
+  }
+  return {
+    followSystem: false,
+    language: systemLanguage ?? null,
+    reasonKey: null,
+  };
+}
+
+/** 按档位展开的能力清单，供设置页逐档展示可用性/原因。 */
+export interface AsrModeCapability {
+  mode: AsrEngineMode;
+  available: boolean;
+  reasonKey: string | null;
+}
+
+export function resolveAsrCapabilities(
+  input: AsrModeAvailabilityInput,
+): AsrModeCapability[] {
+  const availability = resolveAsrModeAvailability(input);
+  return [
+    {
+      mode: "system",
+      available: availability.systemAvailable,
+      reasonKey: availability.systemReasonKey,
+    },
+    { mode: "local", available: true, reasonKey: null },
+    { mode: "cloud", available: true, reasonKey: null },
+  ];
+}
+
+/** 降级结论：原因 key + 含目标档位的完整提示 key（无降级时均为 null）。 */
+export interface AsrDegradation {
+  reasonKey: string | null;
+  noticeKey: string | null;
+  effectiveMode: AsrEngineMode;
+  shouldSwitch: boolean;
+}
+
+export function resolveAsrDegradation(
+  input: AsrModeAvailabilityInput,
+): AsrDegradation {
+  const availability = resolveAsrModeAvailability(input);
+  const noticeKey = availability.shouldSwitch
+    ? availability.effectiveMode === "cloud"
+      ? "asr.degradedToCloud"
+      : "asr.degradedToLocal"
+    : null;
+  return {
+    reasonKey: availability.systemReasonKey,
+    noticeKey,
+    effectiveMode: availability.effectiveMode,
+    shouldSwitch: availability.shouldSwitch,
+  };
 }

@@ -17,7 +17,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{Column, Row, SqlitePool, TypeInfo};
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{self, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, State};
 use zip::write::FileOptions;
@@ -29,6 +29,114 @@ pub(crate) const BACKUP_FORMAT_VERSION: i64 = 1;
 const BACKUP_DIR_NAME: &str = "backups";
 /// 加密容器魔数（前 9 字节），用于识别 .mjb 密文包
 const MIB_MAGIC: &[u8; 9] = b"MJNEXUS1!";
+/// 流式加密帧格式版本（magic 后第 10 字节）。旧包无此字节，解密侧兼容。
+const MIB_STREAM_VERSION: u8 = 2;
+/// 流式加密帧大小：1 MiB。内存占用恒定，与备份体积无关。
+pub(crate) const MIB_CHUNK_SIZE: usize = 1024 * 1024;
+
+/// 流式 AES-256-GCM 写包装器。
+///
+/// 每帧独立 nonce + 独立 AEAD tag，格式：`u32 明文长度(LE) + 12B nonce + 密文+tag`。
+/// 这样导出时无需把「整库 JSON + ZIP + 密文」三份同时驻留：ZipWriter 直接写入
+/// 临时文件（明文 ZIP 落盘），本包装器按 1MiB 帧读一点、加密一点写到最终 .mjb。
+/// 帧级 tag 同时提供逐帧完整性校验，损坏帧在解密时立即暴露。
+pub(crate) struct StreamingEncryptor<W: Write> {
+    inner: W,
+    cipher: Aes256Gcm,
+    nonce_base: [u8; 12],
+    counter: u32,
+    buf: Vec<u8>,
+}
+
+impl<W: Write> StreamingEncryptor<W> {
+    pub(crate) fn new(mut inner: W, password: &str) -> AppResult<Self> {
+        let key_bytes = derive_key(password.as_bytes());
+        let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let cipher = Aes256Gcm::new(key);
+        let nonce_base = Aes256Gcm::generate_nonce(&mut OsRng);
+        let mut nonce = [0u8; 12];
+        nonce.copy_from_slice(nonce_base.as_slice());
+        inner.write_all(MIB_MAGIC)?;
+        inner.write_all(&[MIB_STREAM_VERSION])?;
+        inner.write_all(&nonce)?;
+        Ok(Self {
+            inner,
+            cipher,
+            nonce_base: nonce,
+            counter: 0,
+            buf: Vec::with_capacity(MIB_CHUNK_SIZE),
+        })
+    }
+
+    fn frame_nonce(&self) -> [u8; 12] {
+        let mut nonce = self.nonce_base;
+        // 低 4 字节写帧序号；前 8 字节随机 → 同密钥下帧 nonce 不重复。
+        nonce[8..12].copy_from_slice(&self.counter.to_le_bytes());
+        nonce
+    }
+
+    fn write_frame(&mut self, plain: &[u8]) -> AppResult<()> {
+        if self.counter == u32::MAX {
+            return Err(AppError::General("备份超出流式加密帧数上限".to_string()));
+        }
+        let nonce = self.frame_nonce();
+        self.counter += 1;
+        let ct = self
+            .cipher
+            .encrypt(GenericArray::from_slice(&nonce), plain)
+            .map_err(|_| AppError::General("备份加密失败".to_string()))?;
+        self.inner.write_all(&(plain.len() as u32).to_le_bytes())?;
+        self.inner.write_all(&nonce)?;
+        self.inner.write_all(&ct)?;
+        Ok(())
+    }
+
+    /// ZipWriter.finish() 之后调用：把不足一帧的尾块落盘，并返回底层 writer。
+    pub(crate) fn finish(mut self) -> AppResult<W> {
+        if !self.buf.is_empty() {
+            let tail = std::mem::take(&mut self.buf);
+            self.write_frame(&tail)?;
+        }
+        self.inner.flush()?;
+        Ok(self.inner)
+    }
+}
+
+impl<W: Write> Write for StreamingEncryptor<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // 只接收到填满一帧为止；调用方（write_all）会继续投递剩余字节。
+        // 这样即使上游一次写入几十 MB，本结构里的缓冲也恒定 ≤1MiB。
+        let room = MIB_CHUNK_SIZE - self.buf.len();
+        let n = room.min(buf.len());
+        self.buf.extend_from_slice(&buf[..n]);
+        if self.buf.len() == MIB_CHUNK_SIZE {
+            let frame = std::mem::take(&mut self.buf);
+            self.buf = Vec::with_capacity(MIB_CHUNK_SIZE);
+            self.write_frame(&frame)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// 内存版流式加密封装，供单测验证分帧/解密往返；生产导出直接写文件流。
+pub(crate) fn streaming_encrypt_bytes(plain: &[u8], password: &str) -> AppResult<Vec<u8>> {
+    let mut enc = StreamingEncryptor::new(Vec::new(), password)?;
+    enc.write_all(plain)?;
+    enc.finish()
+}
+
+fn derive_key(secret: &[u8]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(secret);
+    let mut k = [0u8; 32];
+    k.copy_from_slice(&h.finalize());
+    k
+}
 
 /// 导入允许的根表白名单（防篡改注入），与 export 域一致
 const ALLOWED_TABLES: &[&str] = &[
@@ -181,40 +289,22 @@ pub struct BackupExportResult {
 
 // ---------------------------------------------------------------- 导出
 
-/// 导出命令：把指定（或全部）知识域打成 .zip 双件套（manifest + 分片）；若提供 aes_key，
-/// 整包 AES-256-GCM 加密输出 .mjb 单文件密文容器。全程只读，不锁写库、不影响阅读。
-/// `domains` 为空/None 时导出全部域；传入非空列表则按域选择性导出（Stage C 按域备份）。
-#[tauri::command]
-pub async fn backup_export(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    aes_key: Option<String>,
-    domains: Option<Vec<String>>,
-) -> AppResult<BackupExportResult> {
-    let pool = &*state.db;
-    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
-    let (extension, encrypted) = if aes_key.as_ref().is_some_and(|s| !s.is_empty()) {
-        ("mjb", true)
-    } else {
-        ("zip", false)
-    };
-    let file_name = format!("mjnexus-backup-{}.{}", ts, extension);
-    let root = backup_root(&app)?;
-    let final_path = root.join(&file_name);
-
-    // 用户显式挑选的域白名单（空列表 = 全量导出）
-    let want_domains: Vec<String> = domains.unwrap_or_default();
-    let filter = |domain: &str| want_domains.is_empty() || want_domains.iter().any(|d| d == domain);
-
-    // 1) 逐域导出（只读，缺表跳过；未勾选的域跳过）
-    let mut domain_stats: Vec<DomainStat> = Vec::new();
+/// 流式写入单个备份 ZIP：逐域读表 → 组 JSON → 立刻写 ZIP，域之间不累积正文。
+/// MANIFEST 最后写（ZIP 条目顺序无关，preview/import 都按名字定位）。
+async fn write_backup_stream<W: Write + Seek>(
+    writer: &mut ZipWriter<W>,
+    pool: &SqlitePool,
+    want_domains: &[String],
+    encrypted: bool,
+) -> AppResult<(Vec<DomainStat>, Map<String, Value>, usize, usize, String)> {
+    let options: FileOptions<'_, ()> = FileOptions::default();
+    let mut domain_stats = Vec::new();
     let mut manifest_domains = Map::new();
     let mut total_rows = 0usize;
     let mut total_bytes = 0usize;
-    let mut blobs: Vec<(String, Vec<u8>)> = Vec::new();
 
     for (domain, tables) in domain_tables() {
-        if !filter(&domain) {
+        if !want_domains.is_empty() && !want_domains.iter().any(|d| d == &domain) {
             continue;
         }
         let mut pieces = Map::new();
@@ -224,11 +314,12 @@ pub async fn backup_export(
             rows_in_domain += rows.len();
             pieces.insert(table.to_string(), Value::Array(rows));
         }
+        // 一次只有一个域的 JSON 存活：写完这道 write_all 即被释放。
         let body = json!({ "domain": domain, "schema": 1, "tables": pieces }).to_string();
-        let body_bytes = body.into_bytes();
-        let hash = domain_sha256(&body_bytes);
-        let bytes = body_bytes.len();
-        blobs.push((domain.clone(), body_bytes));
+        let hash = domain_sha256(body.as_bytes());
+        let bytes = body.len();
+        writer.start_file(format!("data/{}.json", domain), options)?;
+        writer.write_all(body.as_bytes())?;
         manifest_domains.insert(
             domain.clone(),
             json!({ "count": rows_in_domain, "sha256": hash, "bytes": bytes }),
@@ -257,31 +348,77 @@ pub async fn backup_export(
         "totals": { "rows": total_rows, "bytes": total_bytes },
         "encryption": { "enabled": encrypted }
     });
+    writer.start_file("MANIFEST.json", options)?;
+    writer.write_all(manifest.to_string().as_bytes())?;
+    Ok((domain_stats, manifest_domains, total_rows, total_bytes, created_at))
+}
 
-    // 2) 内存里打成 zip
-    let mut cursor = Cursor::new(Vec::new());
-    {
-        let mut writer = ZipWriter::new(&mut cursor);
-        let options: FileOptions<'_, ()> = FileOptions::default();
-        let manifest_bytes = manifest.to_string().into_bytes();
-        writer.start_file("MANIFEST.json", options)?;
-        writer.write_all(&manifest_bytes)?;
-        for (path, blob) in &blobs {
-            writer.start_file(format!("data/{}.json", path), options)?;
-            writer.write_all(blob)?;
-        }
-        writer.finish()?;
-    }
-    let zip_bytes = cursor.into_inner();
-
-    // 3) 可选加密 → 写最终文件
-    let out_bytes = if encrypted {
-        let key_b64 = aes_key.unwrap_or_default();
-        encrypt_container(&zip_bytes, &key_b64)?
+/// 导出命令：把指定（或全部）知识域打成 .zip 双件套（manifest + 分片）；若提供 aes_key，
+/// 整包 AES-256-GCM 加密输出 .mjb 单文件密文容器。全程只读，不锁写库、不影响阅读。
+/// `domains` 为空/None 时导出全部域；传入非空列表则按域选择性导出（Stage C 按域备份）。
+#[tauri::command]
+pub async fn backup_export(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    aes_key: Option<String>,
+    domains: Option<Vec<String>>,
+) -> AppResult<BackupExportResult> {
+    let pool = &*state.db;
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let (extension, encrypted) = if aes_key.as_ref().is_some_and(|s| !s.is_empty()) {
+        ("mjb", true)
     } else {
-        zip_bytes
+        ("zip", false)
     };
-    fs::write(&final_path, &out_bytes)?;
+    let file_name = format!("mjnexus-backup-{}.{}", ts, extension);
+    let root = backup_root(&app)?;
+    let final_path = root.join(&file_name);
+
+    // 用户显式挑选的域白名单（空列表 = 全量导出）
+    let want_domains: Vec<String> = domains.unwrap_or_default();
+
+    // 2) 流式落盘：ZIP 直接写文件（ZipWriter 需要 Seek）；加密时再按 1MiB 帧
+    //    从 ZIP 文件流式读、加密写最终文件。任一时刻内存里最多只有一个域的 JSON
+    //    + 一个 1MiB 帧，杜绝「全库 JSON + ZIP + 密文副本」三份同时驻留。
+    let zip_tmp = root.join(format!(".{}.zip.tmp", file_name));
+    let (domain_stats, _manifest_domains, total_rows, total_bytes, created_at) = {
+        let mut writer = ZipWriter::new(fs::File::create(&zip_tmp)?);
+        let r = write_backup_stream(&mut writer, pool, &want_domains, encrypted).await;
+        writer.finish()?;
+        r
+    }?;
+    if encrypted {
+        let mut enc = StreamingEncryptor::new(
+            fs::File::create(&final_path)?,
+            &aes_key.unwrap_or_default(),
+        )?;
+        {
+            let mut reader = io::BufReader::with_capacity(MIB_CHUNK_SIZE, fs::File::open(&zip_tmp)?);
+            let mut chunk = vec![0u8; MIB_CHUNK_SIZE];
+            loop {
+                let n = reader.read(&mut chunk)?;
+                if n == 0 {
+                    break;
+                }
+                enc.write_all(&chunk[..n])?;
+            }
+        }
+        enc.finish()?;
+        let _ = fs::remove_file(&zip_tmp);
+    } else {
+        fs::rename(&zip_tmp, &final_path)?;
+    }
+    // W1：备份文件写入侧生成完整性清单（失败隔离，不影响备份导出结果）
+    if let Err(e) = crate::services::file_integrity::record_file(
+        pool,
+        "backup",
+        &file_name,
+        &final_path,
+    )
+    .await
+    {
+        log::warn!("[file_integrity] 备份清单记录失败 {}: {}", file_name, e);
+    }
     let size = fs::metadata(&final_path)?.len();
 
     Ok(BackupExportResult {
@@ -300,21 +437,16 @@ pub async fn backup_export(
 
 // ---------------------------------------------------------------- 加密容器
 
-/// 用派生密钥对 zip 明文整体 AES-256-GCM 加密成 .mjb 容器：magic + nonce + ciphertext。
+/// 旧版整体加密（仅用于兼容测试与历史包对照）；生产导出已改走 StreamingEncryptor。
 /// 密钥派生：SHA256(用户明文密码 UTF-8 字节) → 32 字节 AES-256 密钥。
-/// 修复：此前错误地把明文密码当作 Base64 解码（B64.decode），导致派生密钥不稳定、解密失败报 "invalid padding"。
+#[allow(dead_code)]
 fn encrypt_container(zip_bytes: &[u8], password: &str) -> AppResult<Vec<u8>> {
     encrypt_container_raw(zip_bytes, password.as_bytes())
 }
 
-fn encrypt_container_raw(zip_bytes: &[u8], secret: &[u8]) -> AppResult<Vec<u8>> {
-    let key_bytes = {
-        let mut h = Sha256::new();
-        h.update(secret);
-        let mut k = [0u8; 32];
-        k.copy_from_slice(&h.finalize());
-        k
-    };
+#[allow(dead_code)]
+pub(crate) fn encrypt_container_raw(zip_bytes: &[u8], secret: &[u8]) -> AppResult<Vec<u8>> {
+    let key_bytes = derive_key(secret);
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -328,31 +460,66 @@ fn encrypt_container_raw(zip_bytes: &[u8], secret: &[u8]) -> AppResult<Vec<u8>> 
     Ok(out)
 }
 
-/// 解密 .mjb 容器 → 明文 zip 字节。密钥错误时 AEAD 校验失败返回错误。
-/// 密钥派生方式与 encrypt_container 一致：SHA256(用户明文密码 UTF-8 字节) → 32 字节密钥。
-fn decrypt_container(data: &[u8], password: &str) -> AppResult<Vec<u8>> {
+/// 解密 .mjb 容器 → 明文 zip 字节。同时兼容两种格式：
+///   - 旧版：magic + 12B nonce + 整包密文（整体 AEAD）；
+///   - 流式 v2：magic + 版本字节 + 12B 基准 nonce + 若干帧。
+/// 密钥派生：SHA256(用户明文密码 UTF-8 字节) → 32 字节密钥。
+pub(crate) fn decrypt_container(data: &[u8], password: &str) -> AppResult<Vec<u8>> {
     if !data.starts_with(MIB_MAGIC) {
         return Err(AppError::General("不是有效的加密备份包".to_string()));
     }
-    let key_bytes = {
-        let mut h = Sha256::new();
-        h.update(password.as_bytes());
-        let mut k = [0u8; 32];
-        k.copy_from_slice(&h.finalize());
-        k
-    };
+    let rest = &data[MIB_MAGIC.len()..];
+    if rest.first() == Some(&MIB_STREAM_VERSION) {
+        return decrypt_stream_frames(&rest[1..], password);
+    }
+    // 旧版整体加密：原逻辑保持不变，保证历史备份可导入。
+    let key_bytes = derive_key(password.as_bytes());
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
-    let magic = MIB_MAGIC.len();
-    if data.len() < magic + 12 {
+    if rest.len() < 12 {
         return Err(AppError::General("加密包结构不完整".to_string()));
     }
-    let (_, rest) = data.split_at(magic);
     let (nonce, ct) = rest.split_at(12);
-    let plain = cipher
+    cipher
         .decrypt(GenericArray::from_slice(nonce), ct)
-        .map_err(|_| AppError::General("解密失败：密钥错误或包已损坏".to_string()))?;
-    Ok(plain)
+        .map_err(|_| AppError::General("解密失败：密钥错误或包已损坏".to_string()))
+}
+
+/// 解密流式帧：`基准 nonce(12) + [u32 长度 + 12B nonce + 密文] * n`。
+/// 帧长度上限保护，避免损坏包把内存撑爆；每帧独立 tag 校验。
+fn decrypt_stream_frames(data: &[u8], password: &str) -> AppResult<Vec<u8>> {
+    if data.len() < 12 {
+        return Err(AppError::General("流式加密包缺少 nonce".to_string()));
+    }
+    let mut pos = 12; // 跳过基准 nonce（各帧自带 nonce）
+    let key_bytes = derive_key(password.as_bytes());
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let cipher = Aes256Gcm::new(key);
+    let mut out = Vec::new();
+    while pos < data.len() {
+        if data.len() - pos < 16 {
+            return Err(AppError::General("流式加密包帧头不完整".to_string()));
+        }
+        let len = u32::from_le_bytes([
+            data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
+        ]) as usize;
+        if len > MIB_CHUNK_SIZE {
+            return Err(AppError::General("流式加密包帧长度非法".to_string()));
+        }
+        pos += 4;
+        let nonce = &data[pos..pos + 12];
+        pos += 12;
+        if data.len() - pos < len.saturating_add(16) {
+            return Err(AppError::General("流式加密包帧体不完整".to_string()));
+        }
+        let ct = &data[pos..pos + len + 16];
+        pos += len + 16;
+        let plain = cipher
+            .decrypt(GenericArray::from_slice(nonce), ct)
+            .map_err(|_| AppError::General("解密失败：密钥错误或包已损坏".to_string()))?;
+        out.extend_from_slice(&plain);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------- 列表 / 预览
@@ -564,7 +731,23 @@ pub async fn backup_import(
     // 1) 导入前快照（当前库 → VACUUM INTO 副本），失败可一键回滚
     let snapshot = snapshot_current_db(&app, pool).await?;
 
-    // 2) 校验 + 解析包
+    // 2) 读取侧校验：按备份文件名重算已记录清单的 sha256。
+    // 历史备份（清单建立前导出）没有记录，属预期情况，不阻断导入；
+    // 有记录且出现 mismatch/missing 时明确 warn，便于事后审计。
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file_path.clone());
+    if let Ok(report) = crate::services::file_integrity::verify_recorded(pool, "backup", &file_name).await {
+        if report.scanned > 0 && (report.mismatch > 0 || report.missing > 0 || report.error > 0) {
+            log::warn!(
+                "[file_integrity] 备份 {} 完整性校验异常: mismatch={} missing={} error={}",
+                file_name, report.mismatch, report.missing, report.error
+            );
+        }
+    }
+
+    // 3) 校验 + 解析包
     let preview = backup_preview(app.clone(), file_path.clone(), aes_key.clone()).await?;
     if !preview.valid {
         return Err(AppError::General(format!("备份校验未通过: {}", preview.errors.join("；"))));

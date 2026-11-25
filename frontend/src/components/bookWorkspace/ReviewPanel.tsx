@@ -15,6 +15,8 @@ import { logError } from "../../utils/logError";
 import { clearWrongQuestions } from "../../services/closedLoopService";
 import { cn } from "../../utils/cn";
 import { EmptyState, LoadingState } from "../../components/common/states";
+import { MobileSheet } from "../../components/common/MobileSheet";
+import { useBreakpoint } from "../../hooks/useLayoutMode";
 import type { Card } from "../../types";
 
 /**
@@ -26,6 +28,9 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const jumpToSource = useJumpToSource();
+  // W8 端侧分级：手机竖屏把清空错题等次要操作收进更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
   const [cards, setCards] = useState<Card[]>([]);
   const [book, setBook] = useState<{ title: string; progress: number } | null>(
     null,
@@ -91,7 +96,7 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
       const { save } = await import("@tauri-apps/plugin-dialog");
       const filePath = await save({
         defaultPath: `${t("workspace.review.cardFileName", { date: new Date().toISOString().slice(0, 10) })}.apkg`,
-        filters: [{ name: "Anki 卡包", extensions: ["apkg"] }],
+        filters: [{ name: t("workspace.review.ankiFilterName"), extensions: ["apkg"] }],
       });
       if (!filePath) return;
       setExportingAnki(true);
@@ -124,7 +129,7 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className={phonePortrait ? "space-y-3" : "space-y-4"}>
       {/* 头部：书名 · 复盘 + 复习直达入口（v3.8：跳按书到期清单模式） */}
       <div className="flex items-center gap-2 text-ink">
         <BookOpen className="h-5 w-5 text-accent" />
@@ -287,20 +292,22 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
           )}
           {/* P0-1（2026-10-09）：清空错题（clear_wrong_questions，bookId 作用域） */}
           {wrong.length > 0 && (
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await clearWrongQuestions(bookId ?? null);
-                  setWrong([]);
-                } catch (e) {
-                  logError("ReviewPanel.clearWrong", e);
-                }
-              }}
-              className="ml-2 shrink-0 rounded-full border border-line bg-paper px-2 py-0.5 text-[10px] font-medium text-ink-muted transition hover:text-danger"
-            >
-              {t("workspace.review.clearWrong")}
-            </button>
+            <MobileSheet title={t("workspace.review.wrongBook")}>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await clearWrongQuestions(bookId ?? null);
+                    setWrong([]);
+                  } catch (e) {
+                    logError("ReviewPanel.clearWrong", e);
+                  }
+                }}
+                className="rounded-full border border-line bg-paper px-2 py-0.5 text-[10px] font-medium text-ink-muted transition hover:text-danger"
+              >
+                {t("workspace.review.clearWrong")}
+              </button>
+            </MobileSheet>
           )}
         </div>
         {wrong.length > 0 ? (
@@ -464,6 +471,26 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
       {/* 复盘报告展示（记忆卡片 + 自测题 + Markdown） */}
       {report && (
         <div className="space-y-4">
+          {/* W10：复习结果页前置 Anki 导出入口（复用已有 export_anki_apkg 链路） */}
+          <div className="flex items-center justify-between gap-2 rounded-[var(--radius-lg)] border border-accent-soft bg-accent-bg/40 px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-ink">{t("workspace.review.exportAnkiTopTitle")}</div>
+              <div className="text-[11px] leading-relaxed text-ink-muted">
+                {t("workspace.review.exportAnkiTopHint")}
+              </div>
+            </div>
+            <button
+              onClick={() => void exportAnki()}
+              disabled={exportingAnki}
+              className="flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full bg-accent px-3 text-xs font-semibold text-accent-fg transition active:opacity-80 disabled:opacity-50"
+            >
+              {exportingAnki
+                ? t("workspace.review.exporting")
+                : ankiDone
+                  ? t("workspace.review.exportedAnki")
+                  : t("workspace.review.exportAnki")}
+            </button>
+          </div>
           {report.report?.reviewTitle && (
             <div className="text-base font-bold text-ink">
               {report.report.reviewTitle}

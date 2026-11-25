@@ -31,12 +31,15 @@ export const ttsService = {
    * 移动端 WebView（如 OPPO ColorOS）对 `<audio>.play()` 有自动播放限制，
    * Web Audio 的 AudioContext 在点击手势内解锁后即可程序化播放。
    * @param rate 朗读语速 0.5..2.0（1.0 = 正常），后端换算为 SSML 相对百分比。
+   * @param pitch 音高倍率 0.5..2.0（1.0 = 原调），后端换算为 SSML `<prosody pitch='±NHz'>`；
+   *              省略时后端按 1.0 处理，旧调用方无需改动。
    */
   async synthesize(
     text: string,
     voice: string,
     rate: number,
     lang: string,
+    pitch?: number,
   ): Promise<Uint8Array> {
     if (!text || !text.trim()) {
       throw new Error("待合成文本为空");
@@ -52,6 +55,7 @@ export const ttsService = {
         voice,
         rate,
         lang,
+        pitch: pitch ?? null,
       }),
       new Promise<never>((_, reject) => {
         window.setTimeout(

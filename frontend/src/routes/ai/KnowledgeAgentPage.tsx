@@ -22,14 +22,16 @@ import {
   rebuildKnowledgeIndex,
   semanticSearch,
   sourceTableLabel,
-  type AskResult,
+  type Citation,
   type ActionResultItem,
   type IndexStatusRow,
   type PlanAction,
 } from "../../services/knowledgeService";
 import { whiteboardService, type WhiteboardSummary } from "../../services/whiteboardService";
 import { useJumpToSource } from "../../hooks/useJumpToSource";
+import { useBreakpoint } from "../../hooks/useLayoutMode";
 import { sanitizeCitationMarkers } from "../../services/sourceAnchor";
+import { MobileSheet } from "../../components/common/MobileSheet";
 
 type Tab = "ask" | "search" | "agent";
 
@@ -44,6 +46,9 @@ export function KnowledgeAgentPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("ask");
+  // W8 端侧分级：手机竖屏收紧页签间距，索引重建等次要操作收进更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-auto bg-paper">
@@ -62,7 +67,7 @@ export function KnowledgeAgentPage() {
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-3 py-2 text-sm font-medium transition ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-3 ${phonePortrait ? "py-2.5" : "py-2"} text-sm font-medium transition ${
               tab === k
                 ? "bg-accent text-accent-fg"
                 : "text-ink-soft hover:bg-paper"
@@ -117,7 +122,7 @@ function IndexStatusStrip() {
           <BookOpen className="h-3.5 w-3.5" />
           {t("knowledge.indexTitle")}
         </div>
-        <div className="flex items-center gap-2">
+        <MobileSheet title={t("knowledge.indexTitle")}>
           <label className="flex cursor-pointer items-center gap-1 text-xs text-ink-muted">
             <input
               type="checkbox"
@@ -139,7 +144,7 @@ function IndexStatusStrip() {
             )}
             {building ? t("knowledge.indexing") : t("knowledge.rebuild")}
           </button>
-        </div>
+        </MobileSheet>
       </div>
 
       {rows === null ? (
@@ -171,32 +176,146 @@ function IndexStatusStrip() {
   );
 }
 
-/* =========================== 问整库 =========================== */
+/* =========================== 问整库（多轮 + 内联引用） =========================== */
+interface AskTurn {
+  id: string;
+  question: string;
+  answer: string;
+  citations: Citation[];
+}
+
+/** 把答案中的 [n] 渲染为可点击内联引用，点击定位到该轮对应来源。 */
+function InlineAnswer({
+  answer,
+  citationCount,
+  onCite,
+}: {
+  answer: string;
+  citationCount: number;
+  onCite: (n: number) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {answer.split(/(\[\d+\])/g).map((part, i) => {
+        const match = /^\[(\d+)\]$/.exec(part);
+        if (!match) return <span key={i}>{part}</span>;
+        const n = Number(match[1]);
+        if (!Number.isInteger(n) || n < 1 || n > citationCount) {
+          return <span key={i}>{part}</span>;
+        }
+        return (
+          <button
+            key={i}
+            onClick={() => onCite(n)}
+            className="mx-0.5 inline-flex min-h-8 items-center rounded bg-accent-bg px-1.5 align-baseline text-xs font-semibold text-accent transition hover:underline"
+            aria-label={t("knowledge.inlineCitation", { n })}
+          >
+            [{n}]
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+/** 单轮问答卡片：问题 + 带内联引用的回答 + 该轮引用清单。 */
+function AskTurnCard({
+  turn,
+  index,
+  onJumpCitation,
+}: {
+  turn: AskTurn;
+  index: number;
+  onJumpCitation: (c: Citation) => void;
+}) {
+  const { t } = useTranslation();
+  const safeAnswer = useMemo(
+    () => sanitizeCitationMarkers(turn.answer, turn.citations.length),
+    [turn.answer, turn.citations.length],
+  );
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-line bg-paper-soft p-3">
+      <div className="text-xs font-semibold text-ink-soft">
+        {t("knowledge.turnIndex", { n: index })} · {t("knowledge.youLabel")}
+      </div>
+      <div className="text-sm text-ink">{turn.question}</div>
+      <div className="whitespace-pre-wrap rounded-[var(--radius-md)] border border-line bg-paper p-3 text-sm leading-relaxed text-ink">
+        <InlineAnswer
+          answer={safeAnswer}
+          citationCount={turn.citations.length}
+          onCite={(n) => {
+            const c = turn.citations[n - 1];
+            if (c) onJumpCitation(c);
+          }}
+        />
+      </div>
+
+      {turn.citations.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <div className="text-xs font-semibold text-ink-soft">
+            {t("knowledge.askCitations")}
+          </div>
+          {turn.citations.map((c, i) => (
+            <button
+              key={`${c.sourceTable}-${c.rowId}`}
+              onClick={() => onJumpCitation(c)}
+              className="flex min-h-11 flex-col gap-0.5 rounded-[var(--radius-md)] border border-line bg-paper p-2.5 text-left transition hover:bg-paper-soft"
+            >
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="rounded bg-paper-soft px-1.5 py-0.5 text-[var(--fs-micro)] font-semibold text-ink-soft">
+                  [{i + 1}] {sourceTableLabel(c.sourceTable)}
+                </span>
+                <span className="truncate text-sm font-medium text-ink">
+                  {c.title || t("knowledge.citationUntitled")}
+                </span>
+                {c.bookId && (
+                  <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-ink-muted" />
+                )}
+              </div>
+              <p className="line-clamp-2 text-xs leading-relaxed text-ink-muted">
+                {c.snippet}
+              </p>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AskTab({ onJump }: { onJump: (path: string) => void }) {
   const { t } = useTranslation();
   const jumpToSource = useJumpToSource();
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AskResult | null>(null);
+  // 保留每一轮提问/回答/引用，不再只渲染最后一轮 result。
+  const [turns, setTurns] = useState<AskTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
   const conv = useRef<string | null>(null);
-  const safeAnswer = useMemo(
-    () => (result ? sanitizeCitationMarkers(result.answer, result.citations.length) : ""),
-    [result],
-  );
 
   const ask = async () => {
     if (!question.trim() || loading) return;
+    const asked = question.trim();
     setLoading(true);
     setError(null);
     try {
-      const r = await agentAsk(question, { conversationId: conv.current });
+      const r = await agentAsk(asked, { conversationId: conv.current });
       if (!r) {
         setError(t("knowledge.askUnavailable"));
         return;
       }
       conv.current = r.conversationId;
-      setResult(r);
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: `${r.conversationId}-${prev.length}`,
+          question: asked,
+          answer: r.answer,
+          citations: r.citations,
+        },
+      ]);
       setQuestion("");
     } catch (e) {
       setError(
@@ -248,50 +367,25 @@ function AskTab({ onJump }: { onJump: (path: string) => void }) {
           <p className="text-xs text-red-500">{error}</p>
         )}
 
-        {result && (
+        {turns.length > 0 && (
           <div className="flex flex-col gap-3">
-            <div className="whitespace-pre-wrap rounded-[var(--radius-md)] border border-line bg-paper-soft p-3 text-sm leading-relaxed text-ink">
-              {safeAnswer}
-            </div>
-
-            {result.citations.length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                <div className="text-xs font-semibold text-ink-soft">
-                  {t("knowledge.askCitations")}
-                </div>
-                {result.citations.map((c, i) => (
-                  <button
-                    key={`${c.sourceTable}-${c.rowId}`}
-                    onClick={() => {
-                      // 有 card_cfi 的引用直接回原文；无原文坐标的来源保持旧行为（白板/笔记），不伪称原文定位。
-                      if (c.bookId && c.cardCfi) {
-                        jumpToSource(c.bookId, c.cardCfi, c.title);
-                      } else if (c.bookId) {
-                        onJump(`/whiteboard/${c.bookId}`);
-                      } else {
-                        onJump("/notes");
-                      }
-                    }}
-                    className="flex flex-col gap-0.5 rounded-[var(--radius-md)] border border-line bg-paper p-2.5 text-left transition hover:bg-paper-soft"
-                  >
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <span className="rounded bg-paper-soft px-1.5 py-0.5 text-[var(--fs-micro)] font-semibold text-ink-soft">
-                        [{i + 1}] {sourceTableLabel(c.sourceTable)}
-                      </span>
-                      <span className="truncate text-sm font-medium text-ink">
-                        {c.title || t("knowledge.citationUntitled")}
-                      </span>
-                      {c.bookId && (
-                        <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-ink-muted" />
-                      )}
-                    </div>
-                    <p className="line-clamp-2 text-xs leading-relaxed text-ink-muted">
-                      {c.snippet}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            )}
+            {turns.map((turn, idx) => (
+              <AskTurnCard
+                key={turn.id}
+                turn={turn}
+                index={idx + 1}
+                onJumpCitation={(c) => {
+                  // 有 card_cfi 的引用直接回原文；无原文坐标的来源保持旧行为（白板/笔记），不伪称原文定位。
+                  if (c.bookId && c.cardCfi) {
+                    jumpToSource(c.bookId, c.cardCfi, c.title);
+                  } else if (c.bookId) {
+                    onJump(`/whiteboard/${c.bookId}`);
+                  } else {
+                    onJump("/notes");
+                  }
+                }}
+              />
+            ))}
           </div>
         )}
       </section>

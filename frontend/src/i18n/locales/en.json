@@ -128,7 +128,15 @@
       "extends": "Extends",
       "includes": "Includes"
     },
-    "freeCanvas": "Free canvas"
+    "freeCanvas": "Free canvas",
+    "tagFilter": "Filter by tag",
+    "exportToBoard": "Export as board card",
+    "boardExportNoBook": "This node has no linked book, so it cannot be added to a book board",
+    "boardExportFailed": "Failed to export board card",
+    "boardExportDone": "Exported as a board card",
+    "viewGraph": "Force graph",
+    "viewMindmap": "Mind map",
+    "mindmapEmpty": "No mind-map nodes to show"
   },
   "suggestion": {
     "title": "Today's Suggestions",
@@ -268,7 +276,9 @@
     "viewMode": {
       "noPageHint": "This format has no native pages. Scroll mode only.",
       "switchToScroll": "Switch to scroll",
-      "switchToPages": "Switch to paged"
+      "switchToPages": "Switch to paged",
+      "scroll": "Vertical scroll",
+      "paginated": "Page turn"
     },
     "breakdownStop": "Stop",
     "breakdownViewProgress": "View progress",
@@ -286,7 +296,70 @@
     },
     "toc": {
       "hideChapter": "Hide this chapter"
-    }
+    },
+    "typography": {
+      "viewMode": "Reading effect",
+      "fontSize": "Font size",
+      "fontFamily": "Font",
+      "lineHeight": "Line height",
+      "paraSpacing": "Margins",
+      "bgColor": "Background",
+      "direction": "Direction",
+      "horizontal": "Horizontal",
+      "vertical": "Vertical",
+      "horizontalShort": "H",
+      "verticalShort": "V",
+      "size": {
+        "small": "Small",
+        "medium": "Medium",
+        "large": "Large"
+      },
+      "perBookHint": "Changes are saved for this book and update the global default",
+      "bgAria": "Background: {{name}}",
+      "disabled": {
+        "pdfFixed": "PDF is page-based; font size, font, line height and margins come from the source file",
+        "pdfViewMode": "Use the Original / Reflow switch in the PDF view toolbar",
+        "scrollOnly": "This format scrolls continuously; page-turn mode is unavailable",
+        "flowOnly": "Alignment and letter spacing apply only to reflowable formats such as EPUB",
+        "vertical": "Vertical writing applies only to reflowable formats such as EPUB"
+      }
+    },
+    "font": {
+      "system": "System",
+      "song": "Song serif",
+      "hei": "Hei sans",
+      "kai": "Kai",
+      "fang": "Fang"
+    },
+    "fontShort": {
+      "system": "System",
+      "song": "Song",
+      "hei": "Hei",
+      "kai": "Kai",
+      "fang": "Fang"
+    },
+    "bg": {
+      "white": "White",
+      "paper": "Paper",
+      "warm": "Warm",
+      "green": "Green",
+      "blue": "Blue",
+      "gray": "Gray",
+      "dark": "Dark"
+    },
+    "autoRead": {
+      "title": "Auto read",
+      "on": "On",
+      "off": "Off",
+      "interval": "Page interval",
+      "intervalSec": "{{seconds}} s",
+      "hint": "Advance a page automatically at the chosen interval; reading aloud pauses auto page turn",
+      "ttsConflict": "Reading aloud is active - auto page turn is paused",
+      "pausedByTts": "Reading aloud started; auto page turn has been turned off"
+    },
+    "ttsSentenceProgress": "Sentence {{current}} / {{total}}",
+    "ttsPitch": "Pitch",
+    "ttsVoice": "Voice"
   },
   "aiModel": {
     "title": "AI Models",
@@ -321,7 +394,37 @@
     "edit": "Edit",
     "delete": "Delete",
     "modelNamePlaceholder": "Provider model ID, e.g. gpt-4o-mini",
-    "mimoModelHint": "Xiaomi MiMo: use mimo-v2.5-pro or mimo-v2.6-pro (no -pro suffix is invalid). Thinking mode is on by default; retry or switch model if only reasoning is returned."
+    "mimoModelHint": "Xiaomi MiMo: use mimo-v2.5-pro or mimo-v2.6-pro (no -pro suffix is invalid). Thinking mode is on by default; retry or switch model if only reasoning is returned.",
+    "presetTitle": "Official provider presets",
+    "presetHint": "Fills in the base URL and model for you. Enter your own API key; saving still uses the existing encrypted path.",
+    "preset": {
+      "openai": "OpenAI",
+      "deepseek": "DeepSeek",
+      "qwen": "Qwen (Tongyi)",
+      "zhipu": "Zhipu GLM",
+      "custom": "Custom"
+    },
+    "routeTitle": "Task routing (primary / fallback)",
+    "task": {
+      "breakdown": "Breakdown",
+      "chat": "Chat",
+      "embedding": "Embedding",
+      "rag": "Retrieval QA",
+      "image": "Image"
+    },
+    "route": {
+      "primary": "Primary",
+      "fallback": "Fallback"
+    },
+    "routeNone": "Not set",
+    "routingNotPersisted": "Backend routing persistence is not available yet; this selection only lasts for the current session.",
+    "usageTitle": "Usage / quota",
+    "usageLocalOnly": "No usage statistics on this device",
+    "usageDefaultProvider": "Default provider",
+    "usageRequests": "{{n}} requests",
+    "usageTokens": "{{n}} tokens",
+    "usageUsed": "{{n}} used",
+    "usageLimit": "Limit {{n}}"
   },
   "asr": {
     "modeTitle": "Speech engine",
@@ -385,7 +488,10 @@
     "testCloud": "Test",
     "cloudLocalHint": "No cloud config needed for local model",
     "cloudActiveHint": "Cloud config active",
-    "configured": "Configured"
+    "configured": "Configured",
+    "iosLanguageFollow": "On iOS, speech recognition follows the system language",
+    "degradedToLocal": "System speech unavailable - switched to on-device recognition",
+    "degradedToCloud": "System speech unavailable - switched to cloud recognition"
   },
   "tts": {
     "title": "Text-to-Speech",
@@ -751,6 +857,23 @@
     "done": "Done",
     "exported": "Exported",
     "exportMarkdown": "Export Markdown",
+    "exportCsv": "Export CSV",
+    "exportHtml": "Export HTML",
+    "exportEpub": "Export EPUB",
+    "exportPdf": "Export PDF",
+    "exportBackendNotReady": "This export format is not available in the backend yet",
+    "exportedTo": "Exported to {{path}}",
+    "exportEmpty": "Nothing was exported",
+    "backlinkTitle": "Q&A and notes citing this passage",
+    "backlinkQuery": "Find citations",
+    "backlinkHint": "Finds Q&A and notes that cite this highlight. Tap one to jump to it.",
+    "backlinkEmpty": "Nothing cites this passage yet",
+    "backlinkNoAnchor": "This note has no linked highlight, so backlinks cannot be queried",
+    "backlinkBackendNotReady": "Backlink lookup is not available in the backend yet",
+    "backlinkKind": {
+      "qa": "Q&A",
+      "note": "Note"
+    },
     "searchPlaceholder": "Search notes, excerpts, tags…",
     "allChapters": "All chapters",
     "relating": "Generating…",
@@ -841,7 +964,14 @@
     "mindmap": {
       "loading": "Loading mind map…",
       "empty": "No mind map yet. Complete the Breakdown first to see this book's hierarchical mind map here.",
-      "from": "Source: "
+      "from": "Source: ",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "full": "Fullscreen",
+      "exitFull": "Exit fullscreen",
+      "edit": "Edit",
+      "modeVisual": "Visual",
+      "modeText": "Text"
     },
     "whiteboard": {
       "title": "This Book's Whiteboard",
@@ -999,6 +1129,9 @@
       "exporting": "Exporting…",
       "exportedAnki": "Exported .apkg ✓",
       "exportAnki": "Export Anki",
+      "ankiFilterName": "Anki deck",
+      "exportAnkiTopTitle": "Export as Anki deck",
+      "exportAnkiTopHint": "Package the memory cards from this review into a .apkg file you can import into Anki.",
       "selfTest": "Self-test ({{count}} questions)",
       "answer": "Answer",
       "weakPointsTitle": "Weak points ({{count}})",
@@ -1043,7 +1176,8 @@
       "readingExperience": "Reading experience",
       "aiCapabilities": "AI capabilities",
       "privacyAbout": "Privacy & about",
-      "gettingStarted": "Getting started"
+      "gettingStarted": "Getting started",
+      "studyPlan": "Study plan"
     },
     "settings": {
       "cloudSync": "Cloud sync",
@@ -1441,7 +1575,13 @@
     },
     "engineSwitchLabel": "Engine active switch",
     "engineSwitchActiveTip": "This engine is already active. Switch from another engine's page (one active source).",
-    "engineSwitchOn": "Switched to this engine"
+    "engineSwitchOn": "Switched to this engine",
+    "cloudCapabilitiesTitle": "Cloud capabilities",
+    "cloudCapabilitiesHint": "Local speech and OCR settings live in their own pages; manage networked speech recognition and inference services here.",
+    "cloudVoiceEntry": "Cloud speech recognition",
+    "cloudVoiceEntrySub": "Configure Tencent / MiMo cloud ASR keys and active provider",
+    "cloudInferenceEntry": "Cloud inference",
+    "cloudInferenceEntrySub": "Configure remote API providers, models and connectivity"
   },
   "reminder": {
     "settingsTitle": "Reminder Settings",
@@ -1795,6 +1935,11 @@
       "mindmap": "Mind Map"
     },
     "backlink": "Backlinks",
+    "syncToGraph": "Sync to graph",
+    "syncToGraphNotReady": "The graph sync command is not connected on the backend yet",
+    "syncToGraphDone": "Synced as a graph node",
+    "syncToGraphExisting": "This card is already linked to a graph node",
+    "syncToGraphFailed": "Failed to sync to graph",
     "backlinkIncoming": "Linked to this card",
     "backlinkMentions": "Referenced via @mention",
     "backlinkEmpty": "No backlinks for this card (not linked or @mentioned)",
@@ -1856,6 +2001,9 @@
     "askFailed": "Ask failed, check your AI config and retry",
     "askCitations": "Citations",
     "citationUntitled": "(untitled)",
+    "inlineCitation": "Jump to source of citation {{n}}",
+    "turnIndex": "Turn {{n}}",
+    "youLabel": "You",
     "searchTitle": "Cross-book semantic search",
     "searchPlaceholder": "Search your notes, highlights, knowledge points, cards and wrong questions…",
     "searchBtn": "Search",
@@ -2221,6 +2369,173 @@
     },
     "highlight": {
       "greyscale": "Highlights, including saved ones, use high-contrast grey in ink mode"
+    },
+    "theme": {
+      "title": "Appearance",
+      "followSystem": "Follow system dark mode",
+      "on": "On",
+      "off": "Off",
+      "hint": "Match reading background and text color to the system appearance"
     }
+  },
+  "storage": {
+    "title": "Storage",
+    "sub": "Cache usage, storage locations and reading records",
+    "hint": "Clearing cache only removes regenerable files. Deleting a reading record also removes that book's progress and statistics; this cannot be undone.",
+    "unavailable": "Unavailable in this environment (read failed or not running in the desktop runtime)",
+    "cacheTitle": "Cache usage",
+    "totalCache": "Total cache",
+    "cacheCovers": "Cover cache",
+    "cacheThumbs": "Thumbnails",
+    "cacheBooks": "Book cache",
+    "cacheAi": "AI cache",
+    "clearCache": "Clear cache",
+    "clearCacheWithCovers": "Clear including covers",
+    "coverHint": "Covers are slow to rebuild and kept by default; only clear them when short on space.",
+    "clearTitle": "Clear cache",
+    "clearAction": "Clear",
+    "confirmClear": "Clear the cache? This cannot be undone.",
+    "confirmClearWithCovers": "Clear the cache including covers? Covers will be regenerated next time the library opens.",
+    "clearDone": "Removed {{files}} files, freed {{size}}",
+    "clearFailed": "Clear failed, please try again",
+    "distributionTitle": "Storage locations",
+    "dataDir": "App data directory",
+    "customBooksDir": "Custom library directory",
+    "effectiveBooksDir": "Active library directory",
+    "notSet": "Not set",
+    "recordsTitle": "Reading records",
+    "clearAllRecords": "Clear records",
+    "clearRecordsTitle": "Clear reading records",
+    "confirmClearRecords": "Clear all reading records? This cannot be undone.",
+    "clearedRecords": "Cleared {{count}} records",
+    "noRecords": "No reading records yet",
+    "lastRead": "Last read",
+    "duration": "Time spent",
+    "deleteRecord": "Delete this record",
+    "deleteRecordTitle": "Delete reading record",
+    "confirmDeleteRecord": "Delete reading records for \"{{title}}\"?",
+    "deleteDone": "Record deleted",
+    "deleteFailed": "Delete failed",
+    "period": {
+      "all": "All time",
+      "1y": "Past year",
+      "1m": "Past month",
+      "1w": "Past week",
+      "1d": "Past day"
+    }
+  },
+  "knowledgePack": {
+    "title": "Knowledge Packs",
+    "sub": "Import, export and offline lookup",
+    "subtitle": "Import PC-compiled packs or export local ones; downloaded packs support offline search and FAQ.",
+    "fileTypeName": "MJNexus Knowledge Pack",
+    "notReady": "Knowledge-pack backend commands are not connected yet; the feature is unavailable (no placeholder data shown).",
+    "import": "Import pack",
+    "export": "Export JSON",
+    "exportDone": "Knowledge pack exported",
+    "exportDoneAt": "Knowledge pack exported to {{path}}",
+    "exportFailed": "Export failed",
+    "importDone": "Knowledge pack imported",
+    "importFailed": "Import failed",
+    "invalidFile": "Not a valid knowledge pack (missing subject or title)",
+    "loadFailed": "Load failed",
+    "empty": "No packs yet, import a .json file first",
+    "downloaded": "Downloaded",
+    "notDownloaded": "Not downloaded",
+    "download": "Mark downloaded",
+    "downloadDone": "Ready",
+    "downloadFailed": "Failed to mark downloaded",
+    "deleteTitle": "Delete knowledge pack",
+    "deleteConfirm": "Delete the knowledge pack \"{{title}}\"? This cannot be undone.",
+    "deleteDone": "Knowledge pack deleted",
+    "deleteFailed": "Delete failed",
+    "subject": "Subject",
+    "count": "Sections",
+    "faqCount": "FAQs",
+    "noSections": "This pack has no sections",
+    "kv": "Concepts",
+    "fc": "Formulas",
+    "ep": "Exam points",
+    "em": "Mistakes",
+    "ms": "Memory tips",
+    "pre": "Prerequisites",
+    "cv": "Controversies",
+    "searchTitle": "Offline search",
+    "searchPlaceholder": "Search downloaded packs by keyword",
+    "search": "Search",
+    "searchEmpty": "No matches; try another keyword",
+    "searchFailed": "Search failed",
+    "qaTitle": "Offline FAQ",
+    "qaPlaceholder": "Ask a question and match answers from downloaded packs",
+    "qaSend": "Ask",
+    "answerFrom": "From knowledge pack",
+    "noFaqHit": "No matching answer; try online AI or rephrase"
+  },
+  "studySchedule": {
+    "title": "Review scheduling",
+    "notReady": "The backend scheduling config commands are not connected yet; controls stay locked (no placeholder values shown).",
+    "notReadyHint": "Requires get/set_review_schedule_config on the backend to unlock SM-2 parameters and the FSRS switch.",
+    "loadFailed": "Failed to load configuration; please try again",
+    "easeFactor": "SM-2 ease factor",
+    "easeFactorHint": "Higher values grow intervals faster after correct answers; typical range 1.3–2.8.",
+    "intervalModifier": "Interval modifier",
+    "intervalModifierHint": "Scales all review intervals; 1.0 is the default.",
+    "maxInterval": "Maximum interval",
+    "maxIntervalHint": "Longest interval allowed after a single review, in days.",
+    "days": "{{count}} days",
+    "fsrsToggle": "Enable FSRS",
+    "fsrsHint": "When on, FSRS computes intervals and SM-2 values act as a fallback.",
+    "desiredRetention": "Desired retention",
+    "desiredRetentionHint": "Target long-term recall rate for FSRS; higher means more frequent reviews.",
+    "save": "Save scheduling",
+    "saved": "Scheduling saved",
+    "saveFailed": "Save failed"
+  },
+  "studyGoals": {
+    "title": "Daily goals & reminder",
+    "sub": "Set your daily review load and reminder time",
+    "notReady": "The backend study-preferences commands are not connected yet; settings stay locked (no placeholder values shown).",
+    "notReadyHint": "Requires get/set_study_preferences on the backend to unlock daily goals and reminders.",
+    "loadFailed": "Failed to load preferences; please try again",
+    "dailyGoalTitle": "Daily goals",
+    "dailyCards": "Daily review cards",
+    "dailyCardsHint": "0 means no card-count goal.",
+    "dailyMinutes": "Daily study minutes",
+    "dailyMinutesHint": "0 means no time goal.",
+    "reminderTitle": "Study reminder",
+    "reminderToggle": "Enable study reminder",
+    "reminderHour": "Hour",
+    "reminderMinute": "Minute",
+    "reminderHint": "Reminders are shown in-app only; OS-level notifications depend on platform support.",
+    "saved": "Study preferences saved",
+    "saveFailed": "Save failed"
+  },
+  "reviewQueue": {
+    "switchToAll": "Switch to the cross-book review queue",
+    "allActive": "Cross-book review queue is active",
+    "dayToday": "Today & overdue",
+    "dayFuture": "Day +{{n}}",
+    "totalDue": "{{count}} cards due",
+    "page": "Page {{current}} / {{total}}",
+    "prevPage": "Previous",
+    "nextPage": "Next",
+    "algorithm": "Algorithm: {{name}}",
+    "dueAt": "Due: {{date}}"
+  },
+  "reviewAttribution": {
+    "open": "Review attribution",
+    "title": "Review attribution",
+    "hint": "Based on real review logs, broken down by algorithm, book and rating.",
+    "empty": "No reviews in this period to attribute",
+    "loadFailed": "Failed to load the attribution report; please try again",
+    "days": "Last {{count}} days",
+    "totalReviews": "Total reviews",
+    "againRate": "Again rate",
+    "byBook": "By book",
+    "byAlgorithm": "By algorithm",
+    "byRating": "By rating",
+    "reviews": "Reviews",
+    "again": "Again",
+    "avgInterval": "Avg interval (days)"
   }
 }

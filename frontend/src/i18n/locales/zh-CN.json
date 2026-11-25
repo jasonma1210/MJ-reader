@@ -128,7 +128,15 @@
       "extends": "扩展",
       "includes": "包含"
     },
-    "freeCanvas": "自由画布"
+    "freeCanvas": "自由画布",
+    "tagFilter": "标签筛选",
+    "exportToBoard": "导为白板卡",
+    "boardExportNoBook": "该节点未关联书籍，无法挂入书板",
+    "boardExportFailed": "导出白板卡失败",
+    "boardExportDone": "已导出为白板卡",
+    "viewGraph": "力导向图谱",
+    "viewMindmap": "层级脑图",
+    "mindmapEmpty": "暂无可展示的脑图节点"
   },
   "suggestion": {
     "title": "今日建议",
@@ -268,7 +276,9 @@
     "viewMode": {
       "noPageHint": "当前格式无原生页码，仅支持滚动模式",
       "switchToScroll": "切换为上下滚动",
-      "switchToPages": "切换为左右翻页"
+      "switchToPages": "切换为左右翻页",
+      "scroll": "上下滚动",
+      "paginated": "左右翻页"
     },
     "breakdownStop": "中止",
     "breakdownViewProgress": "查看进度",
@@ -286,7 +296,70 @@
     },
     "toc": {
       "hideChapter": "隐藏此章节"
-    }
+    },
+    "typography": {
+      "viewMode": "阅读效果",
+      "fontSize": "字号",
+      "fontFamily": "字体",
+      "lineHeight": "行距",
+      "paraSpacing": "段距",
+      "bgColor": "背景",
+      "direction": "方向",
+      "horizontal": "横排",
+      "vertical": "竖排",
+      "horizontalShort": "横",
+      "verticalShort": "竖",
+      "size": {
+        "small": "小",
+        "medium": "中",
+        "large": "大"
+      },
+      "perBookHint": "当前调整会保存到本书，并更新全局默认",
+      "bgAria": "背景：{{name}}",
+      "disabled": {
+        "pdfFixed": "PDF 按页面渲染，字号/字体/行距/版心由原文件决定",
+        "pdfViewMode": "PDF 请使用视图工具栏的「原页 / 重排」切换",
+        "scrollOnly": "当前格式为连续滚动，不支持左右翻页",
+        "flowOnly": "对齐与字距仅对 EPUB 等流式排版生效",
+        "vertical": "竖排仅对 EPUB 等流式排版生效"
+      }
+    },
+    "font": {
+      "system": "系统字体",
+      "song": "宋体",
+      "hei": "黑体",
+      "kai": "楷体",
+      "fang": "方体"
+    },
+    "fontShort": {
+      "system": "系统",
+      "song": "宋体",
+      "hei": "黑体",
+      "kai": "楷体",
+      "fang": "方体"
+    },
+    "bg": {
+      "white": "净白",
+      "paper": "羊皮纸",
+      "warm": "暖米白",
+      "green": "护眼绿",
+      "blue": "晴空蓝",
+      "gray": "深灰",
+      "dark": "暗夜"
+    },
+    "autoRead": {
+      "title": "自动阅读",
+      "on": "开启",
+      "off": "关闭",
+      "interval": "翻页间隔",
+      "intervalSec": "{{seconds}} 秒",
+      "hint": "开启后每隔设定时间自动翻到下一页；朗读开始后自动暂停",
+      "ttsConflict": "朗读进行中，自动翻页已暂停",
+      "pausedByTts": "朗读已开始，自动翻页已关闭"
+    },
+    "ttsSentenceProgress": "第 {{current}} / {{total}} 句",
+    "ttsPitch": "音调",
+    "ttsVoice": "音色"
   },
   "aiModel": {
     "title": "AI 模型",
@@ -321,7 +394,37 @@
     "edit": "编辑",
     "delete": "删除",
     "modelNamePlaceholder": "填写服务商提供的模型 ID，如 gpt-4o-mini",
-    "mimoModelHint": "小米 MiMo 请填写完整模型 ID：mimo-v2.5-pro 或 mimo-v2.6-pro（不带 -pro 后缀的型号无效）；推理模型默认开启思考模式，若只返回思考链请重试或改配非思考模型。"
+    "mimoModelHint": "小米 MiMo 请填写完整模型 ID：mimo-v2.5-pro 或 mimo-v2.6-pro（不带 -pro 后缀的型号无效）；推理模型默认开启思考模式，若只返回思考链请重试或改配非思考模型。",
+    "presetTitle": "官方 Provider 预设",
+    "presetHint": "一键带入接口地址与模型名；API Key 请自行填写，保存仍走既有加密链路。",
+    "preset": {
+      "openai": "OpenAI",
+      "deepseek": "DeepSeek",
+      "qwen": "通义千问",
+      "zhipu": "智谱 GLM",
+      "custom": "自定义"
+    },
+    "routeTitle": "任务路由（主 / 备用）",
+    "task": {
+      "breakdown": "拆书",
+      "chat": "对话",
+      "embedding": "向量化",
+      "rag": "检索问答",
+      "image": "图像"
+    },
+    "route": {
+      "primary": "主",
+      "fallback": "备用"
+    },
+    "routeNone": "未指定",
+    "routingNotPersisted": "后端尚未接入任务路由持久化，本次选择仅在当前会话生效。",
+    "usageTitle": "用量 / 配额",
+    "usageLocalOnly": "本机无用量统计",
+    "usageDefaultProvider": "默认服务",
+    "usageRequests": "请求 {{n}} 次",
+    "usageTokens": "Token {{n}}",
+    "usageUsed": "已用 {{n}}",
+    "usageLimit": "上限 {{n}}"
   },
   "asr": {
     "modeTitle": "语音识别引擎",
@@ -385,7 +488,10 @@
     "testCloud": "测试连接",
     "cloudLocalHint": "使用本地离线模型时无需云端配置",
     "cloudActiveHint": "云端配置已生效",
-    "configured": "已配置"
+    "configured": "已配置",
+    "iosLanguageFollow": "iOS 语音识别语言跟随系统语言设置",
+    "degradedToLocal": "系统语音不可用，已切换到本地离线识别",
+    "degradedToCloud": "系统语音不可用，已切换到云端识别"
   },
   "tts": {
     "title": "TTS 朗读",
@@ -751,6 +857,23 @@
     "done": "完成",
     "exported": "已导出",
     "exportMarkdown": "导出 Markdown",
+    "exportCsv": "导出 CSV",
+    "exportHtml": "导出 HTML",
+    "exportEpub": "导出 EPUB",
+    "exportPdf": "导出 PDF",
+    "exportBackendNotReady": "后端尚未接入该导出格式",
+    "exportedTo": "已导出到 {{path}}",
+    "exportEmpty": "导出结果为空",
+    "backlinkTitle": "引用本段的问答 / 笔记",
+    "backlinkQuery": "查询引用",
+    "backlinkHint": "按高亮锚点查找引用了该段的问答与笔记，点击可跳转。",
+    "backlinkEmpty": "暂无引用本段的内容",
+    "backlinkNoAnchor": "这条笔记没有关联高亮锚点，无法查询反向链接",
+    "backlinkBackendNotReady": "后端尚未接入反向链接查询",
+    "backlinkKind": {
+      "qa": "问答",
+      "note": "笔记"
+    },
     "searchPlaceholder": "搜索笔记、原文摘录、标签…",
     "allChapters": "全部章节",
     "relating": "生成中…",
@@ -841,7 +964,14 @@
     "mindmap": {
       "loading": "正在加载思维导图…",
       "empty": "暂无思维导图。先完成「拆书」，即可在此查看本书的层级思维导图。",
-      "from": "来源："
+      "from": "来源：",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "full": "全屏",
+      "exitFull": "退出全屏",
+      "edit": "编辑",
+      "modeVisual": "图示",
+      "modeText": "文本"
     },
     "whiteboard": {
       "title": "本书白板",
@@ -999,6 +1129,9 @@
       "exporting": "导出中…",
       "exportedAnki": "已导出 .apkg ✓",
       "exportAnki": "导出 Anki",
+      "ankiFilterName": "Anki 卡包",
+      "exportAnkiTopTitle": "导出为 Anki 卡包",
+      "exportAnkiTopHint": "把本次复习涉及的记忆卡片打包为 .apkg，可直接导入 Anki 继续复习。",
       "selfTest": "复盘自测（{{count}} 题）",
       "answer": "答案",
       "weakPointsTitle": "薄弱点（{{count}}）",
@@ -1043,7 +1176,8 @@
       "readingExperience": "阅读体验",
       "aiCapabilities": "AI 能力",
       "privacyAbout": "隐私与关于",
-      "gettingStarted": "入门"
+      "gettingStarted": "入门",
+      "studyPlan": "学习计划"
     },
     "settings": {
       "cloudSync": "云同步",
@@ -1441,7 +1575,13 @@
     },
     "engineSwitchLabel": "引擎生效开关",
     "engineSwitchActiveTip": "本引擎已生效；三源单生效，请进入其他引擎页面切换",
-    "engineSwitchOn": "已切换为当前生效引擎"
+    "engineSwitchOn": "已切换为当前生效引擎",
+    "cloudCapabilitiesTitle": "云端能力配置",
+    "cloudCapabilitiesHint": "本地语音与 OCR 已收敛到各自设置页；这里集中管理需要联网的语音识别与推理服务。",
+    "cloudVoiceEntry": "云端语音识别",
+    "cloudVoiceEntrySub": "配置腾讯云 / MiMo 云端 ASR 密钥与生效来源",
+    "cloudInferenceEntry": "云端推理服务",
+    "cloudInferenceEntrySub": "配置远程 API 供应商、模型与连通性"
   },
   "reminder": {
     "settingsTitle": "提醒设置",
@@ -1643,6 +1783,11 @@
       "mindmap": "思维导图"
     },
     "backlink": "反向关联",
+    "syncToGraph": "同步到图谱",
+    "syncToGraphNotReady": "后端同步命令尚未接入，暂不可用",
+    "syncToGraphDone": "已同步为图谱节点",
+    "syncToGraphExisting": "该卡片已关联图谱节点，无需重复同步",
+    "syncToGraphFailed": "同步到图谱失败",
     "backlinkIncoming": "通过连线指向本卡片",
     "backlinkMentions": "通过 @提及 引用",
     "backlinkEmpty": "该卡片暂无反向关联（未被连线或被 @提及）",
@@ -1856,6 +2001,9 @@
     "askFailed": "提问失败，请检查 AI 配置后重试",
     "askCitations": "引用来源",
     "citationUntitled": "（无标题）",
+    "inlineCitation": "跳转到引用 {{n}} 的来源",
+    "turnIndex": "第 {{n}} 轮",
+    "youLabel": "你",
     "searchTitle": "跨书语义检索",
     "searchPlaceholder": "检索你的笔记、高亮、知识点、卡片与错题…",
     "searchBtn": "检索",
@@ -2221,6 +2369,173 @@
     },
     "highlight": {
       "greyscale": "黑白模式下高亮（含已保存的）以高对比灰度显示"
+    },
+    "theme": {
+      "title": "深浅外观",
+      "followSystem": "跟随系统深色",
+      "on": "开启",
+      "off": "关闭",
+      "hint": "跟随系统外观自动切换阅读背景与文字色"
     }
+  },
+  "storage": {
+    "title": "存储管理",
+    "sub": "缓存占用、存储位置与阅读记录",
+    "hint": "缓存清理只删除可再生文件；删除阅读记录会同时移除该书进度与统计，操作不可撤销。",
+    "unavailable": "当前环境不可用（数据读取失败或未运行在桌面运行时）",
+    "cacheTitle": "缓存占用",
+    "totalCache": "缓存合计",
+    "cacheCovers": "封面缓存",
+    "cacheThumbs": "缩略图",
+    "cacheBooks": "书籍缓存",
+    "cacheAi": "AI 缓存",
+    "clearCache": "清理缓存",
+    "clearCacheWithCovers": "含封面一起清理",
+    "coverHint": "封面重建较慢，默认保留；仅在空间不足时选择含封面清理。",
+    "clearTitle": "清理缓存",
+    "clearAction": "清理",
+    "confirmClear": "确定清理缓存？该操作不可撤销。",
+    "confirmClearWithCovers": "确定连封面缓存一起清理？下次打开书库需要重新生成封面。",
+    "clearDone": "已清理 {{files}} 个文件，释放 {{size}}",
+    "clearFailed": "清理失败，请稍后重试",
+    "distributionTitle": "存储分布",
+    "dataDir": "应用数据目录",
+    "customBooksDir": "自定义书库目录",
+    "effectiveBooksDir": "当前生效书库目录",
+    "notSet": "未设置",
+    "recordsTitle": "阅读记录",
+    "clearAllRecords": "清空记录",
+    "clearRecordsTitle": "清空阅读记录",
+    "confirmClearRecords": "确定清空全部阅读记录？该操作不可撤销。",
+    "clearedRecords": "已清空 {{count}} 条记录",
+    "noRecords": "暂无阅读记录",
+    "lastRead": "末次阅读",
+    "duration": "累计时长",
+    "deleteRecord": "删除该记录",
+    "deleteRecordTitle": "删除阅读记录",
+    "confirmDeleteRecord": "确定删除《{{title}}》的阅读记录？",
+    "deleteDone": "记录已删除",
+    "deleteFailed": "删除失败",
+    "period": {
+      "all": "全部",
+      "1y": "近一年",
+      "1m": "近一月",
+      "1w": "近一周",
+      "1d": "近一天"
+    }
+  },
+  "knowledgePack": {
+    "title": "知识包",
+    "sub": "导入、导出与离线速查",
+    "subtitle": "导入 PC 编译产物或导出本机知识包，已下载的包支持离线检索与答疑。",
+    "fileTypeName": "MJNexus 知识包",
+    "notReady": "后端知识包命令尚未接入，功能暂不可用（不会展示占位假数据）。",
+    "import": "导入知识包",
+    "export": "导出 JSON",
+    "exportDone": "知识包已导出",
+    "exportDoneAt": "知识包已导出至 {{path}}",
+    "exportFailed": "导出失败",
+    "importDone": "知识包已导入",
+    "importFailed": "导入失败",
+    "invalidFile": "文件不是有效的知识包（缺少学科或标题）",
+    "loadFailed": "加载失败",
+    "empty": "暂无知识包，先导入一个 .json 文件",
+    "downloaded": "已下载",
+    "notDownloaded": "未下载",
+    "download": "标记下载",
+    "downloadDone": "已就绪",
+    "downloadFailed": "标记下载失败",
+    "deleteTitle": "删除知识包",
+    "deleteConfirm": "确定删除知识包《{{title}}》？该操作不可撤销。",
+    "deleteDone": "知识包已删除",
+    "deleteFailed": "删除失败",
+    "subject": "学科",
+    "count": "章节",
+    "faqCount": "问答",
+    "noSections": "该包暂无章节内容",
+    "kv": "知识点",
+    "fc": "公式",
+    "ep": "考点",
+    "em": "易错点",
+    "ms": "记忆技巧",
+    "pre": "前置",
+    "cv": "争议",
+    "searchTitle": "离线检索",
+    "searchPlaceholder": "输入关键词检索已下载知识包",
+    "search": "检索",
+    "searchEmpty": "没有命中，换个关键词试试",
+    "searchFailed": "检索失败",
+    "qaTitle": "离线答疑",
+    "qaPlaceholder": "输入问题，从已下载知识包中匹配答案",
+    "qaSend": "答疑",
+    "answerFrom": "来自知识包",
+    "noFaqHit": "未找到匹配答案，请尝试联网 AI 或换个问法"
+  },
+  "studySchedule": {
+    "title": "复习调度参数",
+    "notReady": "后端调度配置命令尚未接入，暂不可调节（不展示占位数值）。",
+    "notReadyHint": "需后端提供 get/set_review_schedule_config 后开放 SM-2 参数与 FSRS 开关。",
+    "loadFailed": "配置读取失败，请稍后重试",
+    "easeFactor": "SM-2 难度系数",
+    "easeFactorHint": "越大则答对后间隔增长越快，常用范围 1.3–2.8。",
+    "intervalModifier": "间隔倍率",
+    "intervalModifierHint": "统一缩放所有复习间隔，1.0 为默认。",
+    "maxInterval": "最大间隔",
+    "maxIntervalHint": "单次复习后允许的最长间隔天数。",
+    "days": "{{count}} 天",
+    "fsrsToggle": "启用 FSRS",
+    "fsrsHint": "开启后由 FSRS 模型接管间隔计算，SM-2 参数仅作回退。",
+    "desiredRetention": "目标记忆率",
+    "desiredRetentionHint": "FSRS 期望的长期记忆保持率，越高复习越频繁。",
+    "save": "保存调度参数",
+    "saved": "调度参数已保存",
+    "saveFailed": "保存失败"
+  },
+  "studyGoals": {
+    "title": "每日目标与提醒",
+    "sub": "设定每日复习量与学习提醒时间",
+    "notReady": "后端学习偏好命令尚未接入，暂不可配置（不展示占位数值）。",
+    "notReadyHint": "需后端提供 get/set_study_preferences 后开放每日目标与学习提醒。",
+    "loadFailed": "偏好读取失败，请稍后重试",
+    "dailyGoalTitle": "每日目标",
+    "dailyCards": "每日复习卡片数",
+    "dailyCardsHint": "0 表示不设卡片数目标。",
+    "dailyMinutes": "每日学习分钟数",
+    "dailyMinutesHint": "0 表示不设时长目标。",
+    "reminderTitle": "学习提醒",
+    "reminderToggle": "开启学习提醒",
+    "reminderHour": "时",
+    "reminderMinute": "分",
+    "reminderHint": "提醒仅在应用内显示；系统级通知需依赖平台能力。",
+    "saved": "学习偏好已保存",
+    "saveFailed": "保存失败"
+  },
+  "reviewQueue": {
+    "switchToAll": "切换到跨书统一复习队列",
+    "allActive": "当前为跨书统一复习队列",
+    "dayToday": "今天及逾期",
+    "dayFuture": "未来第 {{n}} 天",
+    "totalDue": "待复习 {{count}} 张",
+    "page": "第 {{current}} / {{total}} 页",
+    "prevPage": "上一页",
+    "nextPage": "下一页",
+    "algorithm": "算法：{{name}}",
+    "dueAt": "到期：{{date}}"
+  },
+  "reviewAttribution": {
+    "open": "复习归因报告",
+    "title": "复习归因报告",
+    "hint": "基于真实复习记录，按算法、书籍与评级拆解复习负担与忘记率。",
+    "empty": "该时段暂无复习记录，无需归因",
+    "loadFailed": "归因报告读取失败，请稍后重试",
+    "days": "近 {{count}} 天",
+    "totalReviews": "复习次数",
+    "againRate": "忘记率",
+    "byBook": "按书籍",
+    "byAlgorithm": "按算法",
+    "byRating": "按评级",
+    "reviews": "复习",
+    "again": "忘记",
+    "avgInterval": "平均间隔（天）"
   }
 }

@@ -127,7 +127,178 @@ export const cardService = {
         rating,
       });
     } catch (e) {
-  logError("cardService.now", e);
-  }
+      logError("cardService.recordReview", e);
+    }
+  },
+
+  // ---------------- W7：统一复习队列 / 归因 / 配置 ----------------
+
+  /** 跨书统一复习队列：day=0 今天及逾期，1..=6 未来第 n 天；一页最多 200 张。 */
+  async unifiedQueue(day: number, page = 0, limit = 50): Promise<ReviewQueuePage | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<ReviewQueuePage>(CMD.getUnifiedReviewQueue, {
+        day,
+        page,
+        limit,
+      });
+    } catch (e) {
+      logError("cardService.unifiedQueue", e);
+      return null;
+    }
+  },
+
+  async attributionReport(days = 7): Promise<ReviewAttributionReport | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<ReviewAttributionReport>(CMD.getReviewAttributionReport, { days });
+    } catch (e) {
+      logError("cardService.attributionReport", e);
+      return null;
+    }
+  },
+
+  async getStudyConfig(): Promise<StudyConfig | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<StudyConfig>(CMD.getStudyConfig);
+    } catch (e) {
+      logError("cardService.getStudyConfig", e);
+      return null;
+    }
+  },
+
+  async saveStudyConfig(config: StudyConfig): Promise<StudyConfig | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<StudyConfig>(CMD.saveStudyConfig, { config });
+    } catch (e) {
+      logError("cardService.saveStudyConfig", e);
+      throw e;
+    }
+  },
+
+  async getReviewScheduleConfig(): Promise<ReviewScheduleConfig | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<ReviewScheduleConfig>(CMD.getReviewScheduleConfig);
+    } catch (e) {
+      logError("cardService.getReviewScheduleConfig", e);
+      return null;
+    }
+  },
+
+  async setReviewScheduleConfig(config: ReviewScheduleConfig): Promise<boolean> {
+    if (!isTauri()) return false;
+    try {
+      await invoke<void>(CMD.setReviewScheduleConfig, { config });
+      return true;
+    } catch (e) {
+      logError("cardService.setReviewScheduleConfig", e);
+      return false;
+    }
+  },
+
+  async getStudyPreferences(): Promise<StudyPreferences | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<StudyPreferences>(CMD.getStudyPreferences);
+    } catch (e) {
+      logError("cardService.getStudyPreferences", e);
+      return null;
+    }
+  },
+
+  async setStudyPreferences(preferences: StudyPreferences): Promise<boolean> {
+    if (!isTauri()) return false;
+    try {
+      await invoke<void>(CMD.setStudyPreferences, { preferences });
+      return true;
+    } catch (e) {
+      logError("cardService.setStudyPreferences", e);
+      return false;
+    }
+  },
+
+  async getFsrsParams(): Promise<FsrsParams | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<FsrsParams>(CMD.getFsrsParams);
+    } catch (e) {
+      logError("cardService.getFsrsParams", e);
+      return null;
+    }
+  },
+
+  async saveFsrsParams(params: FsrsParams): Promise<FsrsParams | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<FsrsParams>(CMD.saveFsrsParams, { params });
+    } catch (e) {
+      logError("cardService.saveFsrsParams", e);
+      throw e;
+    }
   },
 };
+
+export interface ReviewQueueItem {
+  cardId: string;
+  bookId: string | null;
+  title: string;
+  dueDate: number;
+  algorithm: string;
+  stability: number;
+}
+
+export interface ReviewQueuePage {
+  day: number;
+  totalDue: number;
+  hasMore: boolean;
+  cards: ReviewQueueItem[];
+}
+
+export interface AttributionGroup {
+  key: string;
+  reviews: number;
+  againCount: number;
+  avgIntervalDays: number;
+}
+
+export interface ReviewAttributionReport {
+  days: number;
+  totalReviews: number;
+  againRate: number;
+  byAlgorithm: AttributionGroup[];
+  byBook: AttributionGroup[];
+  byRating: AttributionGroup[];
+}
+
+export interface StudyConfig {
+  algorithm: "sm2" | "fsrs" | string;
+  dailyGoal: number;
+  reminderEnabled: boolean;
+  reminderHour: number;
+  reminderMinute: number;
+}
+
+export interface FsrsParams {
+  requestRetention: number;
+  maximumInterval: number;
+  weights: number[];
+}
+
+export interface ReviewScheduleConfig {
+  easeFactor: number;
+  intervalModifier: number;
+  maxIntervalDays: number;
+  fsrsEnabled: boolean;
+  desiredRetention: number;
+}
+
+export interface StudyPreferences {
+  dailyGoalCards: number;
+  dailyGoalMinutes: number;
+  reminderEnabled: boolean;
+  reminderHour: number;
+  reminderMinute: number;
+}

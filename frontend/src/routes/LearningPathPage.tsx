@@ -22,6 +22,8 @@ import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 import { Sheet } from "../components/ui/Sheet";
 import { EmptyState, LoadingState, ErrorState } from "../components/common/states/index";
+import { MobileSheet } from "../components/common/MobileSheet";
+import { useBreakpoint } from "../hooks/useLayoutMode";
 import { errMsg, toast } from "../utils/toast";
 import { cn } from "../utils/cn";
 import {
@@ -45,6 +47,9 @@ const STATUS_STYLE: Record<string, string> = {
 export function LearningPathPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  // W8 端侧分级：手机竖屏单列，「激活/删除」等次要操作收进更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
   const [paths, setPaths] = useState<LearningPath[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -164,30 +169,32 @@ export function LearningPathPage() {
                   <Button size="sm" variant="secondary" onClick={() => void select(p.id)}>
                     {t("path.open")}
                   </Button>
-                  {!p.isActive && (
+                  <span className="flex-1" />
+                  <MobileSheet title={t("path.title")}>
+                    {!p.isActive && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          void learningPathService
+                            .activate(p.id)
+                            .then(() => load())
+                            .then(() => toast(t("path.activated")))
+                            .catch((e) => toast(errMsg(e)))
+                        }
+                      >
+                        {t("path.activateAction")}
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() =>
-                        void learningPathService
-                          .activate(p.id)
-                          .then(() => load())
-                          .then(() => toast(t("path.activated")))
-                          .catch((e) => toast(errMsg(e)))
-                      }
+                      iconLeft={<Trash2 className="h-4 w-4" />}
+                      onClick={() => void removePath(p)}
                     >
-                      {t("path.activateAction")}
+                      {t("common.delete")}
                     </Button>
-                  )}
-                  <span className="flex-1" />
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    iconLeft={<Trash2 className="h-4 w-4" />}
-                    onClick={() => void removePath(p)}
-                  >
-                    {t("common.delete")}
-                  </Button>
+                  </MobileSheet>
                 </div>
               </Surface>
             );
@@ -309,6 +316,9 @@ function PathDetail({
   const [evaluating, setEvaluating] = useState(false);
   const [editing, setEditing] = useState(false);
   const [evalMsg, setEvalMsg] = useState<string | null>(null);
+  // W8 端侧分级：手机竖屏收窄节点流卡片，次要操作走更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
 
   const books = useLibraryStore((s) => s.books);
 
@@ -394,14 +404,14 @@ function PathDetail({
           <h1 className="truncate font-extrabold text-ink" style={{ fontSize: "var(--fs-appbar-h1)" }}>
             {title}
           </h1>
-          <div className="flex shrink-0 gap-1">
+          <MobileSheet title={t("path.title")} inlineClassName="shrink-0 gap-1">
             <Button size="sm" variant="ghost" iconLeft={<Pencil className="h-4 w-4" />} onClick={() => setEditing((v) => !v)}>
               {t("path.adjustManual")}
             </Button>
             <Button size="sm" variant="ghost" iconLeft={<Trash2 className="h-4 w-4" />} onClick={() => void removePath()}>
               {t("common.delete")}
             </Button>
-          </div>
+          </MobileSheet>
         </div>
         <p className="mt-1 text-sm text-ink-soft">{path.goal}</p>
       </div>
@@ -432,6 +442,7 @@ function PathDetail({
                 <NodeCard
                   node={n}
                   titleOf={titleOf}
+                  compact={phonePortrait}
                   onStatus={(s) => void setStatus(n, s)}
                 />
               </div>
@@ -491,10 +502,13 @@ function PathDetail({
 function NodeCard({
   node,
   titleOf,
+  compact,
   onStatus,
 }: {
   node: PathNode;
   titleOf: (id: string | null | undefined) => string;
+  /** 手机竖屏收窄节点卡，横向节点流一屏可多露出一个节点 */
+  compact?: boolean;
   onStatus: (s: string) => void;
 }) {
   const { t } = useTranslation();
@@ -502,7 +516,7 @@ function NodeCard({
   const done = node.status === "completed";
   const Icon = done ? Check : Circle;
   return (
-    <div className="w-40 shrink-0">
+    <div className={cn("shrink-0", compact ? "w-36" : "w-40")}>
       <div
         className={cn(
           "relative flex min-h-24 flex-col gap-1 rounded-[var(--radius-md)] border p-3",

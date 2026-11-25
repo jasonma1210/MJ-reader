@@ -3,6 +3,11 @@ import { CMD, invoke, isTauri, allowMockFallback } from "./tauri";
 import type { AIProfile, AISaveProfile, ChatMessage } from "../types";
 import { MOCK_CHAT_REPLY, MOCK_PROFILES } from "./mock";
 import { logError } from "../utils/logError";
+import {
+  cancelAiRequest,
+  registerAiRequest,
+  releaseAiRequest,
+} from "./aiCancelService";
 import { currentAgeMode } from "../stores/ageStore";
 import { buildAgeAwareSystemInstruction, networkImportAllowed } from "./ageGuard";
 
@@ -18,6 +23,8 @@ export interface ChatStreamOptions {
   /** 后端返回会话 ID 时回调（首轮生成，后续轮复用相同值） */
   onConversationId?: (id: string) => void;
   onToken: (token: string) => void;
+  /** 外部取消信号（切书/退出会话可复用同一 AbortController） */
+  signal?: AbortSignal;
 }
 
 /** 会话摘要（list_conversations 返回） */
@@ -54,60 +61,82 @@ export const aiService = {
    * 非 Tauri（浏览器预览）降级为分块模拟输出，保证面板可演示。
    */
   async chatStream(opts: ChatStreamOptions): Promise<void> {
-    if (isTauri()) {
-      try {
-        const unlisten = await listen<{
-          conversation_id: string;
-          content: string;
-          done: boolean;
-        }>("ai-chat-chunk", (event) => {
-          const payload = event.payload;
-          // done=true 为结束标记（content 为空），仅转发票面增量
-          if (!payload.done && payload.content) opts.onToken(payload.content);
-        });
-        try {
-          // A2（适龄护栏·fail-closed）：儿童/青少年档在发送前前置年龄适配 system 指令，
-          // 即使后端忽略，客户端也强制约束语气与敏感话题拒答。adult 档返回空串不施加限制。
-          const ageInstruction = buildAgeAwareSystemInstruction(currentAgeMode());
-          const requestMessages: ChatMessage[] = ageInstruction
-            ? [
-                {
-                  id: "age-guard",
-                  role: "system",
-                  content: ageInstruction,
-                  createdAt: Date.now(),
-                },
-                ...opts.messages,
-              ]
-            : opts.messages;
-          const cid = await invoke<string>(CMD.aiChatStream, {
-            request: {
-              messages: requestMessages,
-              bookId: opts.bookId ?? null,
-              conversationId: opts.conversationId ?? null,
-              context: opts.context ?? null,
-              maxTokens: null,
-            },
-          });
-          if (cid && opts.onConversationId) opts.onConversationId(cid);
-        } finally {
-          unlisten();
-        }
-        return;
-      } catch (e) {
-        // 修复「还没有对话」：此前空 catch 把 invoke 错误静默吞掉，
-        // 后端配置缺失/鉴权失败时前端不报错、assistant 消息留空，用户误以为没接通。
-        // 改为记录并向上抛出，由 aiStore.send 捕获后展示错误文案。
-        logError("aiService.chatStream", e);
-        throw e;
-      }
+    // W2 统一取消：本地先生成会话键，AbortController 与 Rust CancellationToken 共用同一键。
+    // 切书/退出会话由 aiCancelService.cancelAiRequestsByBook / cancelAllAiRequests 终止。
+    const localId =
+      opts.conversationId ?? `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const requestKey = `chat:${localId}`;
+    const controller = registerAiRequest(requestKey, opts.bookId ?? null);
+    const onExternalAbort = () => cancelAiRequest(requestKey);
+    if (opts.signal) {
+      if (opts.signal.aborted) onExternalAbort();
+      else opts.signal.addEventListener("abort", onExternalAbort, { once: true });
     }
-    // 模拟流式输出（仅浏览器开发/预览环境）
-    if (!allowMockFallback()) return;
-    const tokens = MOCK_CHAT_REPLY.match(/.{1,4}/g) ?? [MOCK_CHAT_REPLY];
-    for (const t of tokens) {
-      await new Promise((r) => setTimeout(r, 30));
-      opts.onToken(t);
+
+    try {
+      if (isTauri()) {
+        try {
+          const unlisten = await listen<{
+            conversation_id: string;
+            content: string;
+            done: boolean;
+          }>("ai-chat-chunk", (event) => {
+            // 已取消后到达的尾部 chunk 不再上屏，避免界面回填已终止的回答
+            if (controller.signal.aborted) return;
+            const payload = event.payload;
+            // done=true 为结束标记（content 为空），仅转发票面增量
+            if (!payload.done && payload.content) opts.onToken(payload.content);
+          });
+          try {
+            // A2（适龄护栏·fail-closed）：儿童/青少年档在发送前前置年龄适配 system 指令，
+            // 即使后端忽略，客户端也强制约束语气与敏感话题拒答。adult 档返回空串不施加限制。
+            const ageInstruction = buildAgeAwareSystemInstruction(currentAgeMode());
+            const requestMessages: ChatMessage[] = ageInstruction
+              ? [
+                  {
+                    id: "age-guard",
+                    role: "system",
+                    content: ageInstruction,
+                    createdAt: Date.now(),
+                  },
+                  ...opts.messages,
+                ]
+              : opts.messages;
+            const cid = await invoke<string>(CMD.aiChatStream, {
+              request: {
+                messages: requestMessages,
+                bookId: opts.bookId ?? null,
+                conversationId: localId,
+                context: opts.context ?? null,
+                maxTokens: null,
+              },
+            });
+            if (cid && !controller.signal.aborted && opts.onConversationId) {
+              opts.onConversationId(cid);
+            }
+          } finally {
+            unlisten();
+          }
+          return;
+        } catch (e) {
+          // 修复「还没有对话」：此前空 catch 把 invoke 错误静默吞掉，
+          // 后端配置缺失/鉴权失败时前端不报错、assistant 消息留空，用户误以为没接通。
+          // 改为记录并向上抛出，由 aiStore.send 捕获后展示错误文案。
+          logError("aiService.chatStream", e);
+          throw e;
+        }
+      }
+      // 模拟流式输出（仅浏览器开发/预览环境）
+      if (!allowMockFallback()) return;
+      const tokens = MOCK_CHAT_REPLY.match(/.{1,4}/g) ?? [MOCK_CHAT_REPLY];
+      for (const t of tokens) {
+        if (controller.signal.aborted) return;
+        await new Promise((r) => setTimeout(r, 30));
+        opts.onToken(t);
+      }
+    } finally {
+      opts.signal?.removeEventListener("abort", onExternalAbort);
+      releaseAiRequest(requestKey);
     }
   },
 
@@ -141,10 +170,14 @@ export const aiService = {
     }
   },
 
-  async translate(text: string, target = "en"): Promise<string> {
+  async translate(text: string, target = "en", requestId?: string): Promise<string> {
     if (isTauri()) {
       try {
-        return await invoke<string>(CMD.aiTranslate, { text, targetLang: target });
+        return await invoke<string>(CMD.aiTranslate, {
+          text,
+          targetLang: target,
+          requestId: requestId ?? null,
+        });
       } catch (e) {
         // 不再静默回退原文——后端失败（鉴权/网络/服务端错误）必须上抛，
         // 由 aiStore 捕获并在面板内展示真实错误，便于定位问题（2026-08-24 排查 AI 失效）。
@@ -155,10 +188,14 @@ export const aiService = {
     return `[${target}] ${text}`;
   },
 
-  async explain(text: string): Promise<string> {
+  async explain(text: string, requestId?: string): Promise<string> {
     if (isTauri()) {
       try {
-        return await invoke<string>(CMD.aiExplain, { word: text, sentence: text });
+        return await invoke<string>(CMD.aiExplain, {
+          word: text,
+          sentence: text,
+          requestId: requestId ?? null,
+        });
       } catch (e) {
         logError("aiService.explain", e);
         throw e;

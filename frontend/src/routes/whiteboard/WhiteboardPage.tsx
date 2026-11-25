@@ -73,7 +73,6 @@ import {
   type WhiteboardLink,
   parseCanvasState,
   serializeCanvasState,
-  pickCanonicalBoard,
   BOARD_FOCUS_EVENT,
   type BoardFocusDetail,
 } from "../../services/whiteboardService";
@@ -90,6 +89,10 @@ import { cn } from "../../utils/cn";
 import { exportBoardPng, exportBoardPdf } from "../../utils/boardExport";
 import { isHttpUrl, isUrlAllowed, getDisplayHost } from "../../utils/cardSecurity";
 import { useWhiteboardStore } from "../../stores/whiteboardStore";
+import {
+  hasGraphSyncBackend,
+  syncCardToGraph,
+} from "../../export/graphSyncClient";
 
 /** 卡片节点缺省尺寸（宽/高，世界像素），与后端 whiteboard_add_card 缺省值一致 */
 const NODE_W = 220;
@@ -306,6 +309,8 @@ export function WhiteboardPage() {
   /** P1：统一卡片检查器 */
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("content");
+  /** W10：卡片同步到图谱进行中 */
+  const [syncingGraph, setSyncingGraph] = useState(false);
   /** P2：非手机端「更多」入口（模板 / 演示 / 反向关联） */
   const [moreDesktopOpen, setMoreDesktopOpen] = useState(false);
   /** P2：模板 / 演示模式 */
@@ -504,28 +509,19 @@ export function WhiteboardPage() {
     const scopeType = "book";
     const scopeRef = target === "all" ? null : target;
     try {
-      // 1) 查找/创建画布
-      const boards = await whiteboardService.listBoards(scopeType, scopeRef);
-      // 与 addToBookBoard 共用「最早创建的同 scope 画布」规则，保证上板/打开定位到同一块板
-      const canonical = pickCanonicalBoard(boards);
-      let bid: string;
-      if (canonical) {
-        bid = canonical.id;
-      } else {
-        bid = await whiteboardService.saveBoard({
-          title: target === "all" ? t("whiteboard.allBoardTitle") : "", // 标题后端有兜底
-          scopeType,
-          scopeRef,
-          canvasState: undefined,
-        });
-      }
+      // 1) 查找/创建画布：后端原子命令保证同 scope 唯一 canonical，前端不再自行挑选
+      const bidResult = await whiteboardService.getOrCreateBoard(
+        scopeType,
+        scopeRef,
+        target === "all" ? t("whiteboard.allBoardTitle") : "",
+      );
+      const bid = bidResult.id;
       boardIdRef.current = bid;
       setBoardId(bid);
 
       // 2) 恢复持久化布局 + 画布状态
       const saved = await whiteboardService.getCards(bid);
-      const summary = boards.find((b) => b.id === bid);
-      let cs = parseCanvasState(summary?.canvasState);
+      let cs = parseCanvasState(bidResult.canvasState);
 
       // 3) 拉取作用域内全部知识源，与原布局做对账（R6：修复「新增笔记/高亮不出现、刷新无响应」）：
       //    - 已挂板的节点按来源+源id索引，重复项取最先挂板的一条；
@@ -971,6 +967,40 @@ export function WhiteboardPage() {
     [jumpToSource, t],
   );
 
+  /** W10：把当前卡片同步为知识图谱节点（命令经 pendingCommands 适配，不写裸命令串） */
+  const handleSyncToGraph = useCallback(
+    async (node: NodeData) => {
+      if (!hasGraphSyncBackend()) {
+        toast(t("whiteboard.syncToGraphNotReady"));
+        return;
+      }
+      if (syncingGraph) return;
+      setSyncingGraph(true);
+      try {
+        const result = await syncCardToGraph({
+          cardId: node.cardId,
+          source: node.source,
+          title: node.card?.title || node.card?.body || node.cardId,
+          body: node.card?.body ?? "",
+          bookId: node.card?.spatial.bookId ?? null,
+        });
+        if (!result) {
+          toast(t("whiteboard.syncToGraphNotReady"));
+          return;
+        }
+        toast(
+          t(result.created ? "whiteboard.syncToGraphDone" : "whiteboard.syncToGraphExisting"),
+        );
+      } catch (e) {
+        logError("WhiteboardPage.syncToGraph", e);
+        toast(`${t("whiteboard.syncToGraphFailed")}: ${String((e as Error)?.message ?? e)}`);
+      } finally {
+        setSyncingGraph(false);
+      }
+    },
+    [syncingGraph, t],
+  );
+
   // ===== v1.1：长按卡片 → 弹「跳转确认」，点确认才回原文（单击不再直接跳转） =====
   /** 长按触发打开确认（不直接跳转） */
   const handleRequestOpen = useCallback((node: NodeData) => {
@@ -1154,6 +1184,7 @@ export function WhiteboardPage() {
       noteType?: string,
       mediaUrl?: string,
       transcript?: string,
+      noteId?: string | null,
     ): Promise<NodeData | null> => {
       const bid = boardIdRef.current;
       if (!bid) return null;
@@ -1170,6 +1201,7 @@ export function WhiteboardPage() {
         noteType ?? "note",
         mediaUrl ?? null,
         transcript ?? null,
+        noteId ?? null,
       );
       const placed: NodeData = { ...node, x: childX, y: childY, z: parent.z + 1 };
       pushHistory();
@@ -1202,6 +1234,7 @@ export function WhiteboardPage() {
       body: string,
       noteType: string,
       mediaUrl?: string | null,
+      noteId?: string | null,
     ): Promise<NodeData | null> => {
       const bid = boardIdRef.current;
       if (!bid) return null;
@@ -1218,6 +1251,7 @@ export function WhiteboardPage() {
         noteType,
         mediaUrl ?? null,
         null,
+        noteId ?? null,
       );
       const placed: NodeData = { ...node, x, y, z: Number.MAX_SAFE_INTEGER };
       pushHistory();
@@ -1305,8 +1339,10 @@ export function WhiteboardPage() {
         fr.onerror = () => reject(new Error("read file failed"));
         fr.readAsDataURL(file);
       });
+      // W1：媒体落盘文件名与入库 note id 共用同一 id，避免跨设备同步后失配
+      const noteId = crypto.randomUUID();
       const mediaPath = (await notesService.saveMedia(
-        crypto.randomUUID(),
+        noteId,
         pinMediaKind,
         dataUrl,
       )) ?? dataUrl;
@@ -1315,6 +1351,7 @@ export function WhiteboardPage() {
         "",
         pinMediaKind,
         mediaPath,
+        noteId,
       );
       if (node) toast(t("whiteboard.createDone"));
       setPinMediaOpen(false);
@@ -1452,8 +1489,10 @@ export function WhiteboardPage() {
           fr.onerror = () => reject(new Error("read file failed"));
           fr.readAsDataURL(file);
         });
+        // W1：媒体落盘文件名与入库 note id 共用同一 id
+        const noteId = crypto.randomUUID();
         const mediaPath = (await notesService.saveMedia(
-          crypto.randomUUID(),
+          noteId,
           "image",
           dataUrl,
         )) ?? dataUrl;
@@ -1463,6 +1502,8 @@ export function WhiteboardPage() {
           "",
           "image",
           mediaPath,
+          undefined,
+          noteId,
         );
         setImageModal(null);
         toast(t("whiteboard.createDone"));
@@ -3344,6 +3385,8 @@ export function WhiteboardPage() {
             setInspectorTab("content");
           }}
           onMentionRef={handleMentionRef}
+          onSyncToGraph={(node) => void handleSyncToGraph(node)}
+          syncBusy={syncingGraph}
         />
       )}
 

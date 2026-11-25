@@ -11,9 +11,12 @@ import {
   ScanText,
   Globe,
   Database,
+  HardDrive,
+  Target,
   NotebookPen,
   GraduationCap,
   Package,
+  Library,
   Tags,
 } from "lucide-react";
 import { useMeStore } from "../stores/meStore";
@@ -131,6 +134,16 @@ export function MePage() {
         />
       </SettingGroup>
 
+      {/* W7：每日目标与学习提醒配置 */}
+      <SettingGroup title={t("me.groups.studyPlan")}>
+        <SettingRow
+          icon={Target}
+          label={t("studyGoals.title")}
+          sub={t("studyGoals.sub")}
+          to="/me/study-goals"
+        />
+      </SettingGroup>
+
       {/* 1. AI 能力：AI 模型配置入口 + 本地能力（ASR / OCR / TTS）+ 联网搜索 */}
       <SettingGroup title={t("me.groups.aiCapabilities")}>
         <SettingRow
@@ -179,6 +192,13 @@ export function MePage() {
         />
         <RowDivider />
         <SettingRow
+          icon={Library}
+          label={t("knowledgePack.title")}
+          sub={t("knowledgePack.sub")}
+          to="/knowledge-pack"
+        />
+        <RowDivider />
+        <SettingRow
           icon={Tags}
           label={t("tags.title")}
           sub={t("me.row.tagsSub")}
@@ -220,8 +240,15 @@ export function MePage() {
         </div>
       </SettingGroup>
 
-      {/* 3. 隐私与关于：数据备份 + 关于 */}
+      {/* 3. 隐私与关于：存储管理 + 数据备份 + 关于 */}
       <SettingGroup title={t("me.groups.privacyAbout")}>
+        <SettingRow
+          icon={HardDrive}
+          label={t("storage.title")}
+          sub={t("storage.sub")}
+          to="/me/storage"
+        />
+        <RowDivider />
         <SettingRow
           icon={Database}
           label={t("backup.title")}
@@ -238,7 +265,7 @@ export function MePage() {
         />
       </SettingGroup>
 
-      {/* 学习提醒开关已移除（C2：半成品，时间点调度未实现，避免「有开关无功能」） */}
+      {/* 学习提醒配置已收敛到「学习计划」分组（后端偏好命令接入后才开放控件） */}
 
       {/* 底部安全区占位 */}
       <div className="h-4" />

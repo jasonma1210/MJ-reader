@@ -53,6 +53,17 @@ export const CMD = {
   // v3.8（到期提示按书分组）：各书到期数聚合 + 按书到期卡清单
   dueCountsByBook: "due_counts_by_book",
   listDueCardsByBook: "list_due_cards_by_book",
+  // W7：跨书统一复习队列 / 归因报告 / 每日目标与提醒 / FSRS 参数
+  getUnifiedReviewQueue: "get_unified_review_queue",
+  getReviewAttributionReport: "get_review_attribution_report",
+  getStudyConfig: "get_study_config",
+  saveStudyConfig: "save_study_config",
+  getFsrsParams: "get_fsrs_params",
+  saveFsrsParams: "save_fsrs_params",
+  getReviewScheduleConfig: "get_review_schedule_config",
+  setReviewScheduleConfig: "set_review_schedule_config",
+  getStudyPreferences: "get_study_preferences",
+  setStudyPreferences: "set_study_preferences",
   createStudySet: "create_study_set",
   getStudySetByBook: "get_study_set_by_book",
   addBookToStudySet: "add_book_to_study_set",
@@ -78,6 +89,15 @@ export const CMD = {
   updateStudyNoteContent: "update_study_note_content",
   saveVoiceNote: "save_voice_note",
   saveStudyNoteMedia: "save_study_note_media",
+  // W1（2026-11-25 数据正确性）：Note id 与媒体文件名回填
+  reconcileNoteMedia: "reconcile_note_media",
+  // W1：文件完整性 manifest（导入书籍 / 备份文件 / 笔记媒体三链路）
+  fileIntegrityGenerate: "file_integrity_generate",
+  fileIntegrityVerify: "file_integrity_verify",
+  fileIntegrityVerifyPaths: "file_integrity_verify_paths",
+  // W2：低内存告警上报（原生桥 / WebView → Rust memoryGuard）
+  reportMemoryWarning: "report_memory_warning",
+  mediaQuotaEnforce: "media_quota_enforce",
   // C3 收口：脑图节点命令统一走 CMD（此前 MindmapPanel 直调字符串，改名失控风险）
   loadMindmapNodes: "load_mindmap_nodes",
   saveMindmapNodes: "save_mindmap_nodes",
@@ -103,6 +123,32 @@ export const CMD = {
   countBookFtsChunks: "count_book_fts_chunks",
   // export
   exportMarkdown: "export_markdown",
+  // W5：后端生成文件并返回绝对路径（CSV/EPUB/PDF），前端 HTML/MD 仍走 Blob 直出
+  exportCsv: "export_csv",
+  exportEpub: "export_epub",
+  exportPdf: "export_pdf",
+  exportHtml: "export_html",
+  getBacklinks: "get_backlinks",
+  listBacklinksByHighlight: "list_backlinks_by_highlight",
+  // W3：AI 用量与任务路由
+  getAiUsage: "get_ai_usage",
+  getAiTaskRouting: "get_ai_task_routing",
+  saveAiTaskRouting: "save_ai_task_routing",
+  // W10：白板→图谱 / 知识包开放格式 / Anki 导出前置 / BYO 同步
+  syncWhiteboardCardToGraph: "sync_whiteboard_card_to_graph",
+  knowledgePackImport: "knowledge_pack_import",
+  knowledgePackExport: "knowledge_pack_export",
+  knowledgePackList: "knowledge_pack_list",
+  knowledgePackGet: "knowledge_pack_get",
+  knowledgePackDownload: "knowledge_pack_download",
+  knowledgePackDelete: "knowledge_pack_delete",
+  knowledgePackSearch: "knowledge_pack_search",
+  faqMatch: "faq_match",
+  ankiExportPrepare: "anki_export_prepare",
+  byoSyncGetConfig: "byo_sync_get_config",
+  byoSyncSaveConfig: "byo_sync_save_config",
+  byoSyncTestConnection: "byo_sync_test_connection",
+  byoSyncNow: "byo_sync_now",
   // mask（挖空蒙版复习）
   createMask: "create_mask",
   listMasksByBook: "list_masks_by_book",
@@ -177,6 +223,8 @@ export const CMD = {
   resolveCardsBatch: "resolve_cards_batch",
   whiteboardList: "whiteboard_list",
   whiteboardSave: "whiteboard_save",
+  // W1（2026-11-25 数据正确性）：后端原子「查找或创建画布」，前端不再决定 canonical
+  whiteboardGetOrCreate: "whiteboard_get_or_create",
   whiteboardAddCard: "whiteboard_add_card",
   whiteboardNewNote: "whiteboard_new_note",
   whiteboardSaveLayout: "whiteboard_save_layout",
@@ -281,6 +329,8 @@ export const CMD = {
   aiGenerateToc: "ai_generate_toc",
   aiCatchMeUp: "ai_catch_me_up",
   aiCancelStream: "ai_cancel_stream",
+  // W2：统一取消（AbortController / 切书 / 退出会话）
+  aiCancelRequest: "ai_cancel_request",
   updateKnowledgeMastery: "update_knowledge_mastery",
   getNodeByUid: "get_node_by_uid",
   linkNodeToCard: "link_node_to_card",
@@ -324,6 +374,12 @@ export const CMD = {
   ollamaLoadConfig: "ollama_load_config",
   ollamaSaveConfig: "ollama_save_config",
   ollamaTestConnection: "ollama_test_connection",
+  // ===== W9 存储管理（后端已注册，前端补键；getReadingRecords 已在上方） =====
+  getCacheInfo: "get_cache_info",
+  clearAppCache: "clear_app_cache",
+  getStorageInfo: "get_storage_info",
+  deleteReadingRecord: "delete_reading_record",
+  clearAllReadingRecords: "clear_all_reading_records",
 } as const;
 
 /** 当前是否运行在 Tauri 运行时内 */

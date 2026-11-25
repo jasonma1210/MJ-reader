@@ -18,6 +18,24 @@ pub mod review;
 pub mod quiz_link;
 // v1.1.7 实现：阶段九 AI 扩展命令
 pub mod ai_extended;
+// W3（2026-11-25）：AI 用量视图 + 任务路由（settings 持久化）
+pub mod ai_usage;
+#[cfg(test)]
+pub mod ai_usage_tests;
+// W7（2026-11-25）：FSRS/SM-2 学习体系（配置/队列/归因报告）
+pub mod learning;
+#[cfg(test)]
+pub mod learning_tests;
+// W10（2026-11-25）：白板卡→图谱同步 / 知识包开放格式 / BYO 同步
+pub mod graph_sync;
+#[cfg(test)]
+pub mod graph_sync_tests;
+pub mod knowledge_pack;
+#[cfg(test)]
+pub mod knowledge_pack_tests;
+pub mod byo_sync;
+#[cfg(test)]
+pub mod byo_sync_tests;
 // v2.0 T02 实现：iOS 平台启用 ASR 模块（SFSpeechRecognizer via objc2）
 #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
 pub mod asr;
@@ -36,6 +54,18 @@ pub mod directory_tests;
 pub mod file;
 #[cfg(test)]
 pub mod file_tests;
+// W1（2026-11-25 数据正确性）：文件完整性命令（manifest 生成/校验）
+pub mod file_integrity;
+// W2（2026-11-25）：低内存告警上报命令（原生桥/WebView → memoryGuard）
+pub mod memory;
+// W2：媒体配额清理命令
+pub mod media_quota;
+// W2：备份流式导出单测
+#[cfg(test)]
+pub mod backup_tests;
+// W5：导出后端单测
+#[cfg(test)]
+pub mod export_tests;
 // 2026-11-20：Android SAF 目录批量扫描导入桥（JNI + feature 门控）
 pub mod folder_picker;
 // v1.1.0 P0.3 实现：mindmap_nodes 持久化 + 节点回跳原文
@@ -60,6 +90,9 @@ pub mod mask;
 pub mod chapter_check;
 // v3.4 实现：Edge TTS（多端统一神经音色，见 docs/design/tts-edge-mobile-assessment.md）
 pub mod tts;
+// W4/W1（2026-11-25）：TTS SSML 语速/音高归一化单测
+#[cfg(test)]
+pub mod tts_tests;
 // v2.0 T09 实现：云端 ASR 命令（腾讯云 / 小米 MiMo）
 pub mod cloud_asr;
 // R5 实现：全书正文 FTS5 检索命令（AI 对话上下文 + 溯源）
@@ -70,6 +103,9 @@ pub mod metrics;
 pub mod knowledge_node;
 // ===== 白板笔记（白板设计文档 Stage A）：画布 + 节点布局 + 统一卡片只读映射 =====
 pub mod whiteboard;
+// W1（2026-11-25 数据正确性）：白板 scope 归并 / get_or_create 单测
+#[cfg(test)]
+pub mod whiteboard_tests;
 // ===== 知识库 Agent 与语义检索（技术方案 2026-08-25）：semantic_search / agent_ask / agent_plan / agent_execute =====
 pub mod know_agent;
 // ===== 笔记与 AI 记录全量备份 / 还原（备份还原设计文档）：导出/预览/导入/删除 =====

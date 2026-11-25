@@ -5,7 +5,10 @@ import { Gauge, TrendingDown, AlertTriangle, X, BookOpen } from "lucide-react";
 import { Surface } from "../components/ui/Surface";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/common/states";
+import { MobileSheet } from "../components/common/MobileSheet";
+import { StudySchedulePanel } from "../components/learn/StudySchedulePanel";
 import { SubBackHeader } from "../components/shell/SubBackHeader";
+import { useBreakpoint } from "../hooks/useLayoutMode";
 import { useLibraryStore } from "../stores/libraryStore";
 import {
   masteryService,
@@ -20,6 +23,7 @@ import { listQuestionsForKnowledgePoint, getWeakNodesMaterial } from "../service
 import { cardService } from "../services/cardService";
 import { useJumpToSource } from "../hooks/useJumpToSource";
 import { logError } from "../utils/logError";
+import { cn } from "../utils/cn";
 
 function pct(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -106,6 +110,9 @@ function computeBookStats(nodes: BookKnowledgeNode[], titleMap: Record<string, s
 export function MasteryPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  // W8 端侧分级：手机竖屏次要操作收进「更多」抽屉，统计栅格按端侧分列。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
   /** P0-F：薄弱点一键回原文（统一跳转入口，与复习卡 / 图谱共用） */
   const jumpToSource = useJumpToSource();
   const { books, load: loadBooks } = useLibraryStore();
@@ -298,9 +305,11 @@ export function MasteryPage() {
       <SubBackHeader titleKey="mastery.title" onBack={() => navigate(-1)} />
       <div className="flex flex-col gap-4 px-4 pt-3">
       <div className="flex items-center justify-end">
-        <Button size="sm" variant="secondary" onClick={() => void load()}>
-          {t("common.retry")}
-        </Button>
+        <MobileSheet title={t("common.more")} inlineClassName="justify-end">
+          <Button size="sm" variant="secondary" onClick={() => void load()}>
+            {t("common.retry")}
+          </Button>
+        </MobileSheet>
       </div>
 
       {/* 概览统计 */}
@@ -310,6 +319,9 @@ export function MasteryPage() {
         <StatCard icon={<AlertTriangle className="h-4 w-4" />} label={t("mastery.forgettingNodes")} value={String(forgetting.length)} />
         <StatCard icon={<BookOpen className="h-4 w-4" />} label={t("mastery.material")} value={String(materialCount)} />
       </div>
+
+      {/* W7：SM-2 参数可视化与调节 + FSRS 开关（后端未就绪时显示明确提示） */}
+      <StudySchedulePanel />
 
       {/* 书籍掌握度概览 */}
       <BookMasteryPanel
@@ -348,7 +360,7 @@ export function MasteryPage() {
 
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="flex max-h-[80vh] w-full max-w-lg flex-col gap-3 overflow-auto rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-xl">
+          <div className={cn("flex w-full max-w-lg flex-col gap-3 overflow-auto rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-xl", phonePortrait ? "max-h-[70vh]" : "max-h-[80vh]")}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-base font-bold text-ink">{selected.nodeName}</div>

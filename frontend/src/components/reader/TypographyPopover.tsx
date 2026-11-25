@@ -6,11 +6,11 @@ import {
   FONT_FAMILY_MAP,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  FONT_SIZE_STEP,
   BG_COLOR_PRESETS,
   LINE_HEIGHT_STEPS,
   PARA_SPACING_STEPS,
   VIEW_MODE_STEPS,
-  formatSupportsPagination,
   LETTER_SPACING_MIN,
   LETTER_SPACING_MAX,
   LETTER_SPACING_STEP,
@@ -20,23 +20,85 @@ import {
   type TextAlign,
 } from "../../stores/readerStore";
 
-/** 固定版式格式（PDF / Office）：不支持字号/字体/行距/边距等排版调整 → 置灰不可点。
- * text（txt/md/html/...）与 foliate（epub/mobi/...）为流式排版，支持全部调整。 */
-const FIXED_LAYOUT_FORMATS = new Set<string>([
-  "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "rtf", "odt", "ods", "odp",
-]);
+/** 排版项：按渲染器真实支持能力开放，不再对 PDF/Office 整体置灰。 */
+export type TypographyItem =
+  | "viewMode"
+  | "fontSize"
+  | "fontFamily"
+  | "lineHeight"
+  | "paraSpacing"
+  | "bgColor"
+  | "align"
+  | "letterSpacing"
+  | "verticalWriting";
 
-function isFixedLayout(format?: string): boolean {
-  if (!format) return false;
-  return FIXED_LAYOUT_FORMATS.has(format.trim().toLowerCase());
+export interface FormatCapability {
+  enabled: Set<TypographyItem>;
+  /** 禁用项的 i18n 原因键（明确告诉用户为什么不能用） */
+  reasons: Partial<Record<TypographyItem, string>>;
 }
 
+const OFFICE_FORMATS = new Set<string>([
+  "docx", "doc", "pptx", "ppt", "xlsx", "xls", "rtf", "odt", "ods", "odp",
+]);
+const TEXT_FORMATS = new Set<string>([
+  "txt", "md", "markdown", "text", "html", "htm", "xhtml", "xht", "xml", "mhtml", "mht", "mhtm",
+]);
+
+/** 能力矩阵（W4）：
+ * - foliate 系（EPUB/MOBI/FB2/CBZ…）：流式排版，全部项目生效。
+ * - 文本 / Office：字号/字体/行距/段距/背景由 TextView / OfficeView 实际应用；
+ *   无原生分页且对齐/字距/竖排仅 foliate 注入 → 这些项禁用并给出原因。
+ * - PDF：页面由 pdfjs 渲染，仅背景色真正生效；其余项禁用并给出原因。
+ */
+export function capabilityFor(format?: string): FormatCapability {
+  const fmt = (format ?? "").trim().toLowerCase();
+  if (fmt === "pdf") {
+    return {
+      enabled: new Set<TypographyItem>(["bgColor"]),
+      reasons: {
+        viewMode: "reader.typography.disabled.pdfViewMode",
+        fontSize: "reader.typography.disabled.pdfFixed",
+        fontFamily: "reader.typography.disabled.pdfFixed",
+        lineHeight: "reader.typography.disabled.pdfFixed",
+        paraSpacing: "reader.typography.disabled.pdfFixed",
+        align: "reader.typography.disabled.pdfFixed",
+        letterSpacing: "reader.typography.disabled.pdfFixed",
+        verticalWriting: "reader.typography.disabled.pdfFixed",
+      },
+    };
+  }
+  if (OFFICE_FORMATS.has(fmt) || TEXT_FORMATS.has(fmt)) {
+    return {
+      enabled: new Set<TypographyItem>([
+        "fontSize", "fontFamily", "lineHeight", "paraSpacing", "bgColor",
+      ]),
+      reasons: {
+        viewMode: "reader.typography.disabled.scrollOnly",
+        align: "reader.typography.disabled.flowOnly",
+        letterSpacing: "reader.typography.disabled.flowOnly",
+        verticalWriting: "reader.typography.disabled.vertical",
+      },
+    };
+  }
+  return {
+    enabled: new Set<TypographyItem>([
+      "viewMode", "fontSize", "fontFamily", "lineHeight", "paraSpacing",
+      "bgColor", "align", "letterSpacing", "verticalWriting",
+    ]),
+    reasons: {},
+  };
+}
+
+const VIEW_MODE_LABELS: Record<ViewMode, string> = {
+  scroll: "reader.viewMode.scroll",
+  paginated: "reader.viewMode.paginated",
+};
+
 /**
- * 排版设置浮层（v3.6.2 顶部 Aa 按钮触发，对齐原型图）：
- * - 形态：从 Aa 按钮下方"飘出"的浅色卡片，顶部小三角指向上方，顶部"拖把小条"。
- * - 内容分组：字号（圆盘可拖，当前值中央显示）/ 字体（系统字体 + 调色盘入口）/ 行距+段距（胶囊三选一）/ 颜色（圆色块蓝环选中）/ 背景（圆色块）。
- * - 关闭：点击外部 / Esc / 顶部拖把小条区域外任意位置。
- * - 旋转重挂载：由 ReaderPage 重新挂载本组件即可。
+ * 排版设置浮层（顶部 Aa 按钮触发）：
+ * 按格式开放真正可用的排版项，禁用项显示明确原因。
+ * 关闭：点击外部 / Esc；旋转重挂载由 ReaderPage 负责。
  */
 export function TypographyPopover({
   open,
@@ -47,10 +109,10 @@ export function TypographyPopover({
 }: {
   open: boolean;
   anchorRef: React.RefObject<HTMLElement | null>;
-  /** 当前书籍格式（用于判定是否支持排版调整；pdf/office 置灰不可点） */
+  /** 当前书籍格式（决定排版能力矩阵） */
   format?: string;
   onClose: () => void;
-  /** P0-1：竖排书级持久化目标（set_vertical_writing） */
+  /** 竖排书级持久化目标（set_vertical_writing） */
   bookId?: string;
 }) {
   const { t } = useTranslation();
@@ -68,7 +130,6 @@ export function TypographyPopover({
   const setViewMode = useReaderStore((s) => s.setViewMode);
   const verticalWriting = useReaderStore((s) => s.verticalWriting);
   const setVerticalWriting = useReaderStore((s) => s.setVerticalWriting);
-  // P1-7：对齐四档 + 字距（仅 EPUB 等流式排版生效）
   const textAlign = useReaderStore((s) => s.textAlign);
   const setTextAlign = useReaderStore((s) => s.setTextAlign);
   const letterSpacing = useReaderStore((s) => s.letterSpacing);
@@ -77,7 +138,6 @@ export function TypographyPopover({
   const panelRef = useRef<HTMLDivElement>(null);
   const [fontPickerOpen, setFontPickerOpen] = useState(false);
 
-  // 关闭：点击外部 / Esc
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -97,39 +157,39 @@ export function TypographyPopover({
     };
   }, [open, onClose, anchorRef]);
 
-  // 无原生页码格式（md/txt/html 等）：强制滚动，「分页」按钮禁用（2026-09-04）。
-  // 若此前在支持分页的书里选了「分页」，打开无页码书时自动纠正回滚动。
-  const paginationOk = formatSupportsPagination(format);
+  const cap = capabilityFor(format);
+  const can = (item: TypographyItem) => cap.enabled.has(item);
+  const disabledClass = (item: TypographyItem) =>
+    can(item) ? "" : "pointer-events-none select-none opacity-40";
+  const reasonText = (item: TypographyItem) => {
+    const key = cap.reasons[item];
+    return key ? t(key) : "";
+  };
+
+  // 不支持「分页/滚动」切换的格式：自动纠正回滚动，避免点了无反馈。
+  const canViewMode = can("viewMode");
   useEffect(() => {
-    if (!paginationOk && useReaderStore.getState().viewMode === "paginated") {
+    if (!canViewMode && useReaderStore.getState().viewMode === "paginated") {
       setViewMode("scroll");
     }
-  }, [paginationOk, setViewMode]);
+  }, [canViewMode, setViewMode]);
 
   if (!open) return null;
 
   const fontSizePct =
     (fontSize - FONT_SIZE_MIN) / Math.max(1, FONT_SIZE_MAX - FONT_SIZE_MIN);
 
-  /** 字号滑块：把 [0,1] 映射回字号，离散步长 FONT_SIZE_STEP=2。 */
   const setPct = (pct: number) => {
     const raw = FONT_SIZE_MIN + pct * (FONT_SIZE_MAX - FONT_SIZE_MIN);
-    const stepped = Math.round(raw / 2) * 2;
+    const stepped = Math.round(raw / FONT_SIZE_STEP) * FONT_SIZE_STEP;
     setFontSize(Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, stepped)));
   };
 
-  const fontLabel = (() => {
-    const map: Record<FontFamilyKey, string> = {
-      system: "系统字体",
-      song: "宋体",
-      hei: "黑体",
-      kai: "楷体",
-      fang: "方体",
-    };
-    return map[fontFamily];
-  })();
-
-  const fixed = isFixedLayout(format);
+  const sizeLabels = [
+    t("reader.typography.size.small"),
+    t("reader.typography.size.medium"),
+    t("reader.typography.size.large"),
+  ];
 
   return (
     <div
@@ -138,68 +198,60 @@ export function TypographyPopover({
       aria-label={t("reader.toolbar.font")}
       className="absolute right-2 top-[calc(env(safe-area-inset-top,0px)+48px)] z-40 w-[min(420px,calc(100vw-16px))] overflow-visible rounded-2xl border border-overlay bg-overlay text-overlay shadow-2xl"
     >
-      {/* 顶部小三角：指向 Aa 按钮（按钮在右上 → 三角贴在面板右上） */}
       <div
         aria-hidden
         className="absolute -top-2 right-12 h-4 w-4 rotate-45 border-l border-t border-overlay bg-overlay"
       />
-
-      {/* 拖把小条 */}
       <div className="flex items-center justify-center pt-1.5">
         <div className="h-1 w-10 rounded-full bg-overlay-fg/20" />
       </div>
 
-      {fixed && (
+      {bookId && (
         <div className="mx-4 mt-1 rounded-lg bg-overlay-soft px-3 py-2 text-[11px] leading-relaxed text-overlay/70">
-          当前格式为固定版式，不支持调整字号 / 字体 / 行距 / 边距 / 背景。
+          {t("reader.typography.perBookHint")}
         </div>
       )}
 
-      {/* 固定版式：内容整体置灰、不可点击；流式格式则正常交互 */}
-      <div className={cn(fixed && "pointer-events-none select-none opacity-50")}>
-
-      {/* 阅读效果（首项）：滚动（默认） / 分页 */}
+      {/* 阅读效果（首项）：滚动 / 分页（按格式能力开放） */}
       <section className="px-5 pb-3 pt-2">
-        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">阅读效果</div>
-        <div className="flex gap-2">
-          {VIEW_MODE_STEPS.map((m) => {
-            const disabled = !paginationOk && m.key === "paginated";
-            return (
-              <button
-                key={m.key}
-                disabled={disabled}
-                onClick={() => setViewMode(m.key as ViewMode)}
-                className={cn(
-                  "flex-1 rounded-lg py-2 text-[13px] font-medium transition",
-                  disabled
-                    ? "cursor-not-allowed bg-overlay-soft text-overlay/30"
-                    : viewMode === m.key
-                      ? "bg-accent text-accent-fg"
-                      : "bg-overlay-soft text-overlay hover:bg-overlay-soft",
-                )}
-              >
-                {m.label}
-              </button>
-            );
-          })}
+        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
+          {t("reader.typography.viewMode")}
         </div>
-        {!paginationOk && (
-          <div className="mt-1 text-[11px] text-overlay/50">
-            {t("reader.viewMode.noPageHint")}
-          </div>
-        )}
+        <div className={cn("flex gap-2", disabledClass("viewMode"))}>
+          {VIEW_MODE_STEPS.map((m) => (
+            <button
+              key={m.key}
+              disabled={!canViewMode}
+              onClick={() => setViewMode(m.key)}
+              className={cn(
+                "min-h-11 flex-1 rounded-lg text-[13px] font-medium transition",
+                !canViewMode
+                  ? "cursor-not-allowed bg-overlay-soft text-overlay/30"
+                  : viewMode === m.key
+                    ? "bg-accent text-accent-fg"
+                    : "bg-overlay-soft text-overlay hover:bg-overlay-soft",
+              )}
+            >
+              {t(VIEW_MODE_LABELS[m.key])}
+            </button>
+          ))}
+        </div>
+        {!canViewMode && <DisabledReason text={reasonText("viewMode")} />}
       </section>
 
       {/* 字号 */}
-      <section className="px-5 pb-3 pt-2">
-        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">字号</div>
+      <section className={cn("px-5 pb-3 pt-2", disabledClass("fontSize"))}>
+        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
+          {t("reader.typography.fontSize")}
+        </div>
         <div className="relative flex items-center gap-2 rounded-full bg-overlay-soft px-3 py-2">
           <button
-            onClick={() => setFontSize(Math.max(FONT_SIZE_MIN, fontSize - 2))}
+            onClick={() => setFontSize(Math.max(FONT_SIZE_MIN, fontSize - FONT_SIZE_STEP))}
             aria-label={t("reader.toolbar.fontSmaller")}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[15px] font-bold text-overlay transition active:scale-95 hover:bg-overlay-soft"
-          >A</button>
-          {/* 滑块（圆盘当前位置） */}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[15px] font-bold text-overlay transition active:scale-95 hover:bg-overlay-soft"
+          >
+            A
+          </button>
           <div className="relative flex-1">
             <div className="absolute left-0 right-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-overlay-fg/15" />
             <div
@@ -225,28 +277,33 @@ export function TypographyPopover({
                 window.addEventListener("pointermove", move);
                 window.addEventListener("pointerup", up);
               }}
-              className="absolute top-1/2 grid h-9 w-9 -translate-y-1/2 -translate-x-1/2 cursor-grab place-items-center rounded-full bg-paper-pure text-[12px] font-semibold text-overlay shadow ring-1 ring-overlay-border active:cursor-grabbing"
+              className="absolute top-1/2 grid h-11 w-11 -translate-y-1/2 -translate-x-1/2 cursor-grab place-items-center rounded-full bg-paper-pure text-[12px] font-semibold text-overlay shadow ring-1 ring-overlay-border active:cursor-grabbing"
               style={{ left: `${Math.round(fontSizePct * 100)}%` }}
             >
               {fontSize}
             </div>
           </div>
           <button
-            onClick={() => setFontSize(Math.min(FONT_SIZE_MAX, fontSize + 2))}
+            onClick={() => setFontSize(Math.min(FONT_SIZE_MAX, fontSize + FONT_SIZE_STEP))}
             aria-label={t("reader.toolbar.fontLarger")}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[18px] font-bold text-overlay transition active:scale-95 hover:bg-overlay-soft"
-          >A</button>
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[18px] font-bold text-overlay transition active:scale-95 hover:bg-overlay-soft"
+          >
+            A
+          </button>
         </div>
+        {!can("fontSize") && <DisabledReason text={reasonText("fontSize")} />}
       </section>
 
       {/* 字体 */}
-      <section className="px-5 pb-3">
-        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">字体</div>
+      <section className={cn("px-5 pb-3", disabledClass("fontFamily"))}>
+        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
+          {t("reader.typography.fontFamily")}
+        </div>
         <button
           onClick={() => setFontPickerOpen((v) => !v)}
-          className="flex w-full items-center justify-between rounded-lg bg-overlay-soft px-3 py-2.5 text-[13px] text-overlay transition hover:bg-overlay-soft"
+          className="flex min-h-11 w-full items-center justify-between rounded-lg bg-overlay-soft px-3 py-2.5 text-[13px] text-overlay transition hover:bg-overlay-soft"
         >
-          <span className="font-semibold">{fontLabel}</span>
+          <span className="font-semibold">{t(`reader.font.${fontFamily}`)}</span>
           <span className="flex items-center gap-2 text-overlay">
             <span
               aria-hidden
@@ -269,114 +326,134 @@ export function TypographyPopover({
                   setFontPickerOpen(false);
                 }}
                 className={cn(
-                  "rounded-md px-2.5 py-2 text-left text-[12px] transition",
+                  "min-h-11 rounded-md px-2.5 py-2 text-left text-[12px] transition",
                   fontFamily === k
                     ? "bg-accent text-accent-fg"
                     : "bg-paper-pure text-overlay hover:bg-overlay-soft",
                 )}
                 style={{ fontFamily: FONT_FAMILY_MAP[k] }}
               >
-                {k === "system" ? "系统" : k === "song" ? "宋体" : k === "hei" ? "黑体" : k === "kai" ? "楷体" : "方体"}
+                {t(`reader.fontShort.${k}`)}
                 <span className="ml-2 text-[10px] opacity-60">Aa</span>
               </button>
             ))}
           </div>
         )}
+        {!can("fontFamily") && <DisabledReason text={reasonText("fontFamily")} />}
       </section>
 
-      {/* 行距 + 边距（无分组标题；上=行距，下=边距） */}
+      {/* 行距 + 段距 */}
       <section className="px-5 pb-3">
         <div className="space-y-2">
-          <SegmentedRow
-            label="行距"
-            value={lineHeightKey}
-            options={LINE_HEIGHT_STEPS.map((s) => ({ key: s.key, label: s.label, mark: s.value >= 2.0 ? "大" : s.value >= 1.6 ? "中" : "小" }))}
-            onChange={(k) => setLineHeightKey(k as typeof lineHeightKey)}
-            labels={["小", "中", "大"]}
-          />
-          <SegmentedRow
-            label="边距"
-            value={paraSpacingKey}
-            options={PARA_SPACING_STEPS.map((s) => ({ key: s.key, label: s.label, mark: s.value >= 1.2 ? "大" : s.value >= 0.7 ? "中" : "小" }))}
-            onChange={(k) => setParaSpacingKey(k as typeof paraSpacingKey)}
-            labels={["小", "中", "大"]}
-          />
+          <div className={cn(disabledClass("lineHeight"))}>
+            <SegmentedRow
+              label={t("reader.typography.lineHeight")}
+              value={lineHeightKey}
+              options={LINE_HEIGHT_STEPS.map((s) => ({ key: s.key, label: "" }))}
+              onChange={(k) => setLineHeightKey(k as typeof lineHeightKey)}
+              labels={sizeLabels}
+            />
+            {!can("lineHeight") && <DisabledReason text={reasonText("lineHeight")} />}
+          </div>
+          <div className={cn(disabledClass("paraSpacing"))}>
+            <SegmentedRow
+              label={t("reader.typography.paraSpacing")}
+              value={paraSpacingKey}
+              options={PARA_SPACING_STEPS.map((s) => ({ key: s.key, label: "" }))}
+              onChange={(k) => setParaSpacingKey(k as typeof paraSpacingKey)}
+              labels={sizeLabels}
+            />
+            {!can("paraSpacing") && <DisabledReason text={reasonText("paraSpacing")} />}
+          </div>
         </div>
       </section>
 
-      {/* 对齐 + 字距（P1-7）：仅 EPUB 等流式排版生效；PDF/固定版式隐藏控件并标注 */}
-      {fixed ? (
-        <section className="px-5 pb-3">
-          <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
-            {t("reader.align")} / {t("reader.letterSpacing")}
-          </div>
-          <div className="rounded-lg bg-overlay-soft px-3 py-2 text-[11px] text-overlay/70">
-            {t("reader.pdf.onlyEpub")}
-          </div>
-        </section>
-      ) : (
-        <section className="space-y-2 px-5 pb-3">
+      {/* 对齐 + 字距：仅流式排版生效；禁用时标注原因 */}
+      <section className="px-5 pb-3">
+        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
+          {t("reader.align")} / {t("reader.letterSpacing")}
+        </div>
+        <div className={cn(disabledClass("align"))}>
           <SegmentedRow
             label={t("reader.align")}
             value={textAlign}
-            options={TEXT_ALIGN_OPTIONS.map((k) => ({ key: k, label: "", mark: "" }))}
+            options={TEXT_ALIGN_OPTIONS.map((k) => ({ key: k, label: "" }))}
             onChange={(k) => setTextAlign(k as TextAlign)}
             labels={["L", "C", "J", "R"]}
           />
-          <div>
-            <div className="mb-1 text-[11px] text-overlay">
-              {t("reader.letterSpacing")}
-            </div>
-            <SpacingSlider
-              ariaLabel={t("reader.letterSpacing")}
-              value={letterSpacing}
-              onChange={setLetterSpacing}
-            />
+          {!can("align") && <DisabledReason text={reasonText("align")} />}
+        </div>
+        <div className={cn("mt-2", disabledClass("letterSpacing"))}>
+          <div className="mb-1 text-[11px] text-overlay">
+            {t("reader.letterSpacing")}
           </div>
-        </section>
-      )}
-
-      {/* 背景（护眼主题：绿色/暖色/暗色等 6 种，适合阅读） */}
-      <section className="px-5 pb-4">
-        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">背景</div>
-        <div className="grid grid-cols-3 gap-2">
-          {BG_COLOR_PRESETS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => setBgColorKey(p.key)}
-              aria-label={`背景-${p.label}`}
-              className={cn(
-                "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] transition",
-                bgColorKey === p.key
-                  ? "bg-accent text-accent-fg"
-                  : "bg-overlay-soft text-overlay hover:bg-overlay-soft",
-              )}
-            >
-              <span
-                aria-hidden
-                className="h-4 w-4 shrink-0 rounded-full border border-overlay-border"
-                style={{ background: p.color }}
-              />
-              <span className="truncate">{p.label}</span>
-            </button>
-          ))}
+          <SpacingSlider
+            ariaLabel={t("reader.letterSpacing")}
+            value={letterSpacing}
+            onChange={setLetterSpacing}
+          />
+          {!can("letterSpacing") && <DisabledReason text={reasonText("letterSpacing")} />}
         </div>
       </section>
 
-      {/* 竖排（P0-1）：横排 / 竖排 二选一；仅流式排版可用，书级持久化 */}
+      {/* 背景：所有格式均生效（PDF 由 PdfView 消费 bgColor） */}
       <section className="px-5 pb-4">
+        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
+          {t("reader.typography.bgColor")}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {BG_COLOR_PRESETS.map((p) => {
+            const label = t(`reader.bg.${p.key}`);
+            return (
+              <button
+                key={p.key}
+                onClick={() => setBgColorKey(p.key)}
+                aria-label={t("reader.typography.bgAria", { name: label })}
+                className={cn(
+                  "flex min-h-11 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] transition",
+                  bgColorKey === p.key
+                    ? "bg-accent text-accent-fg"
+                    : "bg-overlay-soft text-overlay hover:bg-overlay-soft",
+                )}
+              >
+                <span
+                  aria-hidden
+                  className="h-4 w-4 shrink-0 rounded-full border border-overlay-border"
+                  style={{ background: p.color }}
+                />
+                <span className="truncate">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* 方向：仅流式排版可用，书级持久化 */}
+      <section className={cn("px-5 pb-4", disabledClass("verticalWriting"))}>
         <SegmentedRow
-          label="方向"
+          label={t("reader.typography.direction")}
           value={verticalWriting ? "vertical" : "horizontal"}
           options={[
-            { key: "horizontal", label: "横排", mark: "横" },
-            { key: "vertical", label: "竖排", mark: "竖" },
+            { key: "horizontal", label: t("reader.typography.horizontal") },
+            { key: "vertical", label: t("reader.typography.vertical") },
           ]}
           onChange={(k) => setVerticalWriting(k === "vertical", bookId)}
-          labels={["横", "竖"]}
+          labels={[
+            t("reader.typography.horizontalShort"),
+            t("reader.typography.verticalShort"),
+          ]}
         />
+        {!can("verticalWriting") && <DisabledReason text={reasonText("verticalWriting")} />}
       </section>
-      </div>
+    </div>
+  );
+}
+
+function DisabledReason({ text }: { text: string }) {
+  if (!text) return null;
+  return (
+    <div className="mt-1 rounded-lg bg-overlay-soft px-2 py-1.5 text-[11px] leading-relaxed text-overlay/60">
+      {text}
     </div>
   );
 }
@@ -390,7 +467,7 @@ function SegmentedRow<K extends string>({
 }: {
   label: string;
   value: K;
-  options: Array<{ key: K; label: string; mark: string }>;
+  options: Array<{ key: K; label: string }>;
   onChange: (k: K) => void;
   labels: string[];
 }) {
@@ -399,9 +476,9 @@ function SegmentedRow<K extends string>({
     <div className="flex items-center gap-2">
       <span className="w-9 shrink-0 text-[11px] text-overlay">{label}</span>
       <div className="relative flex flex-1 items-center rounded-full bg-overlay-soft p-1">
-        {/* 当前胶囊（滑动） */}
         <div
-          className="absolute top-1 bottom-1 rounded-full bg-paper-pure shadow transition-all"
+          aria-hidden
+          className="absolute bottom-1 top-1 rounded-full bg-paper-pure shadow transition-all"
           style={{
             left: `calc(8px + ${idx} * (100% - 16px) / ${options.length})`,
             width: `calc((100% - 16px) / ${options.length})`,
@@ -412,7 +489,7 @@ function SegmentedRow<K extends string>({
             key={o.key}
             onClick={() => onChange(o.key)}
             className={cn(
-              "relative z-10 flex-1 rounded-full py-1.5 text-[11px] transition",
+              "relative z-10 min-h-11 flex-1 rounded-full text-[11px] transition",
               value === o.key ? "text-overlay font-semibold" : "text-overlay",
             )}
           >
@@ -424,7 +501,7 @@ function SegmentedRow<K extends string>({
   );
 }
 
-/** 字距滑块：-0.05em .. 0.15em，step 0.01em（复用字号滑块的视觉写法） */
+/** 字距滑块：-0.05em .. 0.15em，step 0.01em */
 function SpacingSlider({
   ariaLabel,
   value,
@@ -472,7 +549,7 @@ function SpacingSlider({
           window.addEventListener("pointermove", move);
           window.addEventListener("pointerup", up);
         }}
-        className="absolute top-1/2 grid h-6 w-6 -translate-y-1/2 -translate-x-1/2 cursor-grab place-items-center rounded-full bg-paper-pure shadow ring-1 ring-overlay-border active:cursor-grabbing"
+        className="absolute top-1/2 grid h-11 w-11 -translate-y-1/2 -translate-x-1/2 cursor-grab place-items-center rounded-full bg-paper-pure shadow ring-1 ring-overlay-border active:cursor-grabbing"
         style={{ left: `calc(12px + (100% - 48px) * ${pct})` }}
       />
       <span className="ml-auto w-12 text-right text-[11px] text-overlay">

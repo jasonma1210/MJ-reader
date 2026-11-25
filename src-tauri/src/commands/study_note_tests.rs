@@ -236,4 +236,28 @@ mod tests {
                 .expect("select");
         assert_eq!(kn.as_deref(), Some("kn-x"));
     }
+
+    // ===== W1（2026-11-25 数据正确性）：软删笔记墓碑过滤 =====
+
+    #[tokio::test]
+    async fn w1_tombstone_column_filters_soft_deleted_notes() {
+        let pool = migrated_pool().await;
+        let cols = crate::db::schema::CREATE_TABLES_SQL;
+        assert!(cols.contains("tombstone INTEGER NOT NULL DEFAULT 0"), "study_notes 真源需含 tombstone 列");
+
+        insert_draft_note(&pool, "sn-live", "user", None).await;
+        insert_draft_note(&pool, "sn-dead", "user", None).await;
+        sqlx::query("UPDATE study_notes SET deleted_at = 1, tombstone = 1 WHERE id = 'sn-dead'")
+            .execute(&pool)
+            .await
+            .expect("soft delete");
+
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM study_notes WHERE book_id = 'b1' AND deleted_at IS NULL AND tombstone = 0",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("select visible notes");
+        assert_eq!(ids, vec!["sn-live".to_string()], "软删笔记不得出现在列表");
+    }
 }

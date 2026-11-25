@@ -6,6 +6,7 @@ import {
   ExternalLink,
   FileText,
   Link2,
+  Network,
   Pencil,
   Sparkles,
   X,
@@ -56,6 +57,9 @@ interface WhiteboardInspectorProps {
   links: WhiteboardLink[];
   onSelectRelated: (nodeId: string) => void;
   onMentionRef: (cardId: string) => void;
+  /** W10：把当前卡片同步为知识图谱节点 */
+  onSyncToGraph: (node: NodeData) => void;
+  syncBusy: boolean;
 }
 
 const TAB_DEFS: Array<{ id: InspectorTab; labelKey: string; icon: React.ReactNode }> = [
@@ -79,6 +83,8 @@ export function WhiteboardInspector({
   links,
   onSelectRelated,
   onMentionRef,
+  onSyncToGraph,
+  syncBusy,
 }: WhiteboardInspectorProps) {
   const { t } = useTranslation();
   const mastery = node.card?.masteryScore;
@@ -188,10 +194,21 @@ export function WhiteboardInspector({
             <button
               type="button"
               onClick={() => onEdit(node)}
-              className="flex w-full items-center gap-2 rounded-[var(--radius-md)] border border-line bg-paper-soft px-3 py-2.5 text-left text-xs text-ink transition active:bg-line"
+              className="flex min-h-[44px] w-full items-center gap-2 rounded-[var(--radius-md)] border border-line bg-paper-soft px-3 py-2.5 text-left text-xs text-ink transition active:bg-line"
             >
               <Pencil className="h-4 w-4 shrink-0 text-ink-muted" />
               {t("whiteboard.editCard")}
+            </button>
+
+            {/* W10：白板卡 → 知识图谱（后端命令未接入时由页面给出明确提示） */}
+            <button
+              type="button"
+              onClick={() => onSyncToGraph(node)}
+              disabled={syncBusy}
+              className="flex min-h-[44px] w-full items-center gap-2 rounded-[var(--radius-md)] border border-accent-soft bg-accent-bg/40 px-3 py-2.5 text-left text-xs text-accent transition active:bg-accent-bg disabled:opacity-50"
+            >
+              <Network className="h-4 w-4 shrink-0" />
+              {t("whiteboard.syncToGraph")}
             </button>
 
             {externalUrl && isHttpUrl(externalUrl) && (

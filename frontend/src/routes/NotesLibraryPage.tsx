@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Search, Download, Check } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ArrowLeft, ChevronRight, Search, Download, Check } from "lucide-react";
+import { hasPendingCmd, invokePending, type PendingCmdKey } from "../export/pendingCommands";
 import { notesService } from "../services/notesService";
 import { bookService } from "../services/bookService";
 import {
@@ -8,7 +10,7 @@ import {
   buildHighlightsMarkdown,
   type HighlightMarkdownLabels,
 } from "../export/highlightsAggregator";
-import { toast } from "../utils/toast";
+import { toast, errMsg } from "../utils/toast";
 import { logError } from "../utils/logError";
 import { aiRelatedKnowledge, type RelatedKnowledgeView } from "../services/coachService";
 import { useAiStore } from "../stores/aiStore";
@@ -30,6 +32,28 @@ const FILTERS: { key: Filter; labelKey: string }[] = [
   { key: "wrong", labelKey: "notes.filter.wrong" },
 ];
 
+/** 追加导出格式：命令名只走 CMD 注册表，后端补齐后自动生效。 */
+type ExtraExportFormat = "csv" | "html" | "epub" | "pdf";
+const EXTRA_EXPORT_FORMATS: {
+  key: ExtraExportFormat;
+  cmdKey: PendingCmdKey;
+  labelKey: string;
+}[] = [
+  { key: "csv", cmdKey: "exportCsv", labelKey: "notes.exportCsv" },
+  { key: "html", cmdKey: "exportHtml", labelKey: "notes.exportHtml" },
+  { key: "epub", cmdKey: "exportEpub", labelKey: "notes.exportEpub" },
+  { key: "pdf", cmdKey: "exportPdf", labelKey: "notes.exportPdf" },
+];
+
+/** 反向链接：引用该高亮段的问答/笔记（字段按后端 camelCase 约定，可选容错）。 */
+interface BacklinkItem {
+  id: string;
+  kind: string;
+  title: string;
+  snippet: string;
+  route?: string | null;
+}
+
 /** 笔记库：筛选 Tab 带计数 + 笔记卡片可点击展开详情。 */
 export function NotesLibraryPage() {
   const { t } = useTranslation();
@@ -42,6 +66,7 @@ export function NotesLibraryPage() {
   const [chapterFilter, setChapterFilter] = useState<string>("all");
   const [exportingHighlights, setExportingHighlights] = useState(false);
   const [highlightsExported, setHighlightsExported] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<ExtraExportFormat | null>(null);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: notes.length };
@@ -137,6 +162,26 @@ export function NotesLibraryPage() {
     }
   };
 
+  // W5：CSV/HTML/EPUB/PDF 入口。后端命令未注册时明确提示，不写死命令名也不伪造产物。
+  const exportAs = async (fmt: (typeof EXTRA_EXPORT_FORMATS)[number]) => {
+    if (exportingFormat) return;
+    if (!hasPendingCmd(fmt.cmdKey)) {
+      toast(t("notes.exportBackendNotReady"));
+      return;
+    }
+    setExportingFormat(fmt.key);
+    try {
+      const path = await invokePending<string>(fmt.cmdKey);
+      if (path) toast(t("notes.exportedTo", { path }));
+      else toast(t("notes.exportEmpty"));
+    } catch (e) {
+      logError("NotesLibraryPage.exportAs", e);
+      toast(errMsg(e));
+    } finally {
+      setExportingFormat(null);
+    }
+  };
+
   const openNote = notes.find((n) => n.id === openId) ?? null;
 
   return (
@@ -174,6 +219,22 @@ export function NotesLibraryPage() {
             </>
           )}
         </button>
+      </div>
+
+      {/* W5：CSV / HTML / EPUB / PDF 四种附加导出入口 */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {EXTRA_EXPORT_FORMATS.map((fmt) => (
+          <button
+            key={fmt.key}
+            onClick={() => void exportAs(fmt)}
+            disabled={exportingFormat !== null}
+            aria-label={t(fmt.labelKey)}
+            className="flex min-h-11 items-center gap-1 rounded-full bg-paper-soft px-3 text-xs font-medium text-ink-soft transition hover:bg-line-soft disabled:opacity-40"
+          >
+            <Download className="h-3.5 w-3.5" />
+            {t(fmt.labelKey)}
+          </button>
+        ))}
       </div>
 
       {/* 全文检索：原文+笔记+标签 */}
@@ -256,8 +317,11 @@ export function NotesLibraryPage() {
 /** 笔记详情（内联展开）：来源徽标 + 摘录 + 我的理解 + 标签 + 关联 + AI 相关知识 */
 function NoteDetail({ note, onBack }: { note: NoteItem; onBack: () => void }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [relating, setRelating] = useState(false);
   const [related, setRelated] = useState<RelatedKnowledgeView | null>(null);
+  const [backlinks, setBacklinks] = useState<BacklinkItem[] | null>(null);
+  const [loadingBacklinks, setLoadingBacklinks] = useState(false);
 
   const runRelated = async (n: NoteItem, bookId: string) => {
     setRelating(true);
@@ -278,6 +342,30 @@ function NoteDetail({ note, onBack }: { note: NoteItem; onBack: () => void }) {
     }
     setRelated(rk);
     setRelating(false);
+  };
+
+  // W5 反向链接：按高亮 id 查询「引用本段的问答/笔记」，支持跳转到来源。
+  const loadBacklinks = async () => {
+    if (!note.linkedHighlightId) {
+      toast(t("notes.backlinkNoAnchor"));
+      return;
+    }
+    if (!hasPendingCmd("listBacklinksByHighlight")) {
+      toast(t("notes.backlinkBackendNotReady"));
+      return;
+    }
+    setLoadingBacklinks(true);
+    try {
+      const rows = await invokePending<BacklinkItem[]>("listBacklinksByHighlight", {
+        highlightId: note.linkedHighlightId,
+      });
+      setBacklinks(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      logError("NoteDetail.loadBacklinks", e);
+      toast(errMsg(e));
+    } finally {
+      setLoadingBacklinks(false);
+    }
   };
 
   return (
@@ -326,6 +414,50 @@ function NoteDetail({ note, onBack }: { note: NoteItem; onBack: () => void }) {
       <button className="text-sm font-medium text-accent">
         {t("notes.related")}
       </button>
+
+      {/* W5 反向链接：引用本段的问答/笔记 */}
+      <div className="flex flex-col gap-2 rounded-[var(--radius-lg)] border border-line bg-paper p-3 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs font-semibold text-ink-soft">
+            {t("notes.backlinkTitle")}
+          </div>
+          <button
+            onClick={() => void loadBacklinks()}
+            disabled={loadingBacklinks || !note.linkedHighlightId}
+            className="min-h-11 rounded-full bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-95 disabled:opacity-50"
+          >
+            {loadingBacklinks ? t("common.loading") : t("notes.backlinkQuery")}
+          </button>
+        </div>
+        <p className="text-[11px] leading-4 text-ink-muted">{t("notes.backlinkHint")}</p>
+        {backlinks &&
+          (backlinks.length === 0 ? (
+            <p className="text-xs text-ink-muted">{t("notes.backlinkEmpty")}</p>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {backlinks.map((b, i) => (
+                <button
+                  key={`${b.id}-${i}`}
+                  onClick={() => navigate(b.route || "/notes")}
+                  className="flex min-h-11 flex-col gap-0.5 rounded-[var(--radius-md)] border border-line bg-paper-soft p-2.5 text-left transition hover:bg-line-soft"
+                >
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="rounded bg-paper px-1.5 py-0.5 text-[var(--fs-micro)] font-semibold text-ink-soft">
+                      {t(`notes.backlinkKind.${b.kind}`, { defaultValue: b.kind })}
+                    </span>
+                    <span className="truncate text-sm font-medium text-ink">
+                      {b.title || t("knowledge.citationUntitled")}
+                    </span>
+                    <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-ink-muted" />
+                  </div>
+                  <p className="line-clamp-2 text-xs leading-relaxed text-ink-muted">
+                    {b.snippet}
+                  </p>
+                </button>
+              ))}
+            </div>
+          ))}
+      </div>
 
       {/* 相关知识拓展（概念对比/类比/实例/引用 —— ai_related_knowledge） */}
       <div className="flex flex-col gap-2 rounded-[var(--radius-lg)] border border-ai-border bg-ai-bg p-4 shadow-sm">

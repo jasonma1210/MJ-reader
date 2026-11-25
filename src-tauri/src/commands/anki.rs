@@ -12,7 +12,7 @@ use crate::services::anki::{
 };
 use crate::AppState;
 use sqlx::Row;
-use tauri::State;
+use tauri::{Manager, State};
 
 /// 内部数据：单条 flashcard 数据库行（导入时使用）
 #[derive(Debug)]
@@ -110,6 +110,47 @@ pub async fn import_anki_apkg(
         duration_ms: start.elapsed().as_millis() as u64,
         deck_name: target_deck_name,
         model_names,
+    })
+}
+
+/// 复习结果页「导出到 Anki」的前置命令：给出真实可导出的闪卡数与建议落盘路径，
+/// 不写文件；UI 拿到路径后再调 export_anki_apkg 完成导出。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiExportPrepare {
+    pub card_count: usize,
+    pub deck_name: String,
+    pub suggested_path: String,
+}
+
+#[tauri::command]
+pub async fn anki_export_prepare(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    book_id: Option<String>,
+) -> AppResult<AnkiExportPrepare> {
+    let pool = state.db.as_ref().clone();
+    let count: i64 = match book_id.as_deref().filter(|b| !b.trim().is_empty()) {
+        Some(b) => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM flashcards WHERE book_id = ?")
+                .bind(b)
+                .fetch_one(&pool)
+                .await?
+        }
+        None => sqlx::query_scalar("SELECT COUNT(*) FROM flashcards")
+            .fetch_one(&pool)
+            .await?,
+    };
+    let dir = app.path().app_data_dir()?.join("exports");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!(
+        "mjnexus-review-{}.apkg",
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    ));
+    Ok(AnkiExportPrepare {
+        card_count: count as usize,
+        deck_name: "MJNexus Review".to_string(),
+        suggested_path: path.to_string_lossy().into_owned(),
     })
 }
 

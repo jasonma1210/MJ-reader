@@ -247,6 +247,8 @@ export function NoteEditorSheet({
         chapterIndex: 0,
       });
       const savedOk = await notesService.saveNote({
+        // W1：笔记入库 id 与 saveMedia 落盘文件名共用同一 id，避免跨设备同步后失配
+        id: noteIdRef.current,
         bookId,
         content:
           content.trim() ||

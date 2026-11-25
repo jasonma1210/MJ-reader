@@ -7,7 +7,7 @@ mod services;
 // 在真机上脱离 Tauri 上下文做端到端验证。生产路径仍走 commands::ocr 的 AppHandle 版本。
 pub use crate::services::ocr_pp::pp_ocr_recognize_from_dir;
 
-use commands::{ai_core, ai_chat, ai_analysis, ai_quiz, ai_breakdown, ai_extended, anki, annotation, backup, book, book_fts, bookmark, card, chapter_check, cloud_asr, comparison, directory, export, file, knowledge_graph, know_agent, knowledge_node, lan_file_server, learning_path, mask, mastery, metrics, mindmap_node, ocr, output, practice, quiz_link, reading, review, settings, stats, study_note, study_set, suggestions, sync as sync_commands, tags, teaching, tts, voice_coach, whiteboard};
+use commands::{ai_core, ai_chat, ai_analysis, ai_quiz, ai_breakdown, ai_extended, ai_usage, anki, annotation, backup, book, book_fts, bookmark, byo_sync, card, chapter_check, cloud_asr, comparison, directory, export, file, file_integrity, graph_sync, knowledge_graph, know_agent, knowledge_node, knowledge_pack, lan_file_server, learning, learning_path, mask, mastery, media_quota, memory, metrics, mindmap_node, ocr, output, practice, quiz_link, reading, review, settings, stats, study_note, study_set, suggestions, sync as sync_commands, tags, teaching, tts, voice_coach, whiteboard};
 // v3.0（3-Tab IA 重构）：端侧本地模型命令——2026-09-04 起搜索/下载/管理全平台注册，
 // 仅推理/卸载命令保留 llamacpp 门控（见 invoke_handler 内标注）。
 use commands::local_model;
@@ -173,6 +173,10 @@ pub fn run() {
                 log::info!("[MCP] 未启用（settings.mcp_enabled 非 '1'），不启动 server");
             }
 
+            // W2：注册原生低内存事件桥（Android onLowMemory / iOS didReceiveMemoryWarning
+            // 通过 emit("mjnexus:native-memory-warning") 或 invoke(report_memory_warning) 转入）。
+            services::memory_guard::register_native_bridge(app.handle());
+
             app.manage(AppState {
                 db: Arc::new(pool.clone()),
                 e2ee_password: Arc::new(tokio::sync::Mutex::new(None)),
@@ -266,6 +270,14 @@ pub fn run() {
             file::read_xml,
             // v0.7.0 实现：Android SAF content:// URI 元数据查询
             file::get_content_uri_metadata,
+            // W1（2026-11-25 数据正确性）：文件完整性 manifest 生成/校验三链路命令
+            file_integrity::file_integrity_generate,
+            file_integrity::file_integrity_verify,
+            file_integrity::file_integrity_verify_paths,
+            // W2：原生低内存告警 → memoryGuard 统一入口（前端 useMemoryGuard 监听）
+            memory::report_memory_warning,
+            // W2：媒体配额清理（covers / note_media 按档位 LRU）
+            media_quota::media_quota_enforce,
             study_note::save_study_note,
             study_note::update_study_note_content,
             study_note::add_annotation,
@@ -276,6 +288,8 @@ pub fn run() {
             study_note::get_knowledge_graph,
             // v1.1.1 Stage 2 实现：多模态学习备注媒体存储
             study_note::save_study_note_media,
+            // W1：回填历史「note id 与媒体文件名不一致」记录
+            study_note::reconcile_note_media,
             ocr::check_tesseract,
             ocr::list_ocr_models,
             ocr::download_ocr_model,
@@ -298,6 +312,8 @@ pub fn run() {
             ai_chat::delete_conversation,
             // BE-32 修复（2026-08-05 审计）：「停止生成」取消命令
             ai_chat::ai_cancel_stream,
+            // W2：统一取消入口（AbortController / 切书 / 退出会话）
+            ai_chat::ai_cancel_request,
             ai_analysis::ai_summarize,
             ai_analysis::ai_generate_mindmap,
             ai_chat::ai_translate,
@@ -427,6 +443,11 @@ pub fn run() {
             // v0.5.0 实现：跨设备同步命令
             sync_commands::sync_now,
             sync_commands::get_sync_status,
+            // W10：BYO WebDAV/S3 配置读写、连接测试与手动同步（不建账号体系）
+            byo_sync::byo_sync_get_config,
+            byo_sync::byo_sync_save_config,
+            byo_sync::byo_sync_test_connection,
+            byo_sync::byo_sync_now,
                         // [S4-4.7 下线] sync_commands::get_sync_config,
                         // [S4-4.7 下线] sync_commands::save_sync_config,
             // v2.x（S4 补全）：仅切换同步总开关
@@ -461,6 +482,8 @@ pub fn run() {
             // v0.8.0 P2.1 实现：Anki .apkg 导入导出
                         // [S4-4.7 下线] anki::import_anki_apkg,
             anki::export_anki_apkg,
+            // W10：复习结果页的 Anki 导出前置（真实卡数 + 建议路径）
+            anki::anki_export_prepare,
                         // [S4-4.7 下线] anki::preview_anki_apkg,
             // v1.1.0 P0.2 实现：卡片轴心架构 — 卡片 CRUD + 双向链接
             card::create_card,
@@ -485,6 +508,18 @@ pub fn run() {
             // v3.8（到期提示按书分组）：各书到期数聚合 + 按书到期卡清单
             card::due_counts_by_book,
             card::list_due_cards_by_book,
+            // W7：跨书统一复习队列（按日分片 + SQL 分页）、归因报告、目标/提醒与 FSRS 参数
+            learning::get_unified_review_queue,
+            learning::get_review_attribution_report,
+            learning::get_study_config,
+            learning::save_study_config,
+            learning::get_fsrs_params,
+            learning::save_fsrs_params,
+            // 前端 studyConfigClient 使用的配置契约（settings 持久化）
+            learning::get_review_schedule_config,
+            learning::set_review_schedule_config,
+            learning::get_study_preferences,
+            learning::set_study_preferences,
             // v1.1.0 P0.2 实现：学习集容器（Study Set）CRUD
             study_set::create_study_set,
             study_set::list_study_sets,
@@ -511,6 +546,20 @@ pub fn run() {
                         // [S4-4.7 下线] mindmap_node::query_cards_for_conditional_mindmap,
             // P1 导出闭环：Markdown / OPML 导出
             export::export_markdown,
+            // W5：五格式导出中的后端三格式（返回文件路径，不经 IPC 回传 Blob）
+            export::export_csv,
+            export::export_epub,
+            export::export_pdf,
+            // W5：HTML 落盘导出（返回绝对路径字符串）
+            export::export_html,
+            // W5：按 highlightId 反查问答/笔记/批注/卡片
+            export::get_backlinks,
+            // 前端适配层别名：返回 {id, kind: qa|note, title, snippet, route?}
+            export::list_backlinks_by_highlight,
+            // W3：AI 用量与任务路由（settings 持久化）
+            ai_usage::get_ai_usage,
+            ai_usage::get_ai_task_routing,
+            ai_usage::save_ai_task_routing,
                         // [S4-4.7 下线] export::export_opml,
             // v1.1.7 实现：阶段九 AI 扩展命令
             ai_extended::ai_generate_toc,
@@ -606,6 +655,8 @@ pub fn run() {
             whiteboard::resolve_cards_batch,
             whiteboard::whiteboard_list,
             whiteboard::whiteboard_save,
+            // W1（2026-11-25 数据正确性）：查找或创建画布下沉后端，前端不再选 canonical
+            whiteboard::whiteboard_get_or_create,
             whiteboard::whiteboard_add_card,
             whiteboard::whiteboard_new_note,
             whiteboard::whiteboard_save_layout,
@@ -657,6 +708,17 @@ pub fn run() {
             knowledge_graph::knowledge_graph_remove_edge,
             knowledge_graph::knowledge_graph_layout_save,
             knowledge_graph::knowledge_graph_layout_get,
+            // W10：白板卡 → 知识节点/图谱边（幂等）
+            graph_sync::sync_whiteboard_card_to_graph,
+            // W10：知识包开放格式（JSON）导出/导入
+            knowledge_pack::knowledge_pack_import,
+            knowledge_pack::knowledge_pack_export,
+            knowledge_pack::knowledge_pack_list,
+            knowledge_pack::knowledge_pack_get,
+            knowledge_pack::knowledge_pack_download,
+            knowledge_pack::knowledge_pack_delete,
+            knowledge_pack::knowledge_pack_search,
+            knowledge_pack::faq_match,
             // ===== 对齐实现调整文档 2026-08-25 · 第二梯队 P1（学习深度：语音交互四件套）=====
             // F-4-002 场景化练习 + F-4-003 语音问答
             practice::practice_scenario_start,

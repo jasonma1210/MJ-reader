@@ -327,6 +327,10 @@ pub async fn save_book_cover(
     };
     std::fs::write(&cover_file, &data)
         .map_err(|e| AppError::General(format!("写入封面失败: {}", e)))?;
+    // W2：写封面后按设备档位执行配额清理；失败隔离，不影响封面保存主流程。
+    if let Err(e) = crate::services::media_quota::enforce_all(&app, Some(&cover_file), None) {
+        log::warn!("[mediaQuota] 封面写入后配额清理失败: {}", e);
+    }
     let cover_str = cover_file.to_string_lossy().to_string();
     sqlx::query("UPDATE books SET cover_path = ?, updated_at = ? WHERE id = ?")
         .bind(&cover_str)

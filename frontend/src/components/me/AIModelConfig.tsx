@@ -1,16 +1,92 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Edit2, Trash2, Plug, Loader2 } from "lucide-react";
+import {
+  Plus,
+  Edit2,
+  Trash2,
+  Plug,
+  Loader2,
+  Sparkles,
+  SlidersHorizontal,
+  BarChart3,
+} from "lucide-react";
 import { aiService } from "../../services/aiService";
 import type { AIProfile } from "../../types";
 import { cn } from "../../utils/cn";
 import { logError } from "../../utils/logError";
 import { useConfirm } from "../../hooks/useConfirm";
+import { hasPendingCmd, invokePending } from "../../export/pendingCommands";
 import {
   RemoteProfileEditModal,
   blankProfile,
   type EditProfile,
 } from "../ai-config/RemoteProfileEditModal";
+
+/** 官方 provider 预设：一键带入 baseUrl/模型名，密钥仍由用户在编辑弹窗中填写并走既有保存链路。 */
+const PROVIDER_PRESETS = [
+  {
+    key: "openai",
+    nameKey: "aiModel.preset.openai",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+  },
+  {
+    key: "deepseek",
+    nameKey: "aiModel.preset.deepseek",
+    provider: "deepseek",
+    baseUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-chat",
+  },
+  {
+    key: "qwen",
+    nameKey: "aiModel.preset.qwen",
+    provider: "qwen",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "qwen-plus",
+  },
+  {
+    key: "zhipu",
+    nameKey: "aiModel.preset.zhipu",
+    provider: "zhipu",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    model: "glm-4-flash",
+  },
+  {
+    key: "custom",
+    nameKey: "aiModel.preset.custom",
+    provider: "custom",
+    baseUrl: "",
+    model: "",
+  },
+] as const;
+
+/** 任务路由：每类任务可选主 provider 与 fallback，值为 profile id。 */
+type AiTask = "breakdown" | "chat" | "embedding" | "rag" | "image";
+const AI_TASKS: AiTask[] = ["breakdown", "chat", "embedding", "rag", "image"];
+interface TaskRoute {
+  primary: string;
+  fallback: string;
+}
+type TaskRouting = Record<AiTask, TaskRoute>;
+const emptyRoute = (): TaskRoute => ({ primary: "", fallback: "" });
+const defaultRouting = (): TaskRouting => ({
+  breakdown: emptyRoute(),
+  chat: emptyRoute(),
+  embedding: emptyRoute(),
+  rag: emptyRoute(),
+  image: emptyRoute(),
+});
+
+/** 后端用量视图（字段可选，后端尚未接入时显示「本机无用量统计」）。 */
+interface AiUsageRow {
+  provider?: string;
+  task?: string;
+  requests?: number;
+  tokens?: number;
+  used?: number;
+  limit?: number;
+}
 
 export function AIModelConfig({
   locked = false,
@@ -29,6 +105,9 @@ export function AIModelConfig({
   const [tested, setTested] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
   const [testing, setTesting] = useState<string | null>(null);
+  const [usage, setUsage] = useState<AiUsageRow[] | null>(null);
+  const [routing, setRouting] = useState<TaskRouting>(defaultRouting);
+  const [routingReady, setRoutingReady] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -50,6 +129,37 @@ export function AIModelConfig({
 
   useEffect(() => {
     void load();
+  }, []);
+
+  // 用量与任务路由：后端键未注册时保持空态，不展示假数据。
+  useEffect(() => {
+    void (async () => {
+      if (hasPendingCmd("getAiUsage")) {
+        try {
+          const rows = await invokePending<AiUsageRow[]>("getAiUsage");
+          setUsage(Array.isArray(rows) ? rows : null);
+        } catch (e) {
+          logError("AIModelConfig.loadUsage", e);
+        }
+      }
+      if (hasPendingCmd("getAiTaskRouting")) {
+        try {
+          const loaded = await invokePending<Partial<TaskRouting>>("getAiTaskRouting");
+          if (loaded) {
+            setRouting({
+              breakdown: { ...emptyRoute(), ...loaded.breakdown },
+              chat: { ...emptyRoute(), ...loaded.chat },
+              embedding: { ...emptyRoute(), ...loaded.embedding },
+              rag: { ...emptyRoute(), ...loaded.rag },
+              image: { ...emptyRoute(), ...loaded.image },
+            });
+          }
+          setRoutingReady(true);
+        } catch (e) {
+          logError("AIModelConfig.loadRouting", e);
+        }
+      }
+    })();
   }, []);
 
   const persist = async (next: AIProfile[]) => {
@@ -147,6 +257,37 @@ export function AIModelConfig({
     void persist(next);
   };
 
+  const applyPreset = (preset: (typeof PROVIDER_PRESETS)[number]) => {
+    setEditing({
+      ...blankProfile(),
+      name: t(preset.nameKey),
+      provider: preset.provider,
+      baseUrl: preset.baseUrl,
+      model: preset.model,
+      modelName: preset.model,
+      apiKey: "",
+    });
+  };
+
+  const updateRoute = async (
+    task: AiTask,
+    field: keyof TaskRoute,
+    profileId: string,
+  ) => {
+    const next: TaskRouting = {
+      ...routing,
+      [task]: { ...routing[task], [field]: profileId },
+    };
+    setRouting(next);
+    if (!hasPendingCmd("saveAiTaskRouting")) return;
+    try {
+      await invokePending("saveAiTaskRouting", { routing: next });
+    } catch (e) {
+      logError("AIModelConfig.saveRouting", e);
+      setSaveMsg(`✗ ${String(e)}`);
+    }
+  };
+
   return (
     <div className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
@@ -158,20 +299,42 @@ export function AIModelConfig({
             onClick={() => {
               setEditing({ ...blankProfile(), isNew: true, baseUrl: "http://localhost:11434/v1", name: t("aiModel.localModelName"), modelName: "qwen2.5", apiKey: "ollama" });
             }}
-            className="inline-flex items-center gap-1 rounded-lg border border-accent-soft bg-accent-bg px-2.5 py-1.5 text-xs font-medium text-accent transition hover:opacity-80"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-accent-soft bg-accent-bg px-2.5 py-1.5 text-xs font-medium text-accent transition hover:opacity-80"
           >
             <Plus className="h-3.5 w-3.5" />
             {t("aiModel.addOllama")}
           </button>
           <button
             onClick={() => setEditing({ ...blankProfile(), isNew: true })}
-            className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg transition hover:bg-accent"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg transition hover:bg-accent"
           >
             <Plus className="h-3.5 w-3.5" />
             {t("aiModel.add")}
           </button>
         </div>
       </div>
+
+      {/* 官方 provider 预设：只带入地址与模型，密钥仍需用户填写并走既有保存链路 */}
+      <section className="mb-3 flex flex-col gap-2 rounded-[var(--radius-md)] border border-line-soft bg-paper-soft p-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-ink-soft">
+          <Sparkles className="h-3.5 w-3.5" />
+          {t("aiModel.presetTitle")}
+        </div>
+        <p className="text-[11px] leading-4 text-ink-muted">
+          {t("aiModel.presetHint")}
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {PROVIDER_PRESETS.map((preset) => (
+            <button
+              key={preset.key}
+              onClick={() => applyPreset(preset)}
+              className="min-h-11 rounded-full border border-line bg-paper px-3 text-xs font-medium text-ink-soft transition hover:border-accent hover:text-accent"
+            >
+              {t(preset.nameKey)}
+            </button>
+          ))}
+        </div>
+      </section>
 
       {loading ? (
         <p className="text-xs text-ink-muted">{t("common.loading")}</p>
@@ -274,6 +437,87 @@ export function AIModelConfig({
           )}
         </div>
       )}
+
+      {/* 任务路由：按任务选择主 provider 与 fallback */}
+      <section className="mt-3 flex flex-col gap-2 rounded-[var(--radius-md)] border border-line-soft bg-paper-soft p-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-ink-soft">
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          {t("aiModel.routeTitle")}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {AI_TASKS.map((task) => (
+            <div key={task} className="flex flex-wrap items-center gap-2">
+              <span className="w-20 shrink-0 text-xs text-ink">
+                {t(`aiModel.task.${task}`)}
+              </span>
+              {(["primary", "fallback"] as const).map((field) => (
+                <label key={field} className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <span className="shrink-0 text-[11px] text-ink-muted">
+                    {t(`aiModel.route.${field}`)}
+                  </span>
+                  <select
+                    value={routing[task][field]}
+                    onChange={(e) => void updateRoute(task, field, e.target.value)}
+                    className="h-11 min-w-0 flex-1 rounded-lg border border-line bg-paper px-2 text-xs text-ink outline-none"
+                    aria-label={t(`aiModel.route.${field}`)}
+                  >
+                    <option value="">{t("aiModel.routeNone")}</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          ))}
+        </div>
+        {!routingReady && (
+          <p className="text-[11px] leading-4 text-ink-muted">
+            {t("aiModel.routingNotPersisted")}
+          </p>
+        )}
+      </section>
+
+      {/* 用量/配额：无后端数据时明确显示本机无统计，不编造数字 */}
+      <section className="mt-3 flex flex-col gap-2 rounded-[var(--radius-md)] border border-line-soft bg-paper-soft p-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-ink-soft">
+          <BarChart3 className="h-3.5 w-3.5" />
+          {t("aiModel.usageTitle")}
+        </div>
+        {usage && usage.length > 0 ? (
+          <div className="flex flex-col gap-1.5">
+            {usage.map((row, i) => (
+              <div
+                key={`${row.provider ?? ""}-${row.task ?? ""}-${i}`}
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-paper px-2.5 py-2 text-xs text-ink-soft"
+              >
+                <span className="font-medium text-ink">
+                  {row.provider || t("aiModel.usageDefaultProvider")}
+                </span>
+                {row.task && (
+                  <span>{t(`aiModel.task.${row.task}`, { defaultValue: row.task })}</span>
+                )}
+                {typeof row.requests === "number" && (
+                  <span>{t("aiModel.usageRequests", { n: row.requests })}</span>
+                )}
+                {typeof row.tokens === "number" && (
+                  <span>{t("aiModel.usageTokens", { n: row.tokens })}</span>
+                )}
+                {typeof row.used === "number" && (
+                  <span>{t("aiModel.usageUsed", { n: row.used })}</span>
+                )}
+                {typeof row.limit === "number" && (
+                  <span>{t("aiModel.usageLimit", { n: row.limit })}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-ink-muted">{t("aiModel.usageLocalOnly")}</p>
+        )}
+      </section>
 
       {saveMsg && (
         <p

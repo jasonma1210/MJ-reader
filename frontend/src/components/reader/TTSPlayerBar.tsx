@@ -9,38 +9,20 @@ import { ttsService, type TtsVoiceInfo } from "../../services/ttsService";
 import { cn } from "../../utils/cn";
 
 /**
- * 底部朗读播放器栏（v3.7 改造，作为右下角「光盘朗读」按钮弹出的播放器界面）：
- * 进度条（00:00:00 ─●── -04:13:01）+ 头像 + 上一段 + 大圆形播放 + 下一段 + 语速芯片 + 音色选择。
- * 时间码口径：按"已读字符 / 总字符" + 每分钟 280 字（中文常规语速）反推近似总时长。
+ * 底部朗读播放器栏（作为右下角「光盘朗读」按钮弹出的播放器界面）：
+ * 进度按「当前句子索引 / 总句数」精确计算，替代旧版字符数近似时间码。
+ * 控制项：音色 / 上一段 / 播放暂停 / 下一段 / 语速 / 音调。
  *
- * 行为契约（v3.7 对齐用户诉求）：
+ * 行为契约：
  * - 由右下角光盘按钮控制开关（open false → 整栏隐藏；open undefined → 沿旧逻辑按 active 显隐）。
- * - 包含 音色 / 上一段 / 播放暂停 / 下一段 / 速度 五项控制。
  * - 点击播放时光盘旋转（见 ReaderFloatActions），再次点击光盘停止并隐藏本栏。
- * - 随竖屏/横屏旋转重挂载后重新订阅模块单例 ttsEngine，播放不中断（不强制打断）。
+ * - 随竖屏/横屏旋转重挂载后重新订阅模块单例 ttsEngine，播放不中断。
  */
 const RATE_STEPS = [0.75, 1.0, 1.25, 1.5, 2.0] as const;
-/** 中文常规朗读每分钟字数（与 Edge 神经语音实测 1.0x 接近）。 */
-const CHARS_PER_MIN = 280;
-/** ticker 推进间隔：200ms 让时间码足够丝滑，又不会过度重渲染。 */
+/** 音调档位：接入 ttsEngine 既有 pitch 参数。 */
+const PITCH_STEPS = [0.8, 1.0, 1.2] as const;
+/** ticker 推进间隔：200ms 让进度条跟随句子切换足够丝滑。 */
 const TICK_MS = 200;
-
-/** "00:00:00" 风格时间码（按负值展示剩余时长，如 -04:13:01）。 */
-function formatTime(spoken: number, total: number, isPaused: boolean): { left: string; right: string } {
-  const totalSec = Math.max(1, Math.round((total / CHARS_PER_MIN) * 60));
-  const spokenSec = Math.min(totalSec, Math.round((spoken / CHARS_PER_MIN) * 60));
-  const left = hhmmss(spokenSec);
-  const remain = isPaused ? totalSec : totalSec - spokenSec;
-  return { left, right: hhmmss(remain) };
-}
-function hhmmss(sec: number): string {
-  const s = Math.max(0, Math.floor(sec));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const r = s % 60;
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${pad(h)}:${pad(m)}:${pad(r)}`;
-}
 
 export function TTSPlayerBar({
   open,
@@ -53,7 +35,10 @@ export function TTSPlayerBar({
 }) {
   const { t } = useTranslation();
   const chapterTitle = useReaderStore((s) => s.chapterTitle);
-  const { isPlaying, isPaused, rate, setRate, voice, setVoice, play, pause, resume, stop } = useTTS();
+  const {
+    isPlaying, isPaused, rate, setRate, pitch, setPitch,
+    voice, setVoice, play, pause, resume, stop,
+  } = useTTS();
 
   const active = isPlaying || isPaused;
   const spinning = isPlaying && !isPaused;
@@ -97,8 +82,13 @@ export function TTSPlayerBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [progressTick, active],
   );
-  const { left: timeLeft, right: timeRight } = formatTime(progress.spoken, progress.total, isPaused);
-  const ratio = progress.total > 0 ? Math.min(1, progress.spoken / progress.total) : 0;
+  // 精确进度：按句子索引 / 总句数计算，不再用「已读字符 / 每分钟字数」近似时间码。
+  const sentenceCount = progress.sentences.length;
+  const currentSentence = progress.currentIndex >= 0 ? progress.currentIndex + 1 : 0;
+  const ratio =
+    sentenceCount > 0 && progress.currentIndex >= 0
+      ? Math.min(1, currentSentence / sentenceCount)
+      : 0;
 
   // 上一句 / 下一句：通过 ReaderFollowAdapter 跳到前/后句并定位。
   const jumpSentence = (delta: number) => {
@@ -141,6 +131,12 @@ export function TTSPlayerBar({
     setRate(next);
   };
 
+  const cyclePitch = () => {
+    const idx = PITCH_STEPS.findIndex((p) => Math.abs(p - pitch) < 0.001);
+    const next = PITCH_STEPS[(idx + 1) % PITCH_STEPS.length];
+    setPitch(next);
+  };
+
   if (open === false) return null;
   if (open === undefined && !active) return null;
 
@@ -152,9 +148,11 @@ export function TTSPlayerBar({
 
   return (
     <div className="relative shrink-0 border-t border-line bg-paper px-4 pb-3 pt-2 text-ink shadow-[0_-4px_18px_rgba(0,0,0,0.45)]">
-      {/* 进度条 + 时间码（贴边对齐） */}
+      {/* 进度条 + 句子级进度（贴边对齐） */}
       <div className="mb-1 flex items-center gap-2 text-[10px] tabular-nums text-ink/60">
-        <span className="w-14 shrink-0 text-left">{timeLeft}</span>
+        <span className="w-24 shrink-0 text-left">
+          {t("reader.ttsSentenceProgress", { current: currentSentence, total: sentenceCount })}
+        </span>
         <div className="relative h-[3px] flex-1 overflow-hidden rounded-full bg-ink/15">
           <div
             className="absolute left-0 top-0 h-full rounded-full bg-ink/85"
@@ -165,7 +163,7 @@ export function TTSPlayerBar({
             style={{ left: `calc(${Math.round(ratio * 100)}% - 5px)` }}
           />
         </div>
-        <span className="w-16 shrink-0 text-right">-{timeRight}</span>
+        <span className="w-12 shrink-0 text-right">{Math.round(ratio * 100)}%</span>
       </div>
 
       {/* 主控件：音色切换 / 上一句 / 大圆播放 / 下一句 / 语速芯片 */}
@@ -244,17 +242,30 @@ export function TTSPlayerBar({
           <SkipForward className="h-5 w-5 fill-ink/80" />
         </button>
 
-        {/* 语速芯片 */}
-        <button
-          onClick={cycleRate}
-          aria-label={t("reader.ttsRate")}
-          className={cn(
-            "grid h-9 min-w-[44px] place-items-center rounded-full px-2 text-xs font-semibold transition",
-            rate !== 1 ? "bg-ink/15 text-ink" : "bg-ink/8 text-ink/75 hover:bg-ink/10",
-          )}
-        >
-          {rate.toFixed(rate % 1 === 0 ? 0 : 2)}x
-        </button>
+        {/* 语速 / 音调芯片 */}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={cycleRate}
+            aria-label={t("reader.ttsRate")}
+            className={cn(
+              "grid h-11 min-w-[44px] place-items-center rounded-full px-2 text-xs font-semibold transition",
+              rate !== 1 ? "bg-ink/15 text-ink" : "bg-ink/8 text-ink/75 hover:bg-ink/10",
+            )}
+          >
+            {rate.toFixed(rate % 1 === 0 ? 0 : 2)}x
+          </button>
+          <button
+            onClick={cyclePitch}
+            aria-label={t("reader.ttsPitch")}
+            title={t("reader.ttsPitch")}
+            className={cn(
+              "grid h-11 min-w-[44px] place-items-center rounded-full px-2 text-xs font-semibold transition",
+              pitch !== 1 ? "bg-ink/15 text-ink" : "bg-ink/8 text-ink/75 hover:bg-ink/10",
+            )}
+          >
+            P{pitch.toFixed(1)}
+          </button>
+        </div>
       </div>
 
       {/* 底部：当前朗读章节 / 关闭 */}

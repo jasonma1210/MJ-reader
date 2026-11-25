@@ -14,7 +14,9 @@ import { useAiStore } from "../stores/aiStore";
 import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 import { EmptyState, ErrorState } from "../components/common/states";
+import { MobileSheet } from "../components/common/MobileSheet";
 import { SubBackHeader } from "../components/shell/SubBackHeader";
+import { useBreakpoint } from "../hooks/useLayoutMode";
 import { toast } from "../utils/toast";
 import { logError } from "../utils/logError";
 import { cn } from "../utils/cn";
@@ -39,6 +41,9 @@ export function PracticePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // W8 端侧分级：手机竖屏模式单选、重开等次要操作收进更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
   // S2-2.2：动词产物页深链 —— /practice?mode=feynman|case|project|compare
   const modeFromQuery = searchParams.get("mode") as Mode | null;
   const [mode, setMode] = useState<Mode>(
@@ -165,6 +170,7 @@ export function PracticePage() {
                     onClick={() => setMode(m.key)}
                     className={cn(
                       "flex flex-col items-start gap-1 rounded-[var(--radius-md)] border p-3 text-left transition",
+                      phonePortrait && "min-h-[var(--touch-target)]",
                       mode === m.key
                         ? "border-accent bg-accent-bg"
                         : "border-line bg-paper hover:bg-paper-soft",
@@ -200,14 +206,16 @@ export function PracticePage() {
       <Header
         title={session.targetNodeName || t("practice.mode." + session.practiceType)}
         action={
-          <button
-            onClick={reset}
-            aria-label={t("common.restart")}
-            className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            {t("practice.restart")}
-          </button>
+          <MobileSheet title={t("practice.title")}>
+            <button
+              onClick={reset}
+              aria-label={t("common.restart")}
+              className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {t("practice.restart")}
+            </button>
+          </MobileSheet>
         }
       />
 

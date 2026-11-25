@@ -4,6 +4,9 @@ import { useNavigate } from "react-router-dom";
 import { Plus, Sparkles, MessageSquare, BookOpen, ChevronRight, Trash2 } from "lucide-react";
 import { AskPills } from "../components/ai/AskPills";
 import { EmptyState } from "../components/common/states";
+import { MobileSheet } from "../components/common/MobileSheet";
+import { useBreakpoint } from "../hooks/useLayoutMode";
+import { cn } from "../utils/cn";
 import { useAiStore } from "../stores/aiStore";
 import { useLibraryStore } from "../stores/libraryStore";
 import { aiService } from "../services/aiService";
@@ -12,6 +15,9 @@ import { logError } from "../utils/logError";
 export function AIAssistantPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  // W8 端侧分级：手机竖屏把「打开阅读器」等次要入口收进更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
   const openPanel = useAiStore((s) => s.openPanel);
   const clearMessages = useAiStore.setState;
   const conversations = useAiStore((s) => s.conversations);
@@ -143,18 +149,23 @@ export function AIAssistantPage() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={askWithBook}
-            className="flex items-center gap-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-accent-fg transition hover:brightness-95"
+            className={cn(
+              "flex items-center gap-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-accent-fg transition hover:brightness-95",
+              phonePortrait && "min-h-[var(--touch-target)]",
+            )}
           >
             {t("ai.askThisBook")}
           </button>
           {recentBook && (
-            <button
-              onClick={() => navigate(`/reader/${recentBook.id}`)}
-              className="flex items-center gap-0.5 rounded-full border border-line px-3 py-2 text-sm font-medium text-ink-soft transition active:bg-paper-soft"
-            >
-              {t("ai.openReader")}
-              <ChevronRight className="h-4 w-4" />
-            </button>
+            <MobileSheet title={t("ai.bookAskTitle")}>
+              <button
+                onClick={() => navigate(`/reader/${recentBook.id}`)}
+                className="flex items-center gap-0.5 rounded-full border border-line px-3 py-2 text-sm font-medium text-ink-soft transition active:bg-paper-soft"
+              >
+                {t("ai.openReader")}
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </MobileSheet>
           )}
         </div>
 

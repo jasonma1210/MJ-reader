@@ -399,6 +399,18 @@ pub async fn start_import_book(
                             book.title,
                             book.format,
                         );
+                        // W1：写入侧生成完整性清单，哈希在 spawn_blocking 中按 8MB 分块执行。
+                        // 失败只记日志，不影响已完成的导入。
+                        if let Err(e) = crate::services::file_integrity::record_file(
+                            pool,
+                            "book",
+                            &book.id,
+                            std::path::Path::new(&book.file_path),
+                        )
+                        .await
+                        {
+                            log::warn!("[file_integrity] 书籍清单记录失败 {}: {}", book.id, e);
+                        }
                         // 触发旧事件，兼容直接监听的书库刷新逻辑
                         let _ = app_bg.emit("book:imported", &book);
 
@@ -629,6 +641,11 @@ pub async fn import_book_bytes(
         emit_skipped(&app, &status);
         emit_done(&app, &status);
         return Ok(import_id);
+    }
+
+    // W1：写入侧生成文件完整性清单（失败隔离，不影响导入结果）
+    if let Err(e) = crate::services::file_integrity::record_file(&pool, "book", &id, &dest).await {
+        log::warn!("[file_integrity] 书籍清单记录失败 {}: {}", id, e);
     }
 
     let status = ImportStatus {
@@ -999,6 +1016,11 @@ pub async fn import_book_from_uri(
     .execute(&*pool)
     .await
     .map_err(|e| AppError::General(format!("写入数据库失败: {}", e)))?;
+
+    // W1：写入侧生成完整性清单（失败隔离）
+    if let Err(e) = crate::services::file_integrity::record_file(&pool, "book", &id, &dest).await {
+        log::warn!("[file_integrity] URI 导入书籍清单记录失败 {}: {}", id, e);
+    }
 
     let status = ImportStatus {
         id: import_id.clone(),

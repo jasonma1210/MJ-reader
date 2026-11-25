@@ -32,12 +32,23 @@ export interface VisionPopoverProps {
   restMinutes: RestMinutes;
   onRestMinutesChange: (v: RestMinutes) => void;
   docKind: "epub" | "pdf";
+  /** 跟随系统深色开关（可选，兼容既有调用方与测试） */
+  followSystemTheme?: boolean;
+  onFollowSystemThemeChange?: (v: boolean) => void;
+  /** 自动阅读（定时翻页）开关与档位（秒） */
+  autoReadEnabled?: boolean;
+  autoReadSeconds?: number;
+  ttsActive?: boolean;
+  onAutoReadEnabledChange?: (v: boolean) => void;
+  onAutoReadSecondsChange?: (v: number) => void;
   /** 测试可注入固定时段，避免依赖本地时钟 */
   band?: TimeBand;
 }
 
 const MODE_KEYS: VisionMode[] = ["standard", "simulated", "ink"];
 const REST_KEYS: RestMinutes[] = [0, 30, 45, 60];
+/** 自动阅读定时翻页档位（秒） */
+const AUTO_READ_SECONDS = [30, 45, 60, 90] as const;
 
 export function VisionPopover({
   open,
@@ -54,6 +65,13 @@ export function VisionPopover({
   restMinutes,
   onRestMinutesChange,
   docKind,
+  followSystemTheme = false,
+  onFollowSystemThemeChange = () => {},
+  autoReadEnabled = false,
+  autoReadSeconds = 45,
+  ttsActive = false,
+  onAutoReadEnabledChange = () => {},
+  onAutoReadSecondsChange = () => {},
   band: bandProp,
 }: VisionPopoverProps) {
   const { t } = useTranslation();
@@ -229,6 +247,64 @@ export function VisionPopover({
           {t("vision.rhythm.wakelock")}
         </div>
       </section>
+
+      {/* 跟随系统深色：映射到背景/前景预设（暗夜 / 净白） */}
+      <section className="px-5 pb-3 pt-2">
+        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
+          {t("vision.theme.title")}
+        </div>
+        <SegmentedRow
+          large
+          label={t("vision.theme.followSystem")}
+          value={followSystemTheme ? "on" : "off"}
+          options={[
+            { key: "off", label: t("vision.theme.off") },
+            { key: "on", label: t("vision.theme.on") },
+          ]}
+          onChange={(k) => onFollowSystemThemeChange(k === "on")}
+        />
+        <div className="mt-1.5 text-[11px] leading-relaxed text-overlay/60">
+          {t("vision.theme.hint")}
+        </div>
+      </section>
+
+      {/* 自动阅读（定时翻页）：与 TTS 互斥，朗读中给出明确原因 */}
+      <section className="px-5 pb-4 pt-2">
+        <div className="mb-1.5 text-[11px] tracking-wider text-overlay">
+          {t("reader.autoRead.title")}
+        </div>
+        <SegmentedRow
+          large
+          label={t("reader.autoRead.title")}
+          value={autoReadEnabled ? "on" : "off"}
+          options={[
+            { key: "off", label: t("reader.autoRead.off") },
+            { key: "on", label: t("reader.autoRead.on") },
+          ]}
+          onChange={(k) => onAutoReadEnabledChange(k === "on")}
+        />
+        <div className="mt-2">
+          <SegmentedRow
+            large
+            label={t("reader.autoRead.interval")}
+            value={autoReadSeconds}
+            options={AUTO_READ_SECONDS.map((s) => ({
+              key: s,
+              label: t("reader.autoRead.intervalSec", { seconds: s }),
+            }))}
+            onChange={onAutoReadSecondsChange}
+          />
+        </div>
+        {ttsActive ? (
+          <div className="mt-1.5 text-[11px] leading-relaxed text-danger">
+            {t("reader.autoRead.ttsConflict")}
+          </div>
+        ) : (
+          <div className="mt-1.5 text-[11px] leading-relaxed text-overlay/60">
+            {t("reader.autoRead.hint")}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -239,16 +315,19 @@ function SegmentedRow<K extends string | number>({
   value,
   options,
   onChange,
+  large,
 }: {
   label: string;
   value: K;
   options: Array<{ key: K; label: string }>;
   onChange: (k: K) => void;
+  /** 新增控件满足 ≥44px 触控目标 */
+  large?: boolean;
 }) {
   const idx = options.findIndex((o) => o.key === value);
   return (
     <div className="flex items-center gap-2">
-      <span className="w-9 shrink-0 text-[11px] text-overlay">{label}</span>
+      <span className={cn("shrink-0 text-[11px] text-overlay", large ? "w-[5.5rem]" : "w-9")}>{label}</span>
       <div className="relative flex flex-1 items-center rounded-full bg-overlay-soft p-1">
         <div
           aria-hidden
@@ -264,7 +343,8 @@ function SegmentedRow<K extends string | number>({
             onClick={() => onChange(o.key)}
             aria-pressed={value === o.key}
             className={cn(
-              "relative z-10 flex-1 rounded-full py-1.5 text-[11px] transition",
+              "relative z-10 flex-1 rounded-full text-[11px] transition",
+              large ? "min-h-11 py-2" : "py-1.5",
               value === o.key ? "font-semibold text-overlay" : "text-overlay",
             )}
           >

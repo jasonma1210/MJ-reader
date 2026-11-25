@@ -1,4 +1,5 @@
 import { CMD, invoke, isTauri, allowMockFallback } from "./tauri";
+import { logError } from "../utils/logError";
 import type { NoteItem, NoteKind } from "../types";
 import { MOCK_NOTES } from "./mock";
 
@@ -72,7 +73,8 @@ export const notesService = {
           mediaUrl: n.media_url ?? null,
           transcript: n.transcript ?? null,
         }));
-      } catch {
+      } catch (e) {
+        logError("notesService.list", e);
         return allowMockFallback() ? [...mockNotes] : [];
       }
     }
@@ -97,7 +99,8 @@ export const notesService = {
         dataUrl: dataUrl,
       });
       return path ?? null;
-    } catch {
+    } catch (e) {
+      logError("notesService.saveMedia", e);
       return null;
     }
   },
@@ -118,13 +121,30 @@ export const notesService = {
         extension,
       });
       return path ?? null;
-    } catch {
+    } catch (e) {
+      logError("notesService.saveVoiceNote", e);
+      return null;
+    }
+  },
+
+  /**
+   * W1（2026-11-25 数据正确性）：回填历史笔记的「id 与媒体文件名不一致」记录。
+   * 返回修复/缺失/失败计数，调用方据此提示用户。
+   */
+  async reconcileNoteMedia(): Promise<{ scanned: number; fixed: number; missing: number; failed: number } | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke(CMD.reconcileNoteMedia);
+    } catch (e) {
+      logError("notesService.reconcileNoteMedia", e);
       return null;
     }
   },
 
   /** 创建旁注/笔记（save_study_note，note_type=annotation 对应「旁注」分类） */
   async saveNote(input: {
+    /** W1：调用方生成的 note id，必须同时用于媒体落盘与入库；缺省时由本服务生成 */
+    id?: string;
     bookId: string;
     chapterIndex?: number;
     pageIndex?: number;
@@ -164,7 +184,8 @@ export const notesService = {
     }
     try {
       await invoke(CMD.saveStudyNote, {
-        id: crypto.randomUUID(),
+        // W1：同一 id 用于媒体落盘（saveMedia/saveVoiceNote 的 noteId）与数据库入库
+        id: input.id && input.id.length > 0 ? input.id : crypto.randomUUID(),
         bookId: input.bookId,
         chapterIndex: input.chapterIndex ?? 0,
         pageIndex: input.pageIndex ?? 0,
@@ -180,7 +201,8 @@ export const notesService = {
         source: input.source ?? "user",
       });
       return true;
-    } catch {
+    } catch (e) {
+      logError("notesService.saveNote", e);
       return false;
     }
   },

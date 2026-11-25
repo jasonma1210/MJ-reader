@@ -401,7 +401,10 @@ CREATE TABLE IF NOT EXISTS study_notes (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     -- v15（P1-2 软删除）：删除打标不真删，查询一律过滤 deleted_at IS NULL
-    deleted_at INTEGER
+    deleted_at INTEGER,
+    -- W1（2026-11-25 数据正确性）：CRDT 墓碑标记。软删同时置 tombstone=1，
+    -- 列表/解析查询统一带 `tombstone = 0`，避免同步层回填或历史数据让软删笔记复活。
+    tombstone INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_study_notes_book ON study_notes(book_id);
@@ -989,8 +992,16 @@ CREATE TABLE IF NOT EXISTS whiteboards (
     scope_ref TEXT,                              -- book_id 或 主题关键字
     canvas_state TEXT NOT NULL DEFAULT '{}',     -- JSON：平移/缩放、背景模式
     created_at INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL DEFAULT 0
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    -- W1（2026-11-25 数据正确性）：同 scope 历史重复板归并后打墓碑标记，
+    -- 列表/查找一律过滤 tombstone = 0；唯一索引仍在全部行上生效（含墓碑行），
+    -- 保证同一 scope 永远只有一行「活板」，查找或创建下沉后端后不再漂移。
+    tombstone INTEGER NOT NULL DEFAULT 0
 );
+-- 注意：idx_whiteboards_scope 唯一索引**不放在本文件**。老库存在同 scope 多块历史板，
+-- 若建表脚本（init_pool 每次启动无条件执行）先建唯一索引会在归并前直接失败；
+-- 该索引由 run_migrations v30 在归并完成后创建（幂等）。索引是部分索引（WHERE tombstone = 0）：
+-- 归并后的重复板保留为 tombstone=1 历史行，不参与唯一性约束。
 CREATE TABLE IF NOT EXISTS whiteboard_cards (
     id TEXT PRIMARY KEY,
     whiteboard_id TEXT NOT NULL REFERENCES whiteboards(id) ON DELETE CASCADE,
@@ -1058,11 +1069,17 @@ CREATE INDEX IF NOT EXISTS idx_cu_source ON content_units(source_table, row_id);
 CREATE INDEX IF NOT EXISTS idx_cu_book ON content_units(book_id);
 CREATE INDEX IF NOT EXISTS idx_cu_updated ON content_units(updated_at);
 
--- content_units_fts：正文 FTS5 倒排索引。
+-- content_units_fts：正文 FTS5 倒排索引（W2 contentless 去重）。
 -- 行与 content_units.rowid 一一对应，MATCH + bm25 排序。分词在 Rust 侧 bigram 预处理
 -- （与书内检索同源，中文单字/双字皆可命中），此处只交给 unicode61 按空格切。
+-- content='' + contentless_delete=1：倒排索引里不再保存第二份正文，正文唯一真源是
+-- content_units.text；全库查询只做 MATCH/bm25 + rowid JOIN，不读 FTS 的 body 列，
+-- 因此现有 MATCH 查询语义完全不变。contentless_delete=1 支持按 rowid 普通 DELETE
+-- （services/knowledge_lib.rs 重建索引时依赖），需 SQLite ≥3.43（bundled 3.46）。
 CREATE VIRTUAL TABLE IF NOT EXISTS content_units_fts USING fts5(
     body,
+    content='',
+    contentless_delete=1,
     tokenize = 'unicode61 remove_diacritics 2'
 );
 
@@ -1329,4 +1346,65 @@ CREATE TABLE IF NOT EXISTS reading_speed_logs (
     created_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rsl_book ON reading_speed_logs(book_id, chapter_index);
+
+-- ===== W1（2026-11-25 数据正确性）：文件完整性 manifest =====
+-- 写入侧（导入书籍 / 备份文件 / 笔记媒体）生成 sha256 清单并落本表，
+-- 读取侧按 (target_type, target_ref) 取清单重算校验；失败隔离，不阻断主流程。
+-- 纯新增表，仅写 CREATE_TABLES_SQL：init_pool 每次启动无条件执行，无需 bump 版本号。
+CREATE TABLE IF NOT EXISTS file_integrity_manifest (
+    target_type TEXT NOT NULL,    -- book | backup | note_media
+    target_ref  TEXT NOT NULL,    -- book_id | 备份文件名 | note_id
+    file_path   TEXT NOT NULL,
+    size        INTEGER NOT NULL DEFAULT 0,
+    sha256      TEXT NOT NULL,
+    created_at  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (target_type, target_ref, file_path)
+);
+CREATE INDEX IF NOT EXISTS idx_fim_target ON file_integrity_manifest(target_type, target_ref);
+
+-- ===== W7（2026-11-25 学习体系）：FSRS 状态与复习效果归因日志 =====
+-- 纯新增表。FSRS 状态与 card_scheduling 的 SM-2 字段完全分离：
+-- 切换回 SM-2 时旧字段原样保留，历史调度状态不丢。
+CREATE TABLE IF NOT EXISTS card_fsrs_state (
+    card_id        TEXT PRIMARY KEY,
+    stability      REAL NOT NULL DEFAULT 0,
+    difficulty     REAL NOT NULL DEFAULT 0,
+    elapsed_days   INTEGER NOT NULL DEFAULT 0,
+    scheduled_days INTEGER NOT NULL DEFAULT 0,
+    repetitions    INTEGER NOT NULL DEFAULT 0,
+    lapses         INTEGER NOT NULL DEFAULT 0,
+    state          INTEGER NOT NULL DEFAULT 0,
+    last_review    INTEGER NOT NULL DEFAULT 0,
+    updated_at     INTEGER NOT NULL DEFAULT 0
+);
+
+-- 审计型数据：不设外键级联，卡片删除后归因历史仍可追溯（与 ai_llm_usage 同源口径）。
+CREATE TABLE IF NOT EXISTS card_review_log (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id        TEXT NOT NULL,
+    book_id        TEXT,
+    rating         TEXT NOT NULL,
+    algorithm      TEXT NOT NULL DEFAULT 'sm2',
+    reviewed_at    INTEGER NOT NULL,
+    interval_days  INTEGER NOT NULL DEFAULT 0,
+    elapsed_days   INTEGER NOT NULL DEFAULT 0,
+    prev_stability REAL,
+    next_stability REAL,
+    prev_difficulty REAL,
+    next_difficulty REAL
+);
+CREATE INDEX IF NOT EXISTS idx_crl_reviewed_at ON card_review_log(reviewed_at);
+CREATE INDEX IF NOT EXISTS idx_crl_book ON card_review_log(book_id);
+
+-- ===== W10（2026-11-25 知识包开放格式）：端侧知识包存储 =====
+-- payload 为开放 JSON（subject/title/sections/faqs），导出即原样落盘，导入即原样入库。
+CREATE TABLE IF NOT EXISTS knowledge_packs (
+    id            TEXT PRIMARY KEY,
+    subject       TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    payload_json  TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kp_subject ON knowledge_packs(subject);
 "#;

@@ -254,3 +254,41 @@ mod tests {
         assert_eq!(wrongs[0].0, "本书记错的");
     }
 }
+
+// ===== W2：统一取消链路命令单测（纯注册表行为，不依赖 AI 配置） =====
+
+#[test]
+fn ai_cancel_request_hits_exact_chat_and_book_alias() {
+    use crate::commands::ai_chat::ai_cancel_request;
+    use crate::services::ai_cancel::{register, register_alias, unregister};
+
+    let chat_key = "chat:test-unified-cancel";
+    let book_key = "book:test-unified-book";
+    let token = register(chat_key);
+    register_alias(book_key, &token);
+
+    assert_eq!(ai_cancel_request(book_key.to_string()), 1);
+    assert!(token.is_cancelled(), "book 作用域取消应唤醒同一 chat 令牌");
+
+    unregister(chat_key);
+    unregister(book_key);
+}
+
+#[test]
+fn ai_cancel_request_without_scope_cancels_both_scopes() {
+    use crate::commands::ai_chat::ai_cancel_request;
+    use crate::services::ai_cancel::{register, unregister};
+
+    let chat_key = "chat:plain-id";
+    let book_key = "book:plain-id";
+    let chat = register(chat_key);
+    let book = register(book_key);
+
+    let n = ai_cancel_request("plain-id".to_string());
+    assert_eq!(n, 2);
+    assert!(chat.is_cancelled());
+    assert!(book.is_cancelled());
+
+    unregister(chat_key);
+    unregister(book_key);
+}

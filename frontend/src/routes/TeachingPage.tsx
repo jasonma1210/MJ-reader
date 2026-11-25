@@ -19,7 +19,9 @@ import {
 import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 import { EmptyState, ErrorState } from "../components/common/states";
+import { MobileSheet } from "../components/common/MobileSheet";
 import { SubBackHeader } from "../components/shell/SubBackHeader";
+import { useBreakpoint } from "../hooks/useLayoutMode";
 import { toast } from "../utils/toast";
 import { logError } from "../utils/logError";
 import { cn } from "../utils/cn";
@@ -34,6 +36,9 @@ export function TeachingPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const aiConfigured = useAiStore((s) => s.profileId != null);
+  // W8 端侧分级：手机竖屏把「重新开始」等次要操作收进更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
 
   const [targetKnowledgeId, setTargetKnowledgeId] = useState("");
   const [targetBookId, setTargetBookId] = useState<string | null>(null);
@@ -154,14 +159,16 @@ export function TeachingPage() {
         )}
         {session && (
           <div className="flex justify-end">
-            <button
-              onClick={reset}
-              aria-label={t("common.restart")}
-              className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              {t("teaching.restart")}
-            </button>
+            <MobileSheet title={t("teaching.title")} inlineClassName="justify-end">
+              <button
+                onClick={reset}
+                aria-label={t("common.restart")}
+                className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {t("teaching.restart")}
+              </button>
+            </MobileSheet>
           </div>
         )}
 
@@ -236,6 +243,7 @@ export function TeachingPage() {
                   onClick={() => setVoiceMode(false)}
                   className={cn(
                     "flex-1 rounded-[calc(var(--radius-md)-4px)] py-1.5 text-xs font-semibold transition",
+                    phonePortrait && "min-h-[var(--touch-target)]",
                     !voiceMode ? "bg-accent text-accent-fg" : "text-ink-soft",
                   )}
                 >
@@ -245,6 +253,7 @@ export function TeachingPage() {
                   onClick={() => setVoiceMode(true)}
                   className={cn(
                     "flex-1 rounded-[calc(var(--radius-md)-4px)] py-1.5 text-xs font-semibold transition",
+                    phonePortrait && "min-h-[var(--touch-target)]",
                     voiceMode ? "bg-accent text-accent-fg" : "text-ink-soft",
                   )}
                 >

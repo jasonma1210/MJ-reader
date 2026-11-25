@@ -4,6 +4,9 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft, AlignLeft, Type, GraduationCap, ScanEye, Eye, BookOpen, ScrollText } from "lucide-react";
 import { useLayoutMode } from "../hooks/useLayoutMode";
 import { useReadingTimeRecorder } from "../hooks/useReadingTimeRecorder";
+import { useFollowSystemTheme } from "../hooks/useFollowSystemTheme";
+import { useMemoryGuard } from "../hooks/useMemoryGuard";
+import { useTTS } from "../hooks/useTts";
 import { BookWorkspace } from "../components/bookWorkspace/BookWorkspace";
 import { BookView } from "../renderer/BookView";
 import { FoliateView } from "../renderer/foliate/FoliateView";
@@ -70,6 +73,8 @@ export function ReaderPage() {
   const setIntensity = useReaderStore((s) => s.setIntensity);
   const restMinutes = useReaderStore((s) => s.restMinutes);
   const setRestMinutes = useReaderStore((s) => s.setRestMinutes);
+  const followSystemTheme = useReaderStore((s) => s.followSystemTheme);
+  const setFollowSystemTheme = useReaderStore((s) => s.setFollowSystemTheme);
   // 视觉模式作用于整个阅读界面：工具栏/底栏/浮层/正文统一切换，不只改文档内容。
   const vision = useVisionProfile();
   const openPanel = useAiStore((s) => s.openPanel);
@@ -510,6 +515,40 @@ export function ReaderPage() {
     else resumeTtsAuto("workspace");
   }, [workspaceVisible]);
 
+  // —— 自动阅读（定时翻页）：独立定时器，与 TTS 朗读互斥 ——
+  const { isPlaying: ttsPlaying, isPaused: ttsPaused, stop: stopTts } = useTTS();
+  const ttsActive = ttsPlaying || ttsPaused;
+  const [autoReadEnabled, setAutoReadEnabled] = useState(false);
+  const [autoReadSeconds, setAutoReadSeconds] = useState(45);
+
+  // 跟随系统深色：开关打开时监听 matchMedia 并映射到 暗夜/净白 预设
+  useFollowSystemTheme();
+  // 内存守卫：后台/低内存 → 渲染层释放缓存；回前台 → 按 CFI/页码恢复
+  useMemoryGuard();
+
+  const enableAutoRead = (enabled: boolean) => {
+    // 开启自动阅读先停掉 TTS，避免边读边翻页造成跳动
+    if (enabled && ttsActive) stopTts();
+    setAutoReadEnabled(enabled);
+  };
+
+  useEffect(() => {
+    if (!autoReadEnabled || ttsActive) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      window.dispatchEvent(new CustomEvent("mjnexus:reader-flip", { detail: { direction: 1 } }));
+    }, autoReadSeconds * 1000);
+    return () => window.clearInterval(id);
+  }, [autoReadEnabled, autoReadSeconds, ttsActive]);
+
+  // 用户在自动阅读开启期间起播 TTS → 自动翻页让位并提示（互斥的另一半）
+  useEffect(() => {
+    if (ttsActive && autoReadEnabled) {
+      setAutoReadEnabled(false);
+      toast(t("reader.autoRead.pausedByTts"));
+    }
+  }, [ttsActive, autoReadEnabled, t]);
+
   if (!bookId) return null;
 
   // 外层 div 的 onClick：给 TextView（非 iframe）兜底
@@ -688,6 +727,13 @@ export function ReaderPage() {
         restMinutes={restMinutes}
         onRestMinutesChange={setRestMinutes}
         docKind={bookInfo?.format?.toLowerCase() === "pdf" ? "pdf" : "epub"}
+        followSystemTheme={followSystemTheme}
+        onFollowSystemThemeChange={setFollowSystemTheme}
+        autoReadEnabled={autoReadEnabled}
+        autoReadSeconds={autoReadSeconds}
+        ttsActive={ttsActive}
+        onAutoReadEnabledChange={enableAutoRead}
+        onAutoReadSecondsChange={setAutoReadSeconds}
       />
 
       {/* 阅读内容区 + 横屏右侧侧边栏。

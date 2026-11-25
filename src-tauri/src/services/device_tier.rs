@@ -500,7 +500,7 @@ pub(crate) fn plan_for(tier: Tier, vendor: SocVendor, cores: i32) -> LoadPlan {
     }
 }
 
-fn tier_label(t: Tier) -> &'static str {
+pub(crate) fn tier_label(t: Tier) -> &'static str {
     match t {
         Tier::IosHigh => "ios-high",
         Tier::IosMid => "ios-mid",

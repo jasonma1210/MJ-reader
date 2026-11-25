@@ -658,6 +658,13 @@ pub async fn record_card_review(
     rating: String,
 ) -> AppResult<()> {
     let db = &*state.db;
+
+    // W7：按学习配置分流。FSRS 分支写独立状态表，SM-2 原始字段原样保留，可随时回滚。
+    if crate::commands::learning::review_algorithm(db).await? == "fsrs" {
+        crate::commands::learning::apply_fsrs_review(db, &card_id, &rating).await?;
+        return Ok(());
+    }
+
     let row = sqlx::query(
         "SELECT ease_factor, interval_days, repetitions FROM card_scheduling WHERE card_id = ?",
     )
@@ -665,13 +672,16 @@ pub async fn record_card_review(
     .fetch_optional(db)
     .await?;
 
+    // W7：默认难度系数 / 间隔倍率 / 上限来自用户配置；缺省值与历史行为一致。
+    let (default_ef, interval_modifier, max_interval) =
+        crate::commands::learning::sm2_params(db).await?;
     let (mut ef, mut interval, mut reps): (f64, i64, i64) = match row {
         Some(r) => (
-            r.try_get::<f64, _>("ease_factor").unwrap_or(2.5),
+            r.try_get::<f64, _>("ease_factor").unwrap_or(default_ef),
             r.try_get::<i64, _>("interval_days").unwrap_or(0),
             r.try_get::<i64, _>("repetitions").unwrap_or(0),
         ),
-        None => (2.5, 0, 0),
+        None => (default_ef, 0, 0),
     };
 
     // 评级 → SM-2 质量分
@@ -698,11 +708,13 @@ pub async fn record_card_review(
         interval = 1;
     }
 
-    // SM-2 难度因子更新（下限 1.3）
+    // SM-2 难度因子更新（下限 1.3）；间隔倍率与上限按用户配置收口。
     ef += 0.1 - (5.0 - quality) * (0.08 + (5.0 - quality) * 0.02);
     if ef < 1.3 {
         ef = 1.3;
     }
+    interval = ((interval as f64 * interval_modifier).round() as i64)
+        .clamp(1, max_interval);
 
     let now = chrono::Utc::now().timestamp();
     let due_date = now + interval * 86_400;
@@ -725,6 +737,15 @@ pub async fn record_card_review(
     .bind(now)
     .execute(db)
     .await?;
+
+    // 归因埋点：失败只记日志，不影响主链路已落库的调度结果。
+    if let Err(e) = crate::commands::learning::insert_review_log(
+        db, &card_id, &rating, "sm2", interval, 0, None, None,
+    )
+    .await
+    {
+        log::warn!("[card] SM-2 复习埋点写入失败 card_id={}: {}", card_id, e);
+    }
 
     Ok(())
 }

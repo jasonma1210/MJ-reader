@@ -2,6 +2,7 @@
 // 对应后端 src-tauri/src/commands/knowledge_graph.rs 的 serde 结构（rename_all=camelCase）。
 
 import { CMD, invoke, isTauri } from "./tauri";
+import { logError } from "../utils/logError";
 
 /** 图谱节点 */
 export interface GraphNode {
@@ -91,4 +92,28 @@ export const graphService = {
       bookId: bookId || null,
     });
   },
+
+  /** W10：白板卡同步为知识节点 + 画布图谱边（幂等）。 */
+  async syncWhiteboardCard(
+    whiteboardCardId: string,
+    bookId?: string | null,
+  ): Promise<GraphSyncResult | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<GraphSyncResult>(CMD.syncWhiteboardCardToGraph, {
+        whiteboardCardId,
+        bookId: bookId ?? null,
+      });
+    } catch (e) {
+      logError("graphService.syncWhiteboardCard", e);
+      return null;
+    }
+  },
 };
+
+export interface GraphSyncResult {
+  nodeId: string;
+  cardId: string;
+  created: boolean;
+  edgeCount: number;
+}

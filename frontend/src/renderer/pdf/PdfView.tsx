@@ -20,6 +20,10 @@ import type { TocNode } from "../../services/aiService";
 import { settingsService } from "../../services/settingsService";
 import { useVisionProfile } from "../visual/einkProfile";
 import { usePdfPageCache, ensurePageTextContent } from "./usePdfPageCache";
+import {
+  MEMORY_RELEASE_EVENT,
+  MEMORY_RESTORE_EVENT,
+} from "../../hooks/useMemoryGuard";
 import { reflowTextContentToHtml } from "./reflow/pdfReflow";
 import { PdfPageCanvas, type PdfPageCanvasHandle } from "./PdfPageCanvas";
 import type { PdfHighlightEntry } from "./pdfHighlightOverlay";
@@ -229,6 +233,7 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
     isDoubleModeRef,
     prefetchCancelledRef,
   });
+  const clearPageCache = pageCache.clearAll;
 
   // 从 highlightStore 派生 PDF 高亮（cfiRange 形如 "pdf:<page>"）
   const syncHighlights = useCallback(() => {
@@ -732,6 +737,23 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
+
+  // 内存守卫：后台/低内存释放可回收页缓存；回前台按当前页码原样重绘。
+  // currentPageRef 不重置，因此释放/恢复不改变阅读进度。
+  useEffect(() => {
+    const onRelease = () => {
+      clearPageCache();
+    };
+    const onRestore = () => {
+      renderPage(currentPageRef.current);
+    };
+    window.addEventListener(MEMORY_RELEASE_EVENT, onRelease);
+    window.addEventListener(MEMORY_RESTORE_EVENT, onRestore);
+    return () => {
+      window.removeEventListener(MEMORY_RELEASE_EVENT, onRelease);
+      window.removeEventListener(MEMORY_RESTORE_EVENT, onRestore);
+    };
+  }, [clearPageCache, renderPage]);
 
   // 翻页/缩放落库进度（防抖）
   useEffect(() => {

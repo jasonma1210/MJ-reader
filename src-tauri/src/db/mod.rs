@@ -3,6 +3,8 @@ pub mod schema;
 mod schema_tests;
 #[cfg(test)]
 mod soft_delete_tests;
+#[cfg(test)]
+mod fts_contentless_tests;
 
 /// 软删除可见性守卫（better-harness：单一真源）。
 /// 所有 books 查询必须经此模块生成过滤子句——禁止手写 `deleted_at IS NULL`。
@@ -30,7 +32,11 @@ use std::str::FromStr;
 ///   lan_file_server / local_model_runtime 四张新表（端侧推理 + 局域网文件服务器）
 ///
 /// 后续版本示例：v1.1.3 → 2，v1.2.0 → 3
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 29;
+/// - 30：W1（2026-11-25 数据正确性）— whiteboards/study_notes 补 tombstone 列、
+///   按 scope 归并历史重复画布并建唯一索引、file_integrity_manifest 完整性清单表
+/// - 31：W2（2026-11-25 数据去重）— content_units_fts 改为 contentless FTS5，
+///   正文唯一副本留在 content_units，消除 FTS 内第二份正文副本
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 31;
 
 /// 契约 §2 强制列清单（22 列）——所有 `INSERT INTO cards` 必须一列不少。
 ///
@@ -300,6 +306,191 @@ pub(crate) async fn backfill_forgetting_prob(pool: &SqlitePool) -> Result<(), sq
     )
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// W1（2026-11-25 数据正确性）：把重复画布的 canvas_state.links/containers 合并进 canonical。
+/// 按 id 去重，canonical 自身的 viewport / sourceOverrides 不被覆盖（它是最新的板）。
+async fn merge_canvas_state_into_canonical(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    canonical_id: &str,
+    dup_raw: Option<String>,
+) -> Result<(), sqlx::Error> {
+    let Some(dup_raw) = dup_raw else { return Ok(()) };
+    let Ok(dup_value) = serde_json::from_str::<serde_json::Value>(&dup_raw) else {
+        log::warn!("[Migration] 白板 canvas_state 解析失败，跳过连线合并: {}", canonical_id);
+        return Ok(());
+    };
+    let Some(dup_obj) = dup_value.as_object() else { return Ok(()) };
+
+    let canon_raw: Option<String> = sqlx::query_scalar("SELECT canvas_state FROM whiteboards WHERE id = ?")
+        .bind(canonical_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let mut canon_obj: serde_json::Map<String, serde_json::Value> = canon_raw
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+
+    for key in ["links", "containers"] {
+        let dup_items = dup_obj.get(key).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        if dup_items.is_empty() {
+            continue;
+        }
+        let mut merged = canon_obj.get(key).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let mut seen: std::collections::HashSet<String> = merged
+            .iter()
+            .filter_map(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_string))
+            .collect();
+        for item in dup_items {
+            if let Some(id) = item.get("id").and_then(|i| i.as_str()) {
+                if !seen.insert(id.to_string()) {
+                    continue;
+                }
+            }
+            merged.push(item);
+        }
+        canon_obj.insert(key.to_string(), serde_json::Value::Array(merged));
+    }
+
+    let merged = serde_json::Value::Object(canon_obj).to_string();
+    sqlx::query("UPDATE whiteboards SET canvas_state = ? WHERE id = ?")
+        .bind(merged)
+        .bind(canonical_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// W1（2026-11-25 数据正确性）：白板同 scope 历史重复归并（幂等）。
+///
+/// 按 (scope_type, COALESCE(scope_ref, '')) 分组；canonical 取最近更新的板，
+/// 更新时间相同取 id 字典序最小。重复板的卡片/图元迁到 canonical，连线/收纳组
+/// （canvas_state JSON）按 id 合并去重，重复板 tombstone=1；最后建唯一索引。
+///
+/// 幂等性：只对 tombstone=0 的板分组，重复执行时上一轮已墓碑化的板不再参与；
+/// 索引用 IF NOT EXISTS，无副作用。索引必须在归并后创建，否则老库的重复数据
+/// 会让 init_pool 的建表脚本在建索引阶段直接失败。
+pub(crate) async fn dedupe_whiteboards_by_scope(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    use std::collections::BTreeMap;
+
+    let mut tx = pool.begin().await?;
+    let rows: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, scope_type, scope_ref FROM whiteboards WHERE tombstone = 0")
+            .fetch_all(&mut *tx)
+            .await?;
+
+    let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for (id, scope_type, scope_ref) in rows {
+        groups
+            .entry((scope_type, scope_ref.unwrap_or_default()))
+            .or_default()
+            .push(id);
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    for ((_scope_type, _scope_ref), ids) in groups {
+        if ids.len() < 2 {
+            continue;
+        }
+        let mut ranked: Vec<(i64, String)> = Vec::with_capacity(ids.len());
+        for id in ids {
+            let updated: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(updated_at, 0) FROM whiteboards WHERE id = ?",
+            )
+            .bind(&id)
+            .fetch_one(&mut *tx)
+            .await?;
+            ranked.push((updated, id));
+        }
+        // 最近更新时间优先；时间相同取最小 id，保证不同设备归并结果一致。
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let canonical_id = ranked[0].1.clone();
+
+        for (_, dup_id) in ranked.iter().skip(1) {
+            sqlx::query("UPDATE whiteboard_cards SET whiteboard_id = ? WHERE whiteboard_id = ?")
+                .bind(&canonical_id)
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE whiteboard_elements SET whiteboard_id = ? WHERE whiteboard_id = ?")
+                .bind(&canonical_id)
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+            let dup_raw: Option<String> =
+                sqlx::query_scalar("SELECT canvas_state FROM whiteboards WHERE id = ?")
+                    .bind(dup_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            merge_canvas_state_into_canonical(&mut tx, &canonical_id, dup_raw).await?;
+            sqlx::query("UPDATE whiteboards SET tombstone = 1, updated_at = ? WHERE id = ?")
+                .bind(now)
+                .bind(dup_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        log::info!(
+            "[Migration] 白板 scope 归并：{} 块候选 → canonical {}",
+            ranked.len(),
+            canonical_id
+        );
+    }
+    tx.commit().await?;
+
+    // 部分唯一索引：只约束活板（tombstone = 0）。
+    // 重复板按需求保留为 tombstone=1 的历史记录，若索引覆盖全部行，CREATE UNIQUE INDEX
+    // 会因子宫内的重复 scope 直接失败；部分索引既锁死「同一 scope 只有一块活板」，
+    // 又保留了被归并板的审计痕迹。
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_whiteboards_scope \
+         ON whiteboards(scope_type, COALESCE(scope_ref, '')) WHERE tombstone = 0",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// v31（W2 数据去重）：把 content_units_fts 从「正文存两份」改为 contentless。
+///
+/// 可行性依据：全库对 content_units_fts 只做 MATCH + bm25 + `JOIN content_units
+/// ON c.rowid = content_units_fts.rowid`，从来没有 `SELECT body FROM content_units_fts`，
+/// 因此去掉 FTS 内的正文副本不会影响任何现有查询。迁移在 Rust 侧用与索引建立时
+/// 同源的 index_text() 重建倒排，保证前后分词口径完全一致。
+async fn migrate_content_units_fts_contentless(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let ddl: Option<(String,)> = sqlx::query_as(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='content_units_fts'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let Some((ddl,)) = ddl else {
+        return Ok(()); // 表不存在时 CREATE_TABLES_SQL 会按 contentless 版本建出
+    };
+    if ddl.contains("content=''") {
+        return Ok(()); // 幂等：新库或已迁移库直接跳过
+    }
+
+    log::info!("[Migration] v31：重建 content_units_fts 为 contentless FTS5");
+    let rows: Vec<(i64, String)> =
+        sqlx::query_as("SELECT rowid, text FROM content_units")
+            .fetch_all(pool)
+            .await?;
+    sqlx::query("DROP TABLE content_units_fts").execute(pool).await?;
+    sqlx::query(
+        "CREATE VIRTUAL TABLE content_units_fts USING fts5(\
+            body, content='', contentless_delete=1, \
+            tokenize='unicode61 remove_diacritics 2')",
+    )
+    .execute(pool)
+    .await?;
+    for (rowid, text) in rows {
+        let indexed = crate::services::book_fts::index_text(&text);
+        sqlx::query("INSERT INTO content_units_fts (rowid, body) VALUES (?, ?)")
+            .bind(rowid)
+            .bind(indexed)
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 
@@ -949,6 +1140,17 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error>
     )
     .execute(pool)
     .await?;
+
+    // ===== v30（W1 数据正确性）：白板 scope 唯一约束 + Note/白板墓碑列 =====
+    // 老库补齐 tombstone 列（新库由 schema.rs CREATE_TABLES_SQL 原生包含，幂等）。
+    migrate_add_column(pool, "whiteboards", "tombstone", "INTEGER NOT NULL DEFAULT 0").await?;
+    migrate_add_column(pool, "study_notes", "tombstone", "INTEGER NOT NULL DEFAULT 0").await?;
+    // 先归并（含卡片/图元/连线迁移 + 重复板墓碑化），再建唯一索引，
+    // 否则存量重复板会让 CREATE UNIQUE INDEX 直接失败、应用启动崩溃。
+    dedupe_whiteboards_by_scope(pool).await?;
+
+    // ===== v31（W2 数据去重）：FTS 正文单一真源 =====
+    migrate_content_units_fts_contentless(pool).await?;
 
     set_schema_version(pool, CURRENT_SCHEMA_VERSION).await?;
     log::info!(

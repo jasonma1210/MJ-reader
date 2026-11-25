@@ -13,6 +13,7 @@ use crate::commands::ai_core::{
     ChatRequest, OpenAIRequest, OpenAIStreamChunk,
 };
 use crate::error::{AppError, AppResult};
+use crate::services::ai_cancel;
 use crate::services::ai_profiles::{self, AiProfile};
 use crate::AppState;
 use serde::Serialize;
@@ -286,13 +287,59 @@ async fn build_chat_book_grounding(
         capped
     )
 }
-/// BE-32：取消指定会话的流式生成（「停止生成」按钮）
+/// BE-32：取消指定会话的流式生成（「停止生成」按钮）。
+/// W2：同时触发统一命名令牌，使 select! 能立刻唤醒，而不必等下一个 chunk。
 #[tauri::command]
 pub fn ai_cancel_stream(conversation_id: String) {
     if let Ok(map) = stream_cancellations().lock() {
         if let Some(flag) = map.get(&conversation_id) {
             flag.store(true, std::sync::atomic::Ordering::SeqCst);
         }
+    }
+    ai_cancel::cancel(&format!("chat:{}", conversation_id));
+}
+
+/// 取消令牌作用域注册：Drop 时注销所有键，避免异常提前返回导致注册表泄漏。
+struct CancelGuard {
+    keys: Vec<String>,
+}
+
+impl CancelGuard {
+    /// 同一令牌同时挂 chat:<cid> 与 book:<bid>，切书/退出会话都能真实唤醒流读取。
+    fn new(conversation_id: &str, book_id: Option<&str>) -> (Self, ai_cancel::CancellationToken) {
+        let chat_key = format!("chat:{}", conversation_id);
+        let token = ai_cancel::register(&chat_key);
+        let mut keys = vec![chat_key];
+        if let Some(book_id) = book_id {
+            let book_key = format!("book:{}", book_id);
+            ai_cancel::register_alias(&book_key, &token);
+            keys.push(book_key);
+        }
+        (Self { keys }, token)
+    }
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        for key in &self.keys {
+            ai_cancel::unregister(key);
+        }
+    }
+}
+
+/// W2：统一取消入口。前端 AbortController / 切书 / 退出会话统一调用。
+/// `scope` 约定：`chat:<id>`（会话）、`book:<id>`（整本书的请求，切书用）、
+/// `tts:<id>` / `asr:<id>`预留。精确键未命中时按前缀批量取消（便于一键终止整本书）。
+#[tauri::command]
+pub fn ai_cancel_request(request_id: String) -> usize {
+    let exact = ai_cancel::cancel(&request_id);
+    if exact {
+        1
+    } else if request_id.contains(':') {
+        ai_cancel::cancel_prefix(&format!("{}:", request_id))
+    } else {
+        ai_cancel::cancel_prefix(&format!("book:{}", request_id))
+            + ai_cancel::cancel_prefix(&format!("chat:{}", request_id))
     }
 }
 #[derive(Debug, Serialize, Clone)]
@@ -567,6 +614,9 @@ pub async fn ai_chat_stream(
     let conversation_id = request.conversation_id.clone().unwrap_or_else(|| {
         uuid::Uuid::new_v4().to_string()
     });
+    // W2：统一取消令牌（chat: + book: 双键）。守卫负责所有返回路径的注销。
+    let (_cancel_guard, cancel_token) =
+        CancelGuard::new(&conversation_id, request.book_id.as_deref());
 
     // 统一落用户最新输入（v0.7.1 修复：原仅落 assistant 导致对话历史不完整）。
     // 2026-08-17：去掉 book_id 守卫——全局知识库对话（无绑定书籍）同样需要持久化，
@@ -815,6 +865,16 @@ pub async fn ai_chat_stream(
         }
 
         let next = tokio::select! {
+            // W2：命名令牌取消后立即唤醒——不必等服务端下一个 chunk（弱网下可能几十秒）
+            _ = cancel_token.cancelled() => {
+                log::info!("[ai_chat_stream] 统一取消令牌触发，会话 {}", conversation_id);
+                let _ = app.emit("ai-chat-chunk", ChatChunkEvent {
+                    conversation_id: conversation_id.clone(),
+                    content: String::new(),
+                    done: true,
+                });
+                break;
+            }
             chunk_result = stream.next() => chunk_result,
             _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
                 // BIZ-18：流式 idle 超时 60s（服务端无新 chunk），按取消处理避免永久挂起
@@ -1242,12 +1302,34 @@ async fn chat_via_llamacpp(
 
     Ok(conversation_id.to_string())
 }
+/// W2：非流式 chat 的可取消执行壳。取消时 drop 请求 future（远程 HTTP 断开），
+/// 立刻返回明确错误，而不是让 UI 空等 120s 超时。
+async fn run_cancellable_chat(
+    db: &sqlx::SqlitePool,
+    messages: Vec<ChatMessage>,
+    temperature: f32,
+    request_id: Option<&str>,
+) -> AppResult<String> {
+    let Some(rid) = request_id.filter(|s| !s.is_empty()) else {
+        return call_openai_complete(db, messages, temperature).await;
+    };
+    let key = format!("chat:{}", rid);
+    let token = ai_cancel::register(&key);
+    let result = tokio::select! {
+        _ = token.cancelled() => Err(AppError::General("请求已取消".to_string())),
+        r = call_openai_complete(db, messages, temperature) => r,
+    };
+    ai_cancel::unregister(&key);
+    result
+}
+
 #[tauri::command]
 pub async fn ai_translate(
     state: State<'_, AppState>,
     text: String,
     target_lang: String,
     style: Option<String>,
+    request_id: Option<String>,
 ) -> AppResult<String> {
     let db = &*state.db;
     let style_prompt = match style.as_deref() {
@@ -1267,13 +1349,14 @@ pub async fn ai_translate(
         content: prompt,
     }];
 
-    call_openai_complete(db, messages, 0.3).await
+    run_cancellable_chat(db, messages, 0.3, request_id.as_deref()).await
 }
 #[tauri::command]
 pub async fn ai_explain(
     state: State<'_, AppState>,
     word: String,
     sentence: String,
+    request_id: Option<String>,
 ) -> AppResult<String> {
     let db = &*state.db;
     let prompt = format!(
@@ -1286,7 +1369,7 @@ pub async fn ai_explain(
         content: prompt,
     }];
 
-    call_openai_complete(db, messages, 0.3).await
+    run_cancellable_chat(db, messages, 0.3, request_id.as_deref()).await
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

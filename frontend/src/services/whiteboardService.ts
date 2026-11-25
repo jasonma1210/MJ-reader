@@ -62,7 +62,11 @@ export interface BookBoardAddResult {
   created: boolean;
 }
 
-/** 同一作用域可能残留多块历史画布：固定取最早创建的一块，避免上板/打开定位漂移 */
+/**
+ * @deprecated W1（2026-11-25）：canonical 已由后端 whiteboard_get_or_create 唯一决定。
+ * 仅保留供尚未迁移的旧调用点兼容读取；**禁止**再用本函数决定写入目标画布。
+ * 后端 v30 迁移已按 scope 归并历史重复板并建唯一索引，列表至多返回一块活板。
+ */
 export function pickCanonicalBoard<T extends { createdAt: number }>(boards: T[]): T | undefined {
   return [...boards].sort((a, b) => a.createdAt - b.createdAt)[0];
 }
@@ -222,6 +226,28 @@ export const whiteboardService = {
     return invoke<string>(CMD.whiteboardSave, { board });
   },
 
+  /**
+   * W1：按 scope 查找或创建唯一画布（后端原子命令）。
+   * 上板/打开入口统一走本方法，前端不再根据列表自行挑选 canonical。
+   */
+  async getOrCreateBoard(
+    scopeType: string,
+    scopeRef?: string | null,
+    title = "",
+  ): Promise<WhiteboardSummary> {
+    if (!isTauri()) throw new Error("getOrCreateBoard requires Tauri runtime");
+    try {
+      return await invoke<WhiteboardSummary>(CMD.whiteboardGetOrCreate, {
+        scopeType,
+        scopeRef: scopeRef ?? null,
+        title,
+      });
+    } catch (e) {
+      logError("whiteboardService.getOrCreateBoard", e);
+      throw e;
+    }
+  },
+
   /** 把一张卡片挂到画布，返回节点 id */
   async addCard(whiteboardId: string, layout: WhiteboardCardLayout): Promise<string> {
     if (!isTauri()) throw new Error("addCard requires Tauri runtime");
@@ -233,19 +259,9 @@ export const whiteboardService = {
    *  返回统一卡片 id 与画布 id，供调用方跳转定位；重复上板返回成功（created=false）。 */
   async addToBookBoard(bookId: string, source: string, sourceId: string): Promise<BookBoardAddResult | null> {
     if (!isTauri()) return null;
-    const boards = await this.listBoards("book", bookId);
-    const canonical = pickCanonicalBoard(boards);
-    let bid: string;
-    if (canonical) {
-      bid = canonical.id;
-    } else {
-      bid = await this.saveBoard({
-        title: "",
-        scopeType: "book",
-        scopeRef: bookId,
-        canvasState: undefined,
-      });
-    }
+    // W1：canonical 由后端唯一索引 + get_or_create 原子决定，避免前端按创建时间挑错板
+    const canonical = await this.getOrCreateBoard("book", bookId, "");
+    const bid = canonical.id;
     // 去重：该书画布已挂过同类同源卡则视为「已在板上」。
     // 旧实现误报「重复上板」；现在返回成功并带上卡片 id，便于直接定位。
     const existing = await this.getCards(bid);
@@ -293,6 +309,8 @@ export const whiteboardService = {
     noteType?: string | null,
     mediaUrl?: string | null,
     transcript?: string | null,
+    /** W1：调用方预先生成的 note id；媒体落盘与入库必须共用同一 id */
+    noteId?: string | null,
   ): Promise<WhiteboardCardNode> {
     if (!isTauri()) throw new Error("newNote requires Tauri runtime");
     return invoke<WhiteboardCardNode>(CMD.whiteboardNewNote, {
@@ -305,6 +323,7 @@ export const whiteboardService = {
       noteType: noteType ?? null,
       mediaUrl: mediaUrl ?? null,
       transcript: transcript ?? null,
+      noteId: noteId ?? null,
     });
   },
 

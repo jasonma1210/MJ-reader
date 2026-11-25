@@ -8,6 +8,7 @@ import type { LocalLlmDeviceStatus } from "../services/localModelService";
 import { logError } from "../utils/logError";
 import { toast } from "../utils/toast";
 import { cn } from "../utils/cn";
+import { CloudCapabilitiesTab } from "../components/ai-config/LocalCapabilitiesTab";
 
 /**
  * AI 配置页（2026-09-04 重构）：
@@ -133,6 +134,8 @@ export function AiConfigPage() {
               </button>
             );
           })}
+          {/* W10：原无入口的本地能力 Tab 重定位为云端语音 / 推理配置入口 */}
+          <CloudCapabilitiesTab />
         </div>
       </div>
     </div>

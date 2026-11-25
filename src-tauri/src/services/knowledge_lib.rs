@@ -99,7 +99,7 @@ async fn gather_source_rows(pool: &SqlitePool) -> AppResult<Vec<SourceRow>> {
     // 1) 笔记（study_notes）。source='ai' 的草稿态也纳入索引——AI 摘要是用户采纳的知识载体。
     let sn = sqlx::query(
         "SELECT id, book_id, COALESCE(title, ''), content, COALESCE(tags, '[]'), updated_at, deleted_at \
-         FROM study_notes WHERE deleted_at IS NULL",
+         FROM study_notes WHERE deleted_at IS NULL AND tombstone = 0",
     )
     .fetch_all(pool)
     .await?;

@@ -119,7 +119,7 @@ async fn resolve_study_note(pool: &SqlitePool, id: &str) -> AppResult<Card> {
     let row = sqlx::query(
         "SELECT id, book_id, chapter_index, page_index, title, content, tags, \
                 knowledge_node_id, note_type, media_url, created_at, updated_at \
-         FROM study_notes WHERE id = ? AND deleted_at IS NULL",
+         FROM study_notes WHERE id = ? AND deleted_at IS NULL AND tombstone = 0",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -331,7 +331,7 @@ pub struct WhiteboardSummary {
     pub updated_at: i64,
 }
 
-/// WB_LIST：按 scope 返回画布列表
+/// WB_LIST：按 scope 返回画布列表（W1：已归并的墓碑板一律不可见）
 #[tauri::command]
 pub async fn whiteboard_list(
     state: State<'_, AppState>,
@@ -344,7 +344,7 @@ pub async fn whiteboard_list(
                 w.created_at, w.updated_at, \
                 (SELECT COUNT(*) FROM whiteboard_cards c WHERE c.whiteboard_id = w.id AND c.tombstone = 0) AS card_count \
          FROM whiteboards w \
-         WHERE w.scope_type = ? \
+         WHERE w.tombstone = 0 AND w.scope_type = ? \
            AND (? IS NULL OR w.scope_ref = ?) \
          ORDER BY w.updated_at DESC",
     )
@@ -388,7 +388,21 @@ pub async fn whiteboard_save(
     let now = chrono::Utc::now().timestamp();
     let id = match board.id {
         Some(id) if !id.is_empty() => id,
-        _ => Uuid::new_v4().to_string(),
+        _ => {
+            // W1：唯一索引保证每 scope 只有一行活板。旧调用方仍可能「无 id 保存」，
+            // 此时若同 scope 已有活板则复用之，避免 UNIQUE 冲突并防止再生成第二块板。
+            let existing: Option<String> = sqlx::query_scalar(
+                "SELECT id FROM whiteboards \
+                 WHERE tombstone = 0 AND scope_type = ? \
+                   AND COALESCE(scope_ref, '') = COALESCE(?, '') \
+                 ORDER BY updated_at DESC, id ASC LIMIT 1",
+            )
+            .bind(&board.scope_type)
+            .bind(board.scope_ref.as_deref())
+            .fetch_optional(pool)
+            .await?;
+            existing.unwrap_or_else(|| Uuid::new_v4().to_string())
+        }
     };
     let canvas = board.canvas_state.unwrap_or_else(|| "{}".to_string());
     sqlx::query(
@@ -409,6 +423,115 @@ pub async fn whiteboard_save(
     .execute(pool)
     .await?;
     Ok(id)
+}
+
+/// 在事务内按 scope 取唯一「活板」摘要。canonical 由数据库唯一索引 + 本查询保证，
+/// 调用方不得再在前端按创建时间自行挑选。
+async fn load_board_summary(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_type: &str,
+    scope_ref: Option<&str>,
+) -> AppResult<Option<WhiteboardSummary>> {
+    let row = sqlx::query(
+        "SELECT w.id, w.title, w.scope_type, w.scope_ref, w.canvas_state, \
+                w.created_at, w.updated_at, \
+                (SELECT COUNT(*) FROM whiteboard_cards c WHERE c.whiteboard_id = w.id AND c.tombstone = 0) AS card_count \
+         FROM whiteboards w \
+         WHERE w.tombstone = 0 AND w.scope_type = ? \
+           AND COALESCE(w.scope_ref, '') = COALESCE(?, '') \
+         ORDER BY w.updated_at DESC, w.id ASC LIMIT 1",
+    )
+    .bind(scope_type)
+    .bind(scope_ref)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(row.map(|r| WhiteboardSummary {
+        id: r.get("id"),
+        title: r.get("title"),
+        scope_type: r.get("scope_type"),
+        scope_ref: r.try_get("scope_ref").ok(),
+        canvas_state: r.get("canvas_state"),
+        card_count: r.get("card_count"),
+        created_at: r.get("created_at"),
+        updated_at: r.get("updated_at"),
+    }))
+}
+
+/// W1（2026-11-25 数据正确性）：查找或创建画布，下沉为后端原子命令。
+///
+/// 事务内先查活板；若只剩历史归并留下的墓碑板则原地复活（唯一索引不允许同 scope
+/// 另起一行）；否则插入新板。INSERT OR IGNORE + 二次查询兜住并发首启的竞态：
+/// 两个调用并发时只有一个真正写入，另一个拿到同一块 canonical 板。
+#[tauri::command]
+pub async fn whiteboard_get_or_create(
+    state: State<'_, AppState>,
+    scope_type: String,
+    scope_ref: Option<String>,
+    title: String,
+) -> AppResult<WhiteboardSummary> {
+    whiteboard_get_or_create_inner(&*state.db, scope_type, scope_ref, title).await
+}
+
+/// 命令核心逻辑（独立成函数便于 *_tests.rs 直接覆盖，不经 Tauri State 注入）
+pub(crate) async fn whiteboard_get_or_create_inner(
+    pool: &SqlitePool,
+    scope_type: String,
+    scope_ref: Option<String>,
+    title: String,
+) -> AppResult<WhiteboardSummary> {
+    // 索引键用 COALESCE(scope_ref, '')：NULL 与空串必须视为同一作用域。
+    let scope_ref = scope_ref.filter(|s| !s.is_empty());
+    let now = chrono::Utc::now().timestamp();
+    let mut tx = pool.begin().await?;
+
+    if let Some(summary) = load_board_summary(&mut tx, &scope_type, scope_ref.as_deref()).await? {
+        tx.commit().await?;
+        return Ok(summary);
+    }
+
+    let tombstoned: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM whiteboards \
+         WHERE scope_type = ? AND COALESCE(scope_ref, '') = COALESCE(?, '') AND tombstone = 1 \
+         ORDER BY updated_at DESC, id ASC LIMIT 1",
+    )
+    .bind(&scope_type)
+    .bind(scope_ref.as_deref())
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if let Some(id) = tombstoned {
+        sqlx::query("UPDATE whiteboards SET tombstone = 0, updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        let summary = load_board_summary(&mut tx, &scope_type, scope_ref.as_deref())
+            .await?
+            .ok_or_else(|| AppError::General(format!("画布复活失败: {}", id)))?;
+        tx.commit().await?;
+        return Ok(summary);
+    }
+
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT OR IGNORE INTO whiteboards \
+            (id, title, scope_type, scope_ref, canvas_state, created_at, updated_at, tombstone) \
+         VALUES (?, ?, ?, ?, '{}', ?, ?, 0)",
+    )
+    .bind(&id)
+    .bind(&title)
+    .bind(&scope_type)
+    .bind(scope_ref.as_deref())
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    let summary = load_board_summary(&mut tx, &scope_type, scope_ref.as_deref())
+        .await?
+        .ok_or_else(|| AppError::General(format!("画布创建失败: {}", scope_type)))?;
+    tx.commit().await?;
+    Ok(summary)
 }
 
 #[derive(serde::Deserialize)]
@@ -443,7 +566,7 @@ pub async fn whiteboard_add_card(
     // 2026-11-25：去掉 global 兜底建板。旧实现在 board 不存在时静默创建一块
     // scope_type='global' 的板并把卡片挂上去，书作用域查询永远看不到它 ——
     // 用户表现为「点了上板但白板没内容」。改为 fail-closed，由调用方先建板。
-    let board_exists: i64 = sqlx::query("SELECT COUNT(*) FROM whiteboards WHERE id = ?")
+    let board_exists: i64 = sqlx::query("SELECT COUNT(*) FROM whiteboards WHERE id = ? AND tombstone = 0")
         .bind(&whiteboard_id)
         .fetch_one(pool)
         .await?
@@ -477,6 +600,23 @@ pub async fn whiteboard_add_card(
     Ok(node_id)
 }
 
+/// W1：笔记主键解析。优先用显式 id；未传时若媒体文件名已是 UUID 则复用该 id，
+/// 使媒体落盘文件名与入库 id 天然一致（兼容尚未传 noteId 的旧调用方）。
+pub(crate) fn canonical_note_id(explicit: Option<String>, media_url: Option<&str>) -> String {
+    explicit
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            media_url.and_then(|url| {
+                std::path::Path::new(url)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .filter(|s| s.len() == 36 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+                    .map(str::to_string)
+            })
+        })
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
 /// WB_NEW_NOTE（Phase1-2 画布内新建卡片）：在画布内新建一张「便签/笔记」统一卡片。
 /// 一次往返完成：① 落一条 study_notes（note_type=note，source=user）作为卡片真源；
 /// ② 在该画布挂一个节点。返回挂好的节点（含解析后的卡片预览）。
@@ -495,12 +635,14 @@ pub async fn whiteboard_new_note(
     note_type: Option<String>,
     media_url: Option<String>,
     transcript: Option<String>,
+    // W1：调用方预先生成的 note id，媒体落盘文件名与入库 id 必须一致
+    note_id: Option<String>,
 ) -> AppResult<WhiteboardCardNode> {
     let pool = &*state.db;
     let now = chrono::Utc::now().timestamp();
 
     // 与 whiteboard_add_card 一致：board 不存在直接报错，不再静默挂到 global 板。
-    let board_exists: i64 = sqlx::query("SELECT COUNT(*) FROM whiteboards WHERE id = ?")
+    let board_exists: i64 = sqlx::query("SELECT COUNT(*) FROM whiteboards WHERE id = ? AND tombstone = 0")
         .bind(&whiteboard_id)
         .fetch_one(pool)
         .await?
@@ -509,7 +651,7 @@ pub async fn whiteboard_new_note(
         return Err(AppError::General(format!("画布不存在: {}", whiteboard_id)));
     }
 
-    let note_id = Uuid::new_v4().to_string();
+    let note_id = canonical_note_id(note_id, media_url.as_deref());
     let node_id = Uuid::new_v4().to_string();
     let title = if title.is_empty() { "新建便签".to_string() } else { title };
     let note_type = note_type.unwrap_or_else(|| "note".to_string());
@@ -694,7 +836,7 @@ pub async fn whiteboard_delete_card(
 
     if source == "note" {
         let src: Option<String> = sqlx::query_scalar(
-            "SELECT source FROM study_notes WHERE id = ? AND deleted_at IS NULL",
+            "SELECT source FROM study_notes WHERE id = ? AND deleted_at IS NULL AND tombstone = 0",
         )
         .bind(&card_id)
         .fetch_optional(pool)
@@ -711,7 +853,7 @@ pub async fn whiteboard_delete_card(
                 .bind(&card_id)
                 .execute(pool)
                 .await?;
-            sqlx::query("UPDATE study_notes SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
+            sqlx::query("UPDATE study_notes SET deleted_at = ?, tombstone = 1 WHERE id = ? AND deleted_at IS NULL")
                 .bind(now)
                 .bind(&card_id)
                 .execute(pool)

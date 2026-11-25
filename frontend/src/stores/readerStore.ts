@@ -66,6 +66,101 @@ export const LINE_HEIGHT_STEPS = [
   { key: "loose", label: "宽松", value: 2.0 },
 ] as const;
 
+/** 跟随系统深色：系统亮/暗映射到现有背景/前景预设（复用 BG_COLOR_PRESETS，不新增色值）。 */
+export function resolveSystemThemeBgKey(isDark: boolean): string {
+  return isDark ? "dark" : "white";
+}
+
+/**
+ * 按书排版偏好（W2/W4）：字号/字体/行距/段距/对齐/字距跟随具体书籍。
+ * 与全局偏好并存：全局 localStorage 仍是默认值真源，本书有偏好时打开该书覆盖，
+ * 用户在书内调整同时写回本书与全局，保证老用户/无偏好书行为完全不变。
+ *
+ * service 接口为后端 `reader_state.layout_prefs` 命令预留：默认用 localStorage 按
+ * bookId 存储；Rust 命令就绪后调用 setBookLayoutPrefsService 注入实现即可切换通道。
+ */
+export interface BookLayoutPrefs {
+  fontSize: number;
+  fontFamily: FontFamilyKey;
+  lineHeightKey: ReaderState["lineHeightKey"];
+  paraSpacingKey: ReaderState["paraSpacingKey"];
+  textAlign: TextAlign;
+  letterSpacing: number;
+}
+
+/** 后端持久化通道契约（与 Rust 命令一一对应，injectable）。 */
+export interface BookLayoutPrefsService {
+  load(bookId: string): Promise<BookLayoutPrefs | null>;
+  save(bookId: string, prefs: BookLayoutPrefs): Promise<void>;
+}
+
+const BOOK_PREFS_KEY = "mjnexus.reader.bookPrefs.v1";
+
+function readBookPrefsMap(): Record<string, BookLayoutPrefs> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(BOOK_PREFS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, BookLayoutPrefs>) : {};
+  } catch (e) {
+    logError("readerStore.readBookPrefsMap", e);
+    return {};
+  }
+}
+
+function writeBookPrefsMap(map: Record<string, BookLayoutPrefs>): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(BOOK_PREFS_KEY, JSON.stringify(map));
+  } catch (e) {
+    logError("readerStore.writeBookPrefsMap", e);
+  }
+}
+
+const localStorageBookPrefsService: BookLayoutPrefsService = {
+  load: async (bookId) => readBookPrefsMap()[bookId] ?? null,
+  save: async (bookId, prefs) => {
+    writeBookPrefsMap({ ...readBookPrefsMap(), [bookId]: prefs });
+  },
+};
+
+let bookPrefsService: BookLayoutPrefsService = localStorageBookPrefsService;
+
+/** 注入后端实现（reader_state.layout_prefs）；未注入时走 localStorage 按 bookId 存储。 */
+export function setBookLayoutPrefsService(svc: BookLayoutPrefsService): void {
+  bookPrefsService = svc;
+}
+
+/** 同步读取本书偏好：打开书籍时立即套用，不等异步命令回填，避免排版闪跳。 */
+export function loadBookLayoutPrefsSync(bookId: string): BookLayoutPrefs | null {
+  if (!bookId) return null;
+  return readBookPrefsMap()[bookId] ?? null;
+}
+
+function saveBookLayoutPrefsSync(bookId: string, prefs: BookLayoutPrefs): void {
+  if (!bookId) return;
+  writeBookPrefsMap({ ...readBookPrefsMap(), [bookId]: prefs });
+}
+
+function pickBookLayoutPrefs(s: ReaderState): BookLayoutPrefs {
+  return {
+    fontSize: s.fontSize,
+    fontFamily: s.fontFamily,
+    lineHeightKey: s.lineHeightKey,
+    paraSpacingKey: s.paraSpacingKey,
+    textAlign: s.textAlign,
+    letterSpacing: s.letterSpacing,
+  };
+}
+
+function persistBookLayoutFor(s: ReaderState): void {
+  if (!s.bookId) return;
+  const prefs = pickBookLayoutPrefs(s);
+  saveBookLayoutPrefsSync(s.bookId, prefs);
+  void bookPrefsService.save(s.bookId, prefs).catch((e) =>
+    logError("readerStore.bookPrefs.save", e),
+  );
+}
+
 export const PARA_SPACING_STEPS = [
   { key: "tight", label: "紧", value: 0.4 },
   { key: "normal", label: "中", value: 0.8 },
@@ -213,6 +308,8 @@ interface ReaderState {
   textAlign: TextAlign;
   /** 正文字距（em，仅 EPUB 生效） */
   letterSpacing: number;
+  /** 跟随系统深色：开启后根据 prefers-color-scheme 切换到 暗夜/净白 背景预设 */
+  followSystemTheme: boolean;
   /**
    * 内存位置缓存：横竖屏/壳切换导致渲染器重挂载时，用此即时恢复（避免跳回第一页）。
    * 同时镜像到 localStorage——某些 ROM 在旋转时会重建 WebView（JS 状态全丢），
@@ -241,6 +338,9 @@ interface ReaderState {
   setRestMinutes: (v: RestMinutes) => void;
   setTextAlign: (v: TextAlign) => void;
   setLetterSpacing: (v: number) => void;
+  setFollowSystemTheme: (v: boolean) => void;
+  /** 打开书籍时按 bookId 套用本书排版偏好（无偏好则保留全局设置） */
+  loadBookLayoutPrefs: (bookId: string) => void;
   setLastPosition: (p: { bookId: string; fraction: number; cfi?: string } | null) => void;
 }
 
@@ -262,6 +362,7 @@ interface PersistedPrefs {
   restMinutes?: RestMinutes;
   textAlign?: TextAlign;
   letterSpacing?: number;
+  followSystemTheme?: boolean;
   lastPosition?: { bookId: string; fraction: number; cfi?: string } | null;
 }
 
@@ -281,6 +382,7 @@ function loadPersisted(): { prefs: PersistedPrefs; lastPosition: ReaderState["la
       restMinutes: parsed.restMinutes ?? 0,
       textAlign: parsed.textAlign ?? "left",
       letterSpacing: parsed.letterSpacing ?? 0,
+      followSystemTheme: parsed.followSystemTheme ?? false,
     };
     return {
       prefs,
@@ -328,27 +430,35 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   restMinutes: initial.prefs.restMinutes ?? 0,
   textAlign: initial.prefs.textAlign ?? "left",
   letterSpacing: initial.prefs.letterSpacing ?? 0,
+  followSystemTheme: initial.prefs.followSystemTheme ?? false,
   lastPosition: initial.lastPosition,
   pageInfo: null,
-  setBookId: (bookId) => set({ bookId }),
+  setBookId: (bookId) => {
+    set({ bookId });
+    if (bookId) get().loadBookLayoutPrefs(bookId);
+  },
   setProgress: (progress) => set({ progress }),
   setChapter: (chapterTitle) => set({ chapterTitle }),
   setPageInfo: (pageInfo) => set({ pageInfo }),
   setFontSize: (fontSize) => {
     set({ fontSize });
     persistAll(snapshot(get()));
+    persistBookLayoutFor(get());
   },
   setFontFamily: (fontFamily) => {
     set({ fontFamily });
     persistAll(snapshot(get()));
+    persistBookLayoutFor(get());
   },
   setLineHeightKey: (lineHeightKey) => {
     set({ lineHeightKey });
     persistAll(snapshot(get()));
+    persistBookLayoutFor(get());
   },
   setParaSpacingKey: (paraSpacingKey) => {
     set({ paraSpacingKey });
     persistAll(snapshot(get()));
+    persistBookLayoutFor(get());
   },
   setTextColorKey: (textColorKey) => {
     set({ textColorKey });
@@ -395,10 +505,41 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   setTextAlign: (textAlign) => {
     set({ textAlign });
     persistAll(snapshot(get()));
+    persistBookLayoutFor(get());
   },
   setLetterSpacing: (letterSpacing) => {
     set({ letterSpacing });
     persistAll(snapshot(get()));
+    persistBookLayoutFor(get());
+  },
+  setFollowSystemTheme: (followSystemTheme) => {
+    set({ followSystemTheme });
+    persistAll(snapshot(get()));
+  },
+  loadBookLayoutPrefs: (bookId) => {
+    const prefs = loadBookLayoutPrefsSync(bookId);
+    if (!prefs) return;
+    // 只覆盖排版字段，不触碰背景/正文色、位置、视觉模式等全局状态。
+    set({
+      fontSize: prefs.fontSize,
+      fontFamily: prefs.fontFamily,
+      lineHeightKey: prefs.lineHeightKey,
+      paraSpacingKey: prefs.paraSpacingKey,
+      textAlign: prefs.textAlign,
+      letterSpacing: prefs.letterSpacing,
+    });
+    // 后端命令就绪时异步回填一次最新值（localStorage 已同步套用，故无闪跳）。
+    void bookPrefsService.load(bookId).then((remote) => {
+      if (!remote || useReaderStore.getState().bookId !== bookId) return;
+      set({
+        fontSize: remote.fontSize,
+        fontFamily: remote.fontFamily,
+        lineHeightKey: remote.lineHeightKey,
+        paraSpacingKey: remote.paraSpacingKey,
+        textAlign: remote.textAlign,
+        letterSpacing: remote.letterSpacing,
+      });
+    }).catch((e) => logError("readerStore.bookPrefs.load", e));
   },
   setLastPosition: (lastPosition) => {
     persistAll({ ...snapshot(get(), { skipLastPosition: true }), lastPosition });
@@ -426,6 +567,7 @@ function snapshot(
     restMinutes: s.restMinutes,
     textAlign: s.textAlign,
     letterSpacing: s.letterSpacing,
+    followSystemTheme: s.followSystemTheme,
   };
   if (!opts.skipLastPosition) out.lastPosition = s.lastPosition;
   return out;

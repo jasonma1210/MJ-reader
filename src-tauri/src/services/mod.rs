@@ -59,6 +59,10 @@ pub mod device_tier;
 pub mod device_tier_tests;
 // 2026-08-17：LLM 调用取消信号注册表（拆书/AI 分析真实中断，远程 abort + 本地轮询）
 pub mod llm_cancel;
+// W2：chat/stream/TTS/ASR 共用的命名取消令牌（切书/退出会话真实终止请求）
+pub mod ai_cancel;
+#[cfg(test)]
+pub mod ai_cancel_tests;
 // v3.0（3-Tab IA 重构）：局域网文件服务器服务（axum HTTP + QR 码 + 局域网 IP 探测）
 pub mod lan_file_server;
 #[cfg(test)]
@@ -76,3 +80,19 @@ pub mod model_hub;
 pub mod model_hub_tests;
 // 2026-09-04：下载保活（Android PARTIAL_WAKE_LOCK，锁屏黑屏后下载继续；其余平台 no-op）
 pub mod download_wakelock;
+// W1（2026-11-25 数据正确性）：sha256 manifest 生成/校验（8MB 分块，失败隔离）
+pub mod file_integrity;
+#[cfg(test)]
+pub mod file_integrity_tests;
+// W2（2026-11-25）：低内存告警统一入口（Android onLowMemory / iOS didReceiveMemoryWarning）
+pub mod memory_guard;
+#[cfg(test)]
+pub mod memory_guard_tests;
+// W2：covers/ 与 note_media/ 按设备档位容量配额 + LRU 清理
+pub mod media_quota;
+#[cfg(test)]
+pub mod media_quota_tests;
+// W7（2026-11-25）：FSRS-4.5 调度纯函数（与 SM-2 字段分离，可回滚）
+pub mod fsrs;
+#[cfg(test)]
+pub mod fsrs_tests;

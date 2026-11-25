@@ -53,11 +53,23 @@ pub struct TtsVoiceInfo {
 }
 
 /// 归一化语速：前端 0.5..2.0 × 转为 Edge SSML 相对百分比，如 1.0 → "+0%"，1.5 → "+50%"。
-fn rate_to_ssml_percent(rate: f64) -> String {
+pub(crate) fn rate_to_ssml_percent(rate: f64) -> String {
     let pct = ((rate - 1.0) * 100.0).round() as i32;
     let pct = pct.clamp(-100, 100);
     let sign = if pct >= 0 { "+" } else { "" };
     format!("{sign}{pct}%")
+}
+
+/// 归一化音高：前端倍率 0.5..2.0（1.0 = 原调）→ Edge SSML 相对 Hz 偏移，
+/// 例如 1.2 → "+20Hz"、0.8 → "-20Hz"，钳制 ±100Hz。
+/// edge-tts-rust 的 SpeakOptions.pitch 只接受带 Hz 后缀的有符号值并直接写入
+/// `<voice><prosody pitch='…' rate='…' volume='…'>`，因此这里必须产出 Hz 字符串。
+pub(crate) fn pitch_to_ssml_hz(pitch: f64) -> String {
+    let hz = ((pitch - 1.0) * 100.0).round() as i32;
+    // 钳制最终 Hz（而非输入倍率）：Edge 只接受 ±100Hz 以内的相对音高。
+    let hz = hz.clamp(-100, 100);
+    let sign = if hz >= 0 { "+" } else { "" };
+    format!("{sign}{hz}Hz")
 }
 
 /// 24kHz 单声道 MP3 输出格式（与旧 crate 行为一致，前端 AudioContext 可直接解码）。
@@ -65,7 +77,13 @@ const OUTPUT_FORMAT_MP3: &str = "audio-24khz-48kbitrate-mono-mp3";
 
 /// 便利函子：将前端语速 + 文本合成一段 MP3，返回全部音频字节。
 /// `lang` 参数保留仅为兼容对外命令签名；新 crate 从 voice 短名自行解析地域，无需显式传 lang。
-async fn synthesize_mp3(text: &str, voice: &str, rate_percent: &str, _lang: &str) -> AppResult<Vec<u8>> {
+async fn synthesize_mp3(
+    text: &str,
+    voice: &str,
+    rate_percent: &str,
+    pitch_hz: &str,
+    _lang: &str,
+) -> AppResult<Vec<u8>> {
     let client = EdgeTtsClient::new()
         .map_err(|e| crate::error::AppError::General(format!("Edge TTS 客户端初始化失败: {e}")))?;
     let result = client
@@ -74,6 +92,7 @@ async fn synthesize_mp3(text: &str, voice: &str, rate_percent: &str, _lang: &str
             SpeakOptions {
                 voice: voice.to_string(),
                 rate: rate_percent.to_string(),
+                pitch: pitch_hz.to_string(),
                 output_format: OUTPUT_FORMAT_MP3.to_string(),
                 ..SpeakOptions::default()
             },
@@ -97,19 +116,22 @@ pub async fn tts_synthesize(
     voice: String,
     rate: f64,
     lang: String,
+    // W4/W1：可选音高倍率（0.5..2.0，缺省 1.0）；Option 保证旧调用方四参签名兼容
+    pitch: Option<f64>,
 ) -> AppResult<Vec<u8>> {
     // 单次合成约限 4KB，超出由前端按句/块切分
     if text.is_empty() {
         return Err(crate::error::AppError::General("待合成文本为空".to_string()));
     }
     let rate_str = rate_to_ssml_percent(rate);
+    let pitch_str = pitch_to_ssml_hz(pitch.unwrap_or(1.0));
     let lang_norm = if lang.is_empty() {
         // voice 短名自带 locale（如 "zh-CN-XiaoxiaoNeural"），前缀取前 5 字符即地域标签
         voice.get(..5).unwrap_or("zh-CN").to_string()
     } else {
         lang
     };
-    synthesize_mp3(&text, &voice, &rate_str, lang_norm.trim()).await
+    synthesize_mp3(&text, &voice, &rate_str, &pitch_str, lang_norm.trim()).await
 }
 
 /// 返回内置可选音色清单（确定性，离线可用）。

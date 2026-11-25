@@ -51,6 +51,8 @@ export interface TtsEngineState {
   isPaused: boolean;
   currentSentenceIndex: number;
   rate: number;
+  /** 音高倍率 0.5..2.0（1.0 = 原调），W4：speechSynthesis 与 Edge SSML 均生效。 */
+  pitch: number;
   voice: string;
   /** 当前朗读归属；无朗读时为 null。 */
   owner: TtsOwner | null;
@@ -182,6 +184,7 @@ const state: TtsEngineState = {
   isPaused: false,
   currentSentenceIndex: -1,
   rate: 1.0,
+  pitch: 1.0,
   voice: "",
   owner: null,
 };
@@ -207,6 +210,9 @@ const prefs: TtsPrefs = loadPrefs();
 const voiceRef: { current: string } = { current: prefs.voiceURI || DEFAULT_VOICE };
 const langRef: { current: string } = { current: prefs.lang || "zh-CN" };
 const rateRef: { current: number } = { current: typeof prefs.rate === "number" ? prefs.rate : 1 };
+const pitchRef: { current: number } = {
+  current: typeof prefs.pitch === "number" && prefs.pitch > 0 ? Math.min(2, Math.max(0.5, prefs.pitch)) : 1,
+};
 const stopRequestedRef: { current: boolean } = { current: false };
 
 const onSentenceStartRef: { current: ((s: TTSSentence) => void) | undefined } = { current: undefined };
@@ -222,6 +228,7 @@ const isSupported = isEdgeSupported || isSpeechSupported;
 
 // 初始化状态快照
 state.rate = rateRef.current;
+state.pitch = pitchRef.current;
 state.voice = voiceRef.current;
 
 function emit(): void {
@@ -419,6 +426,8 @@ function speakSentence(index: number, currentRate: number): void {
   const utterance = new SpeechSynthesisUtterance(sentence.text);
   utterance.lang = "zh-CN";
   utterance.rate = currentRate;
+  // W4：系统语音降级链路同样应用音高（SpeechSynthesisUtterance.pitch 取值 0..2）
+  utterance.pitch = pitchRef.current;
   utterance.onend = () => {
     if (stopRequestedRef.current) return;
     const next = index + 1;
@@ -450,7 +459,7 @@ async function playEdge(startIndex: number, currentRate: number): Promise<void> 
   const synthAndPlay = (s: TTSSentence, rate: number): Promise<boolean> => {
     if (stopRequestedRef.current) return Promise.resolve(false);
     return ttsService
-      .synthesize(s.text, voiceRef.current, rate, langRef.current)
+      .synthesize(s.text, voiceRef.current, rate, langRef.current, pitchRef.current)
       .then((mp3) => {
         if (stopRequestedRef.current) return false;
         return ctx
@@ -682,6 +691,31 @@ export function setRateTts(newRate: number): void {
     void playEdge(cur, newRate);
   } else if (isSpeechSupported && typeof window !== "undefined" && window.speechSynthesis) {
     speakSentence(state.currentSentenceIndex, newRate);
+  }
+}
+
+/**
+ * W4：设置音高倍率（0.5..2.0，1.0 = 原调）并持久化。
+ * - speechSynthesis：下一句起写入 utterance.pitch；
+ * - Edge：随 synthesize 第 5 参传到后端，落入 SSML `<voice><prosody pitch='±NHz'>`。
+ * 播放中变更时重影当前句，使新音高立即生效（与 setRateTts 行为一致）。
+ */
+export function setPitchTts(newPitch: number): void {
+  if (!Number.isFinite(newPitch)) return;
+  const pitch = Math.min(2, Math.max(0.5, newPitch));
+  pitchRef.current = pitch;
+  state.pitch = pitch;
+  prefs.pitch = pitch;
+  savePrefs(prefs);
+  emit();
+  if (!state.isPlaying || state.isPaused || state.currentSentenceIndex < 0) return;
+  if (engine === "edge") {
+    stopRequestedRef.current = false;
+    const cur = state.currentSentenceIndex;
+    releasePlayback();
+    void playEdge(cur, rateRef.current);
+  } else if (isSpeechSupported && typeof window !== "undefined" && window.speechSynthesis) {
+    speakSentence(state.currentSentenceIndex, rateRef.current);
   }
 }
 

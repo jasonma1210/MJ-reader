@@ -7,7 +7,9 @@ import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 import { Sheet } from "../components/ui/Sheet";
 import { EmptyState, LoadingState, ErrorState } from "../components/common/states/index";
+import { MobileSheet } from "../components/common/MobileSheet";
 import { SubBackHeader } from "../components/shell/SubBackHeader";
+import { useBreakpoint } from "../hooks/useLayoutMode";
 import { errMsg, toast } from "../utils/toast";
 import { cn } from "../utils/cn";
 import {
@@ -174,6 +176,9 @@ function DraftCard({
   onSaved: () => Promise<void>;
 }) {
   const { t } = useTranslation();
+  // W8 端侧分级：手机竖屏把草稿的导出/删除等次要操作收进更多抽屉。
+  const { isPhone, isLandscape } = useBreakpoint();
+  const phonePortrait = isPhone && !isLandscape;
   const [content, setContent] = useState(draft.finalContent);
   const [showEdit, setShowEdit] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -202,7 +207,7 @@ function DraftCard({
             {t(`output.scope.${draft.sourceScope}`)}
           </span>
         </div>
-        <div className="flex shrink-0 gap-1">
+        <MobileSheet title={t("output.drafts")} inlineClassName="shrink-0 gap-1">
           <Button size="sm" variant="ghost" onClick={onExportMd} iconLeft={<Download className="h-4 w-4" />}>
             MD
           </Button>
@@ -210,7 +215,7 @@ function DraftCard({
             SVG
           </Button>
           <Button size="sm" variant="ghost" iconLeft={<Trash2 className="h-4 w-4" />} onClick={onDelete} />
-        </div>
+        </MobileSheet>
       </div>
 
       {showEdit ? (
@@ -218,7 +223,7 @@ function DraftCard({
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            rows={8}
+            rows={phonePortrait ? 6 : 8}
             className="h-auto resize-y rounded-[var(--radius-md)] border border-line bg-paper p-3 text-sm text-ink outline-none focus:border-accent"
           />
           <div className="flex justify-end gap-2">
