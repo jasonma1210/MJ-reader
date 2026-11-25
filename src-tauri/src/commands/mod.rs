@@ -26,6 +26,10 @@ pub mod ai_usage_tests;
 pub mod learning;
 #[cfg(test)]
 pub mod learning_tests;
+// 读后记忆系统（2026-11-25）：复习事件埋点（本地表，绝不上传）
+pub mod review_events;
+#[cfg(test)]
+pub mod review_events_tests;
 // W10（2026-11-25）：白板卡→图谱同步 / 知识包开放格式 / BYO 同步
 pub mod graph_sync;
 #[cfg(test)]
@@ -48,6 +52,8 @@ pub mod anki;
 pub mod book;
 // v1.1.0 P0.2 实现：卡片轴心架构 — 卡片主表 CRUD + 统一双向链接管理
 pub mod card;
+#[cfg(test)]
+pub mod flashcard_draft_tests;
 pub mod directory;
 #[cfg(test)]
 pub mod directory_tests;

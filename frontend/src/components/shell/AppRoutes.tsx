@@ -30,6 +30,7 @@ import { LearningPathPage } from "../../routes/LearningPathPage";
 import { OutputPage } from "../../routes/OutputPage";
 import { KnowledgePackPage } from "../../routes/KnowledgePackPage";
 import { ReadingReportPage } from "../../routes/ReadingReportPage";
+import { CardConfirmPage } from "../../routes/cards/CardConfirmPage";
 
 /**
  * S4-4.3 路由级分包：体积最大的四个页面（阅读器 / AI 中枢 / 知识图谱 / 白板）
@@ -105,6 +106,8 @@ export function AppRoutes() {
         <Route path="/ai-config/ondevice" element={<OnDevicePage />} />
         <Route path="/ai-config/ollama" element={<OllamaPage />} />
         <Route path="/review" element={<ReviewFlashcardsPage />} />
+        {/* 读后记忆：成卡核验入口（高亮制卡 / 复盘「核验入库」共用） */}
+        <Route path="/cards/new" element={<CardConfirmPage />} />
         {/* 阅读器 & 工作区（工作区收敛为单一入口：阅读器内横屏侧栏/竖屏 Sheet，无独立全屏路由） */}
         <Route path="/reader/:bookId" element={<ReaderPage />} />
         <Route path="/notes" element={<NotesLibraryPage />} />

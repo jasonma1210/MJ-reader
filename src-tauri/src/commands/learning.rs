@@ -10,6 +10,9 @@ use crate::error::AppResult;
 use crate::services::fsrs::{
     next_state, rating_to_grade, sanitize_params, FsrsParams, FsrsState,
 };
+use crate::services::review_budget::{
+    compute_review_budget, is_manual_goal, ReviewBudget, ReviewBudgetInput,
+};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -162,6 +165,34 @@ pub(crate) async fn load_study_preferences(pool: &SqlitePool) -> AppResult<Study
         .as_deref()
         .and_then(|s| serde_json::from_str::<StudyPreferences>(s).ok())
         .unwrap_or_default())
+}
+
+/// 读后记忆系统：今日复习预算（计划量 + 自动调压原因）。
+/// 与统一复习队列共用同一套「今天及逾期」到期口径，避免两处数字打架。
+#[tauri::command]
+pub async fn get_review_budget(state: State<'_, AppState>) -> AppResult<ReviewBudget> {
+    let prefs = load_study_preferences(&*state.db).await?;
+    let due_count = due_count_today(&*state.db).await?;
+    Ok(compute_review_budget(ReviewBudgetInput {
+        available_minutes: prefs.daily_goal_minutes,
+        due_count,
+        daily_goal_cards: prefs.daily_goal_cards,
+        manual_goal: is_manual_goal(prefs.daily_goal_cards, prefs.daily_goal_minutes),
+    }))
+}
+
+/// 今天及逾期的待复习卡数（未排期视为到期）。
+pub(crate) async fn due_count_today(pool: &SqlitePool) -> AppResult<i64> {
+    let now = chrono::Utc::now().timestamp();
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM cards c \
+         LEFT JOIN card_scheduling s ON s.card_id = c.id \
+         WHERE c.deleted_at IS NULL AND (s.due_date IS NULL OR s.due_date <= ?)",
+    )
+    .bind(now)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
 }
 
 pub(crate) async fn set_preferences(

@@ -7,7 +7,7 @@ mod services;
 // 在真机上脱离 Tauri 上下文做端到端验证。生产路径仍走 commands::ocr 的 AppHandle 版本。
 pub use crate::services::ocr_pp::pp_ocr_recognize_from_dir;
 
-use commands::{ai_core, ai_chat, ai_analysis, ai_quiz, ai_breakdown, ai_extended, ai_usage, anki, annotation, backup, book, book_fts, bookmark, byo_sync, card, chapter_check, cloud_asr, comparison, directory, export, file, file_integrity, graph_sync, knowledge_graph, know_agent, knowledge_node, knowledge_pack, lan_file_server, learning, learning_path, mask, mastery, media_quota, memory, metrics, mindmap_node, ocr, output, practice, quiz_link, reading, review, settings, stats, study_note, study_set, suggestions, sync as sync_commands, tags, teaching, tts, voice_coach, whiteboard};
+use commands::{ai_core, ai_chat, ai_analysis, ai_quiz, ai_breakdown, ai_extended, ai_usage, anki, annotation, backup, book, book_fts, bookmark, byo_sync, card, chapter_check, cloud_asr, comparison, directory, export, file, file_integrity, graph_sync, knowledge_graph, know_agent, knowledge_node, knowledge_pack, lan_file_server, learning, learning_path, mask, mastery, media_quota, memory, metrics, mindmap_node, ocr, output, practice, quiz_link, reading, review, review_events, settings, stats, study_note, study_set, suggestions, sync as sync_commands, tags, teaching, tts, voice_coach, whiteboard};
 // v3.0（3-Tab IA 重构）：端侧本地模型命令——2026-09-04 起搜索/下载/管理全平台注册，
 // 仅推理/卸载命令保留 llamacpp 门控（见 invoke_handler 内标注）。
 use commands::local_model;
@@ -494,6 +494,8 @@ pub fn run() {
             card::list_cards_by_book,
             card::list_cards_by_study_set,
             card::create_card_link,
+            // 读后记忆系统：成卡草稿（草稿态，不写 cards 表）
+            card::generate_flashcard_drafts,
             card::list_card_links,
             card::list_card_links_by_book,
                         // [S4-4.7 下线] card::list_reverse_links,
@@ -520,6 +522,14 @@ pub fn run() {
             learning::set_review_schedule_config,
             learning::get_study_preferences,
             learning::set_study_preferences,
+            // 读后记忆系统：今日复习预算（自动调压原因可见化）
+            learning::get_review_budget,
+            // 读后记忆系统：复习事件埋点（本地表，绝不上传）+ 调度查询
+            review_events::start_review_session,
+            review_events::record_card_revealed,
+            review_events::record_card_rated,
+            review_events::record_card_issue,
+            review_events::get_card_schedule,
             // v1.1.0 P0.2 实现：学习集容器（Study Set）CRUD
             study_set::create_study_set,
             study_set::list_study_sets,

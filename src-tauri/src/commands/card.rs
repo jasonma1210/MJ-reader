@@ -8,6 +8,8 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+use crate::services::flashcard_draft::{build_prompt, parse_drafts, DraftSource, FlashcardDraft};
+use crate::services::nonstream_chat::{openai_chat, system, user};
 use crate::services::title_link_scanner;
 use crate::AppState;
 
@@ -816,6 +818,109 @@ pub(crate) async fn list_due_cards_by_book_inner(
     .fetch_all(db)
     .await?;
     Ok(rows.iter().map(row_to_card).collect())
+}
+
+// ===== 读后记忆系统（2026-11-25）：成卡确认页的 QA 草稿 =====
+
+/// 读取选中高亮文本 + CFI + 章节 + 书名，作为提示词素材。
+/// highlights 表没有 page_index 列（历史口径），因此草稿 pageIndex 保持 null，绝不造假。
+pub(crate) async fn load_draft_sources(
+    db: &SqlitePool,
+    book_id: &str,
+    highlight_ids: &[String],
+) -> AppResult<Vec<DraftSource>> {
+    let book_title: Option<String> =
+        sqlx::query_scalar("SELECT title FROM books WHERE id = ? AND deleted_at IS NULL")
+            .bind(book_id)
+            .fetch_optional(db)
+            .await?;
+    let book_title = book_title.ok_or_else(|| AppError::General("书籍不存在".into()))?;
+
+    let mut ids: Vec<String> = Vec::new();
+    for id in highlight_ids {
+        let id = id.trim();
+        if !id.is_empty() && !ids.iter().any(|x| x == id) {
+            ids.push(id.to_string());
+        }
+    }
+    if ids.is_empty() {
+        return Err(AppError::General("未选择任何高亮，无法生成卡片".into()));
+    }
+    if ids.len() > 5 {
+        log::warn!("[card] 成卡草稿一次最多处理 5 条高亮，截断多余 {} 条", ids.len() - 5);
+        ids.truncate(5);
+    }
+
+    let rows = sqlx::query(
+        "SELECT id, selected_text, cfi_range, chapter_index FROM highlights \
+         WHERE book_id = ? AND id IN (SELECT value FROM json_each(?)) \
+           AND deleted_at IS NULL AND tombstone = 0",
+    )
+    .bind(book_id)
+    .bind(serde_json::to_string(&ids)?)
+    .fetch_all(db)
+    .await?;
+
+    let mut sources = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let selected_text: String = row.try_get("selected_text").unwrap_or_default();
+        if selected_text.trim().is_empty() {
+            continue;
+        }
+        let chapter_index: i64 = row.try_get("chapter_index").unwrap_or(0);
+        let chapter_title: Option<String> =
+            sqlx::query_scalar("SELECT chapter_title FROM book_breakdowns WHERE book_id = ? AND chapter_index = ? LIMIT 1")
+                .bind(book_id)
+                .bind(chapter_index)
+                .fetch_optional(db)
+                .await?;
+        sources.push(DraftSource {
+            highlight_id: row.try_get("id").unwrap_or_default(),
+            selected_text,
+            cfi_range: row.try_get("cfi_range").ok().flatten(),
+            chapter_index,
+            chapter_title,
+            book_title: book_title.clone(),
+        });
+    }
+    if sources.is_empty() {
+        return Err(AppError::General(
+            "所选高亮为空或已删除，无法生成卡片".into(),
+        ));
+    }
+    Ok(sources)
+}
+
+/// 读后记忆系统：AI 成卡草稿。只返回结果，不写 cards 表（用户核验后才入库）。
+#[tauri::command]
+pub async fn generate_flashcard_drafts(
+    book_id: String,
+    highlight_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<FlashcardDraft>> {
+    generate_flashcard_drafts_inner(&*state.db, &book_id, &highlight_ids).await
+}
+
+pub(crate) async fn generate_flashcard_drafts_inner(
+    db: &SqlitePool,
+    book_id: &str,
+    highlight_ids: &[String],
+) -> AppResult<Vec<FlashcardDraft>> {
+    let sources = load_draft_sources(db, book_id, highlight_ids).await?;
+    let provider = crate::commands::ai_core::read_active_provider(db)
+        .await
+        .as_str()
+        .to_string();
+    let prompt = build_prompt(&sources[0].book_title, &sources);
+    let raw = openai_chat(
+        db,
+        vec![system("你是严谨的中文知识整理助手"), user(&prompt)],
+        1400,
+        0.2,
+    )
+    .await
+    .map_err(|e| AppError::General(format!("AI 成卡草稿生成失败：{}", e)))?;
+    parse_drafts(&raw, &sources, book_id, &provider)
 }
 
 // 显式导入 AppError 以满足 clippy 未使用导入检查（实际由 ? 操作符自动转换）

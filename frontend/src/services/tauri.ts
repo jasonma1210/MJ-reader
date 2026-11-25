@@ -47,6 +47,8 @@ export const CMD = {
   aiRelatedKnowledge: "ai_related_knowledge",
   // ai_quiz / card / study_set
   createCard: "create_card",
+  // 读后记忆系统：AI 成卡草稿（草稿态，不写 cards 表）
+  generateFlashcardDrafts: "generate_flashcard_drafts",
   recordCardReview: "record_card_review",
   listCardsByBook: "list_cards_by_book",
   listCardsByStudySet: "list_cards_by_study_set",
@@ -64,12 +66,21 @@ export const CMD = {
   setReviewScheduleConfig: "set_review_schedule_config",
   getStudyPreferences: "get_study_preferences",
   setStudyPreferences: "set_study_preferences",
+  // 读后记忆系统：今日复习预算（自动调压原因）
+  getReviewBudget: "get_review_budget",
+  // 读后记忆系统：复习事件埋点（本地，绝不上传）
+  startReviewSession: "start_review_session",
+  recordCardRevealed: "record_card_revealed",
+  recordCardRated: "record_card_rated",
+  recordCardIssue: "record_card_issue",
+  getCardSchedule: "get_card_schedule",
   createStudySet: "create_study_set",
   getStudySetByBook: "get_study_set_by_book",
   addBookToStudySet: "add_book_to_study_set",
   addCardToStudySet: "add_card_to_study_set",
   listStudySets: "list_study_sets",
   // review / stats
+  trackMetric: "track_metric",
   buildReviewSnapshot: "build_review_snapshot",
   generateReview: "generate_review",
   listReviewHistory: "list_review_history",

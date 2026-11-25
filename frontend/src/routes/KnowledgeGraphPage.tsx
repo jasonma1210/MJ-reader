@@ -34,20 +34,24 @@ import {
   type GraphNode,
   type KnowledgeGraph,
 } from "../services/graphService";
-import { cardService } from "../services/cardService";
 import { tagService, type TagNode } from "../services/tagService";
 import { whiteboardService } from "../services/whiteboardService";
 import { useJumpToSource } from "../hooks/useJumpToSource";
 import { logError } from "../utils/logError";
 import { toast, errMsg } from "../utils/toast";
+import { RecallPanel } from "../components/learn/RecallPanel";
 
-/** 自定义图谱节点：极简黑灰样式，跟随主题 token */
+type NodeFocus = "self" | "neighbor" | "dim";
+
+/** 自定义图谱节点：极简黑灰样式，跟随主题 token；召回时高亮选中点与一跳邻居，其余淡出 */
 function KgNode({ data, selected }: NodeProps<Node<KgNodeData>>) {
   return (
     <div
       className={cn(
-        "select-none rounded-[var(--radius-md)] border bg-paper px-3 py-1.5 text-xs font-medium text-ink shadow-sm",
-        selected ? "border-accent ring-2 ring-accent/30" : "border-line",
+        "select-none rounded-[var(--radius-md)] border bg-paper px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition-opacity",
+        selected || data.focus === "self" ? "border-accent ring-2 ring-accent/30" : "border-line",
+        data.focus === "neighbor" && "border-accent/60",
+        data.focus === "dim" && "opacity-25",
       )}
     >
       <div className="max-w-40 truncate">{data.label}</div>
@@ -59,6 +63,7 @@ interface KgNodeData {
   [key: string]: unknown;
   label: string;
   degree: number;
+  focus?: NodeFocus;
 }
 
 const nodeTypes = { kgNode: KgNode };
@@ -147,8 +152,9 @@ export function KnowledgeGraphPage() {
   // W6：标签筛选（传给后端 knowledge_graph_get 的 tagFilter）
   const [tagFilter, setTagFilter] = useState("");
   const [tags, setTags] = useState<string[]>([]);
-  // W6：选中节点用于「导为白板卡」
+  // W6：选中节点用于「导为白板卡」；召回面板也以它为当前节点
   const [selectedNodeId, setSelectedNodeId] = useState("");
+  const [recallOpen, setRecallOpen] = useState(false);
   const [exportingBoard, setExportingBoard] = useState(false);
   /** 视图切换：力导向图谱 / 层级脑图（同一份图谱数据，不复活独立脑图页） */
   const [view, setView] = useState<"graph" | "mindmap">("graph");
@@ -287,32 +293,51 @@ export function KnowledgeGraphPage() {
     setRfNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
 
-  // ===== 节点回跳原文（忆→读 闭环）：节点 → 关联卡 cfiRange → 阅读器定位 =====
+  // 召回高亮：选中节点 + 一跳邻居聚焦，其余淡出；不新增依赖，仅派生 ReactFlow 节点/边数据。
+  const focusIds = useMemo(() => {
+    if (!selectedNodeId) return null;
+    const ids = new Set<string>([selectedNodeId]);
+    for (const e of graph?.edges ?? []) {
+      if (e.source === selectedNodeId) ids.add(e.target);
+      else if (e.target === selectedNodeId) ids.add(e.source);
+    }
+    return ids;
+  }, [selectedNodeId, graph]);
+
+  const displayNodes = useMemo(() => {
+    if (!focusIds) return rfNodes;
+    return rfNodes.map((n) => ({
+      ...n,
+      data: {
+        ...n.data,
+        focus: (n.id === selectedNodeId
+          ? "self"
+          : focusIds.has(n.id)
+            ? "neighbor"
+            : "dim") as NodeFocus,
+      },
+    }));
+  }, [rfNodes, focusIds, selectedNodeId]);
+
+  const displayEdges = useMemo(() => {
+    if (!selectedNodeId) return rfEdges;
+    return rfEdges.map((e) => {
+      const incident = e.source === selectedNodeId || e.target === selectedNodeId;
+      const opacity = incident ? 1 : 0.12;
+      return {
+        ...e,
+        style: { ...e.style, opacity },
+        labelStyle: { ...e.labelStyle, opacity },
+      };
+    });
+  }, [rfEdges, selectedNodeId]);
+
+  // ===== 节点点击：选中并打开召回面板（忆→召回，不再直接跳原文） =====
   const jumpToSource = useJumpToSource();
-  const onNodeClick = useCallback(
-    (_: ReactMouseEvent, node: Node) => {
-      const real = nodeOptions.find((n) => n.id === node.id);
-      if (!real || !real.bookId) return;
-      void (async () => {
-        // S3-3.1：优先用后端直接带出的 cfiRange；旧数据/无锚点时二次查询或降级跳书
-        let cfi: string | null = real.cfiRange ?? null;
-        if (!cfi) {
-          const cardId = real.relatedCardIds?.[0];
-          if (cardId) {
-            try {
-              const cards = await cardService.listByBook(real.bookId);
-              cfi = cards.find((c) => c.id === cardId)?.cfiRange ?? null;
-            } catch (e) {
-              logError("KnowledgeGraphPage.jump", e);
-            }
-          }
-        }
-        // 有 cfi 精确定位；否则仅回到该书（阅读器恢复上次进度）
-        jumpToSource(real.bookId, cfi);
-      })();
-    },
-    [nodeOptions, jumpToSource],
-  );
+  const onNodeClick = useCallback((_: ReactMouseEvent, node: Node) => {
+    setSelectedNodeId(node.id);
+    setRecallOpen(true);
+  }, []);
 
   const saveLayout = useCallback(() => {
     const layoutJson = JSON.stringify(
@@ -359,33 +384,44 @@ export function KnowledgeGraphPage() {
     [nodeOptions, load, t, tagFilter],
   );
 
-  // W6 图谱 → 白板：把选中知识点作为 knowledge 卡挂到该书画布并定位。
-  const exportToBoard = async () => {
-    const real = nodeOptions.find((n) => n.id === selectedNodeId);
-    if (!real || !real.bookId) {
-      toast(t("graph.boardExportNoBook"));
-      return;
-    }
-    setExportingBoard(true);
-    try {
-      const added = await whiteboardService.addToBookBoard(
-        real.bookId,
-        "knowledge",
-        real.id,
-      );
-      if (!added) {
-        toast(t("graph.boardExportFailed"));
+  // W6 图谱 → 白板：把指定知识点作为 knowledge 卡挂到该书画布并定位。
+  // 抽出为函数，供操作条与召回面板复用同一份导出逻辑。
+  const exportNodeToBoard = useCallback(
+    async (nodeId: string) => {
+      const real = nodeOptions.find((n) => n.id === nodeId);
+      if (!real || !real.bookId) {
+        toast(t("graph.boardExportNoBook"));
         return;
       }
-      toast(t("graph.boardExportDone"));
-      navigate(`/whiteboard/${real.bookId}?focus=${encodeURIComponent(added.cardId)}`);
-    } catch (e) {
-      logError("KnowledgeGraphPage.exportToBoard", e);
-      toast(errMsg(e));
-    } finally {
-      setExportingBoard(false);
-    }
-  };
+      setExportingBoard(true);
+      try {
+        const added = await whiteboardService.addToBookBoard(real.bookId, "knowledge", real.id);
+        if (!added) {
+          toast(t("graph.boardExportFailed"));
+          return;
+        }
+        toast(t("graph.boardExportDone"));
+        navigate(`/whiteboard/${real.bookId}?focus=${encodeURIComponent(added.cardId)}`);
+      } catch (e) {
+        logError("KnowledgeGraphPage.exportToBoard", e);
+        toast(errMsg(e));
+      } finally {
+        setExportingBoard(false);
+      }
+    },
+    [nodeOptions, t, navigate],
+  );
+
+  const selectedNode = useMemo(
+    () => nodeOptions.find((n) => n.id === selectedNodeId) ?? null,
+    [nodeOptions, selectedNodeId],
+  );
+  // 图谱节点当前无 note 字段；若后端后续带出则原样展示，不造数。
+  const selectedNote = useMemo(() => {
+    if (!selectedNode) return null;
+    const raw = selectedNode as GraphNode & { note?: unknown };
+    return typeof raw.note === "string" ? raw.note : null;
+  }, [selectedNode]);
 
   return (
     <div className="flex h-full flex-col overflow-auto bg-paper pb-4 pt-0">
@@ -493,7 +529,7 @@ export function KnowledgeGraphPage() {
             variant="secondary"
             iconLeft={<FilePlus2 className="h-4 w-4" />}
             disabled={!selectedNodeId || exportingBoard}
-            onClick={() => void exportToBoard()}
+            onClick={() => void exportNodeToBoard(selectedNodeId)}
           >
             {t("graph.exportToBoard")}
           </Button>
@@ -529,13 +565,17 @@ export function KnowledgeGraphPage() {
           </div>
         ) : (
           <ReactFlow
-            nodes={rfNodes}
-            edges={rfEdges}
+            nodes={displayNodes}
+            edges={displayEdges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onEdgeClick={onEdgeClick}
             onNodeClick={onNodeClick}
-            onSelectionChange={({ nodes }) => setSelectedNodeId(nodes[0]?.id ?? "")}
+            onSelectionChange={({ nodes }) => {
+              const id = nodes[0]?.id ?? "";
+              setSelectedNodeId(id);
+              if (!id) setRecallOpen(false);
+            }}
             nodesDraggable
             elementsSelectable
             minZoom={0.15}
@@ -550,6 +590,19 @@ export function KnowledgeGraphPage() {
         )}
       </div>
       </div>
+
+      {recallOpen && selectedNode && (
+        <RecallPanel
+          node={selectedNode}
+          nodes={graph?.nodes ?? []}
+          edges={graph?.edges ?? []}
+          note={selectedNote}
+          exportingBoard={exportingBoard}
+          onClose={() => setRecallOpen(false)}
+          onJumpToSource={jumpToSource}
+          onExportToBoard={(id) => void exportNodeToBoard(id)}
+        />
+      )}
     </div>
   );
 }

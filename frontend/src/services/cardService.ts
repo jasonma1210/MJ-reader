@@ -220,6 +220,40 @@ export const cardService = {
     }
   },
 
+  /**
+   * 读后记忆系统：AI 成卡草稿。失败时不返回占位内容——错误直接抛给页面显示，
+   * 由用户决定是否重试；草稿需核验后才可调用 createCard 入库。
+   */
+  async generateFlashcardDrafts(
+    bookId: string,
+    highlightIds: string[],
+  ): Promise<FlashcardDraft[]> {
+    if (!isTauri()) return [];
+    try {
+      return await invoke<FlashcardDraft[]>(CMD.generateFlashcardDrafts, {
+        bookId,
+        highlightIds,
+      });
+    } catch (e) {
+      logError("cardService.generateFlashcardDrafts", e);
+      throw e;
+    }
+  },
+
+  /**
+   * 读后记忆系统：今日复习预算。
+   * reasonTextKey 是 i18n key（如 reviewBudget.reason.backlogFreeze），前端直接 t()。
+   */
+  async getReviewBudget(): Promise<ReviewBudget | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<ReviewBudget>(CMD.getReviewBudget);
+    } catch (e) {
+      logError("cardService.getReviewBudget", e);
+      return null;
+    }
+  },
+
   async getFsrsParams(): Promise<FsrsParams | null> {
     if (!isTauri()) return null;
     try {
@@ -240,6 +274,23 @@ export const cardService = {
     }
   },
 };
+
+/**
+ * 读后记忆系统：AI 成卡草稿（待核验，不写 cards 表）。
+ * chapter / cfiRange / highlightId / bookId 构成可核验来源锚点。
+ */
+export interface FlashcardDraft {
+  front: string;
+  back: string;
+  chapter: string | null;
+  cfiRange: string | null;
+  pageIndex: number | null;
+  highlightId: string;
+  bookId: string;
+  confidence: number;
+  estimatedTokens: number;
+  provider: string;
+}
 
 export interface ReviewQueueItem {
   cardId: string;
@@ -301,4 +352,15 @@ export interface StudyPreferences {
   reminderEnabled: boolean;
   reminderHour: number;
   reminderMinute: number;
+}
+
+/** 读后记忆系统：今日复习预算（自动调压可见化） */
+export interface ReviewBudget {
+  plannedCount: number;
+  newCardsFrozen: boolean;
+  reasonCode: "time_budget" | "backlog_freeze" | "manual_override" | string;
+  reasonTextKey: string;
+  dueCount: number;
+  availableMinutes: number;
+  dailyGoalCards: number;
 }

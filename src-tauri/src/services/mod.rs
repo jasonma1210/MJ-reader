@@ -96,3 +96,11 @@ pub mod media_quota_tests;
 pub mod fsrs;
 #[cfg(test)]
 pub mod fsrs_tests;
+// 读后记忆系统（2026-11-25）：复习负载预算纯函数（自动调压 + 原因码）
+pub mod review_budget;
+#[cfg(test)]
+pub mod review_budget_tests;
+// 读后记忆系统：成卡草稿解析 / 成本估算纯函数
+pub mod flashcard_draft;
+#[cfg(test)]
+pub mod flashcard_draft_tests;

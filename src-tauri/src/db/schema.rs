@@ -1407,4 +1407,27 @@ CREATE TABLE IF NOT EXISTS knowledge_packs (
     updated_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_kp_subject ON knowledge_packs(subject);
+
+-- ===== 读后记忆系统（2026-11-25）：复习事件埋点（本地表，绝不上传） =====
+-- 隐私边界（设计文档 §7.4）：本表只存 ID / 计数 / 评级 / 耗时 / 枚举码。
+-- 刻意不设原文、答案、笔记、API Key、文件路径等列——从 schema 层杜绝误写入。
+-- 与 card_review_log 同源：审计型数据，不设外键级联，卡片删除后事件仍可追溯。
+CREATE TABLE IF NOT EXISTS review_events (
+    id                     TEXT PRIMARY KEY,
+    event_type             TEXT NOT NULL,
+    session_id             TEXT,
+    card_id                TEXT,
+    book_id                TEXT,
+    rating                 TEXT,
+    wait_ms                INTEGER,
+    latency_ms             INTEGER,
+    source_type            TEXT,
+    answered_before_reveal INTEGER,
+    planned_count          INTEGER,
+    budget_reason          TEXT,
+    created_at             INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_review_events_session ON review_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_review_events_type_time ON review_events(event_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_review_events_card ON review_events(card_id);
 "#;

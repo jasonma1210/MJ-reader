@@ -76,7 +76,7 @@ if (!handlerBlock) {
 console.log("[3/3] 一等路由白名单检查...");
 const WHITELIST = [
   "/", "/ai", "/learn", "/me", "/ai/knowledge",
-  "/reader/:bookId", "/import", "/notes", "/review",
+  "/reader/:bookId", "/import", "/notes", "/review", "/cards/new",
   "/graph", "/labels", "/mastery", "/path", "/output", "/report/:bookId",
   "/whiteboard", "/whiteboard/:bookId",
   "/practice", "/teaching",

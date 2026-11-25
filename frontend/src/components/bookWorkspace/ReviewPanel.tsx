@@ -16,6 +16,7 @@ import { clearWrongQuestions } from "../../services/closedLoopService";
 import { cn } from "../../utils/cn";
 import { EmptyState, LoadingState } from "../../components/common/states";
 import { MobileSheet } from "../../components/common/MobileSheet";
+import { buildCardConfirmPath } from "../learn/flashcardConfirmLogic";
 import { useBreakpoint } from "../../hooks/useLayoutMode";
 import type { Card } from "../../types";
 
@@ -85,7 +86,6 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
     report: Awaited<ReturnType<typeof reviewService.generateReport>>["report"];
   } | null>(null);
   const [showMarkdown, setShowMarkdown] = useState(false);
-  const [cardsAdded, setCardsAdded] = useState(false);
   const [exportingAnki, setExportingAnki] = useState(false);
   const [ankiDone, setAnkiDone] = useState(false);
 
@@ -504,24 +504,14 @@ export function ReviewPanel({ bookId }: { bookId: string }) {
                 <span>{t("workspace.review.memoryCards", { count: report.report.memoryCards.length })}</span>
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={() => {
-                      void Promise.all(
-                        (report.report?.memoryCards ?? []).map((c) =>
-                          cardService.createCard({
-                            bookId,
-                            title: (c.cardFront ?? t("workspace.review.memoryCardFallback")).slice(0, 40),
-                            content: c.cardBack ?? "",
-                            cardType: "qa",
-                          }),
-                        ),
-                      ).then(() => {
-                        setCardsAdded(true);
-                      });
-                    }}
-                    disabled={cardsAdded}
-                    className="rounded-full bg-accent px-3 py-1 text-[10px] font-medium text-accent-fg disabled:opacity-60"
+                    onClick={() =>
+                      navigate(
+                        buildCardConfirmPath({ bookId, highlightIds: [], source: "report" }),
+                      )
+                    }
+                    className="flex min-h-[44px] items-center rounded-full bg-accent px-3 text-[10px] font-semibold text-accent-fg transition active:opacity-80"
                   >
-                    {cardsAdded ? t("workspace.review.addedToReview") : t("workspace.review.addAllToReview")}
+                    {t("cardConfirm.verifyAndStore")}
                   </button>
                   <button
                     onClick={() => void exportAnki()}
