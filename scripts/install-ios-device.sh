@@ -27,11 +27,42 @@ BUNDLE_ID="com.mjnexusreader.app"
 DEV_DIR="/Applications/Xcode.app/Contents/Developer"
 
 PP_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
-PP=$(find "$PP_DIR" -name "*.mobileprovision" -type f 2>/dev/null | head -1 || true)
+# 选择「bundle id 匹配 + 未过期 + 过期时间最晚」的描述文件。
+# 免费 Personal Team 的 profile 只有 7 天有效期；重新生成后目录里会同时存在新旧
+# 多份文件，固定取第一个会签进旧 profile，导致新装包无法延长有效期。
+PP=$(python3 - "$PP_DIR" "$BUNDLE_ID" <<'PY'
+import datetime, glob, os, plistlib, subprocess, sys
+pp_dir, bundle_id = sys.argv[1], sys.argv[2]
+now = datetime.datetime.now(datetime.timezone.utc)
+best = None
+for path in glob.glob(os.path.join(pp_dir, "*.mobileprovision")):
+    try:
+        r = subprocess.run(["security", "cms", "-D", "-i", path],
+                           capture_output=True, check=True)
+        p = plistlib.loads(r.stdout)
+        app_id = p.get("Entitlements", {}).get("application-identifier", "")
+        if bundle_id not in app_id:
+            continue
+        exp = p.get("ExpirationDate")
+        if exp is None:
+            continue
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=datetime.timezone.utc)
+        if exp <= now:
+            continue
+        if best is None or exp > best[0]:
+            best = (exp, path)
+    except Exception:
+        continue
+print(best[1] if best else "")
+PY
+)
 if [ -z "$PP" ]; then
-  echo "未找到描述文件。请先在 Xcode GUI 里给 target 选 Personal Team 并生成 profile。" >&2
+  echo "未找到匹配 ${BUNDLE_ID} 且未过期的描述文件。请在 Xcode GUI 打开 gen/apple/*.xcodeproj，给 target 选 Personal Team 并重新生成 profile。" >&2
   exit 1
 fi
+PP_EXPIRY=$(security cms -D -i "$PP" 2>/dev/null > /tmp/mj-profile-check.plist && /usr/libexec/PlistBuddy -c 'Print :ExpirationDate' /tmp/mj-profile-check.plist 2>/dev/null || true)
+echo "[ios-sign] 使用描述文件: $(basename "$PP") (expiry ${PP_EXPIRY})"
 
 WORK="/tmp/mj-ios-sign-work"
 /bin/rm -rf "$WORK" 2>/dev/null || true
