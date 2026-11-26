@@ -2356,6 +2356,7 @@
       "night": "Night warm dim (21:00–07:00)",
       "warmth": "Warmth",
       "intensity": "Filter intensity",
+      "preview": "Filter preview",
       "disclaimer": "Software filter, not hardware frontlight; dim overlay only, no forced screen-off"
     },
     "rhythm": {
@@ -2568,6 +2569,7 @@
     "noSourceAnchor": "No source anchor — cannot be saved",
     "adoptSelected": "Accept selected",
     "costHint": "Using your {{provider}} key, about {{tokens}} tokens this time",
+    "localFallback": "AI unavailable; created editable drafts from the source text (no tokens used)",
     "byokProvider": "BYOK provider",
     "tokens": "~{{tokens}} tokens",
     "bylineHint": "Billed to your own API key — no markup from us",

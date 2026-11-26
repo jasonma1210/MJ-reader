@@ -177,16 +177,18 @@ export function FlashcardConfirmSheet({
   useEffect(() => {
     if (!open || !bookId) return;
     let alive = true;
+    let all: Highlight[] = [];
+    let ids: string[] = [];
     setLoading(true);
     setFailed(false);
     void (async () => {
       try {
         const passedIds = idsKey.split(",").filter(Boolean);
-        const all = await highlightService.listHighlights(bookId).catch((e) => {
+        all = await highlightService.listHighlights(bookId).catch((e) => {
           logError("FlashcardConfirmSheet.listHighlights", e);
           return [] as Highlight[];
         });
-        const ids = passedIds.length > 0 ? passedIds : all.slice(0, 5).map((h) => h.id);
+        ids = passedIds.length > 0 ? passedIds : all.slice(0, 5).map((h) => h.id);
         // 后端返回扁平草稿数组；provider / estimatedTokens 在每张草稿上，
         // 原文 selectedText 需从高亮列表按 highlightId 回填。
         const drafts = await cardService.generateFlashcardDrafts(bookId, ids);
@@ -214,7 +216,37 @@ export function FlashcardConfirmSheet({
         });
       } catch (e) {
         logError("FlashcardConfirmSheet.load", e);
-        if (alive) setFailed(true);
+        // 免费可用兜底：没有配置 AI / 网络失败时，用原文生成可编辑草稿，
+        // 不让「制卡」直接失败。答案留空由用户填写，来源锚点保持真实，不消耗 token。
+        const localHighlights = all.filter((h) => ids.includes(h.id));
+        if (!alive || localHighlights.length === 0) {
+          if (alive) setFailed(true);
+          return;
+        }
+        dispatch({
+          type: "init",
+          drafts: localHighlights.map((h, i) =>
+            toDraftCard(
+              {
+                id: `local-${h.id}`,
+                question: h.selectedText.trim().slice(0, 120),
+                answer: "",
+                cfiRange: h.cfiRange,
+                pageIndex: pageFromCfi(h.cfiRange),
+                highlightId: h.id,
+                bookId,
+                sourceType: "highlight",
+                provider: "local",
+                estimatedTokens: 0,
+              },
+              i,
+              bookId,
+            ),
+          ),
+        });
+        setProvider("local");
+        setTokens(0);
+        setHighlights(localHighlights.map(fromHighlight));
       } finally {
         if (alive) setLoading(false);
       }
@@ -398,7 +430,12 @@ export function FlashcardConfirmSheet({
 
         {/* BYOK 成本提示：真实 provider + 预估 token，不承诺免费无限 */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-accent-soft bg-accent-bg/50 px-4 py-2 text-[11px] text-ink-soft">
-          {provider ? (
+          {provider === "local" ? (
+            <span className="inline-flex items-center gap-1">
+              <Info className="h-3.5 w-3.5 text-accent" />
+              {t("cardConfirm.localFallback")}
+            </span>
+          ) : provider ? (
             <span className="inline-flex items-center gap-1">
               <Info className="h-3.5 w-3.5 text-accent" />
               {t("cardConfirm.costHint", { provider, tokens })}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -17,7 +17,8 @@ import { NoteEditorSheet } from "./NoteEditorSheet";
 import { useAiStore } from "../../stores/aiStore";
 import { useReaderStore } from "../../stores/readerStore";
 import { useHighlightStore } from "../../stores/highlightStore";
-import { useReaderSelectionStore } from "../../stores/readerSelectionStore";
+import { useReaderSelectionStore, type ReaderSelection } from "../../stores/readerSelectionStore";
+import { buildCardConfirmPath } from "../learn/flashcardConfirmLogic";
 import { useBreakpoint } from "../../hooks/useLayoutMode";
 import { highlightService } from "../../services/highlightService";
 import { notesService } from "../../services/notesService";
@@ -27,7 +28,6 @@ import {
   BOARD_FOCUS_EVENT,
   type BoardFocusDetail,
 } from "../../services/whiteboardService";
-import { highlightToFlashcard } from "../../services/closedLoopService";
 import { errMsg, toast, toastWithAction } from "../../utils/toast";
 import { cn } from "../../utils/cn";
 import { logError } from "../../utils/logError";
@@ -113,32 +113,76 @@ export function SelectionActionBar() {
   const [inlineResult, setInlineResult] = useState<InlineResult | null>(null);
   const [inlineLoading, setInlineLoading] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /**
+   * 打开「更多」时钉住当前选区：渲染器在 pointerup / selectionchange 后会重算 cfi
+   * 并在选区折叠时 clear()，若直接依赖 store，菜单会「闪一下就消失」。
+   */
+  const [pinnedSelection, setPinnedSelection] = useState<ReaderSelection | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barSize, setBarSize] = useState({ w: 220, h: 40 });
+  const activeSelection = selection ?? pinnedSelection;
 
-  // 选区变化时清空上一次内联结果，避免旧解释挂到新原文上。
+  // 只在「新选区文本真正出现」时清理上一次结果。
+  // 不能依赖 cfi/start/end：渲染器每次选区事件都重算它们，会把刚打开的菜单立刻关掉；
+  // 也不能在 selection 变 null 时清理，否则钉住的选区会被连带清掉。
   useEffect(() => {
+    if (!selection?.text) return;
     setInlineResult(null);
     setInlineLoading(false);
     setMoreOpen(false);
-  }, [selection?.text, selection?.cfi, selection?.start, selection?.end]);
+    setPinnedSelection(null);
+  }, [selection?.text]);
 
   // 「更多」菜单点击外部自动关闭（菜单自身阻止 pointerdown 冒泡，避免开关互相打架）
   useEffect(() => {
     if (!moreOpen) return;
-    const close = () => setMoreOpen(false);
+    const close = () => {
+      setMoreOpen(false);
+      setPinnedSelection(null);
+    };
     window.addEventListener("pointerdown", close);
     return () => window.removeEventListener("pointerdown", close);
   }, [moreOpen]);
 
-  if (!selection) return null;
+  // 按浮条真实尺寸做视口 clamp：原来只按中心点留 8px，贴边选择时半个浮条会跑到屏幕外。
+  useLayoutEffect(() => {
+    const el = barRef.current;
+    if (!el || !activeSelection) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    if (w > 0 && h > 0 && (w !== barSize.w || h !== barSize.h)) {
+      setBarSize({ w, h });
+    }
+  }, [activeSelection, moreOpen, barSize.w, barSize.h]);
 
-  const x = Math.max(8, Math.min(selection.x, window.innerWidth - 8));
-  const top = Math.max(8, selection.y - 52);
+  if (!activeSelection) return null;
+
+  const halfW = barSize.w / 2;
+  // left 是浮条中心（-translate-x-1/2），必须按半宽内缩，保证整条可见。
+  const x = Math.max(8 + halfW, Math.min(activeSelection.x, window.innerWidth - 8 - halfW));
+  // 优先放在选区上方；上方空间不足则改放下方，最后再夹进视口。
+  const above = activeSelection.y - barSize.h - 8;
+  const preferredTop = above >= 8 ? above : activeSelection.y + 28;
+  const top = Math.max(8, Math.min(preferredTop, window.innerHeight - barSize.h - 8));
+  // 衍生面板（内联结果 / 选色盘）同样按视口夹取，并在下方空间不足时翻到浮条上方。
+  const belowTop = top + barSize.h + 6;
+  const panelWidth = Math.min(360, window.innerWidth - 32);
+  const panelLeft = Math.max(
+    8 + panelWidth / 2,
+    Math.min(x, window.innerWidth - 8 - panelWidth / 2),
+  );
+  const panelTop =
+    belowTop + 224 > window.innerHeight ? Math.max(8, top - 230) : belowTop;
+  const colorLeft = Math.max(118, Math.min(x + 12, window.innerWidth - 118));
+  const colorTop =
+    belowTop + 80 > window.innerHeight ? Math.max(8, top - 86) : belowTop;
+  const moreMenuUp = belowTop + 200 > window.innerHeight;
 
   // 归一化选区位置串：foliate 取 CFI，文本阅读器取全书字符偏移 "start-end"。
   // （供高亮与笔记共用同一位置，确保「标注+笔记」走同一条去重锚点。）
-  const selectionRange = selection.cfi?.trim()
-    ? selection.cfi.trim()
-    : `${selection.start ?? 0}-${selection.end ?? 0}`;
+  const selectionRange = activeSelection.cfi?.trim()
+    ? activeSelection.cfi.trim()
+    : `${activeSelection.start ?? 0}-${activeSelection.end ?? 0}`;
 
   // 高亮：foliate 取 CFI、文本阅读器取全书字符偏移 → 落库（带所选颜色+样式）→ 即时渲染 → 清除选区
   const saveHighlight = async (color: string) => {
@@ -336,11 +380,11 @@ export function SelectionActionBar() {
     }
   };
 
-  // P0-1（2026-10-09）：划词「存为闪卡」真落库（R3 裁决）。
-  // 先落一条高亮真源 → 后端 ai_highlight_to_flashcard 写 cards 主表 + 调度（立即可复习），
-  // 复习队列 /review 可见。聊天 verb 通道保留为「快速生成」。
+  // 划词「制卡」：先落一条高亮真源，再进入成卡核验页逐卡确认。
+  // 旧实现直接调 ai_highlight_to_flashcard 静默生成，未配置 BYOK/provider 时真机报「失败」，
+  // 也违反「禁止静默全量入库、来源可核验」的产品裁决。确认页统一承担生成与成本提示。
   const makeRealCard = async () => {
-    const sel = useReaderSelectionStore.getState().selection;
+    const sel = useReaderSelectionStore.getState().selection ?? pinnedSelection;
     const bookId = useReaderStore.getState().bookId;
     if (!sel || !bookId) return;
     const cfiRange = sel.cfi?.trim() ? sel.cfi.trim() : `${sel.start}-${sel.end}`;
@@ -364,14 +408,15 @@ export function SelectionActionBar() {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
-      await highlightToFlashcard(hlId);
-      toast(t("selection.cardSaved"));
+      // 进入核验页前收起浮条：否则 z-50 的选区工具栏会浮在成卡确认弹层上方。
+      window.getSelection()?.removeAllRanges();
+      clearReaderSel();
+      setPinnedSelection(null);
+      setMoreOpen(false);
+      navigate(buildCardConfirmPath({ bookId, highlightIds: [hlId], source: "highlight" }));
     } catch (e) {
       logError("SelectionActionBar.makeCard", e);
       toast(t("selection.cardFailed"));
-    } finally {
-      window.getSelection()?.removeAllRanges();
-      clearReaderSel();
     }
   };
 
@@ -408,7 +453,7 @@ export function SelectionActionBar() {
       run: () =>
         openPanel("chat", {
           scope: "selection",
-          selectionText: verbPrompt("quizMe", null, selection.text),
+          selectionText: verbPrompt("quizMe", null, activeSelection.text),
           autoSend: true,
         }),
     },
@@ -442,10 +487,12 @@ export function SelectionActionBar() {
   return (
     <>
       <div
+        ref={barRef}
         role="toolbar"
         aria-label={t("selection.barAria")}
         className="wb-selection-bar fixed z-50 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-line bg-paper px-1 py-1 shadow-lg"
         style={{ left: x, top }}
+        onPointerDown={(e) => e.stopPropagation()}
       >
         {visibleActions.map((a) => {
           const highlighted = a.key === "highlight" && justHighlighted;
@@ -471,10 +518,13 @@ export function SelectionActionBar() {
           );
         })}
         {phonePortrait && (
-          <div className="relative" onPointerDown={(e) => e.stopPropagation()}>
+          <div className="relative">
             <button
               type="button"
-              onClick={() => setMoreOpen((v) => !v)}
+              onClick={() => {
+                if (!moreOpen && selection) setPinnedSelection(selection);
+                setMoreOpen((v) => !v);
+              }}
               aria-label={t("selection.moreAi")}
               aria-expanded={moreOpen}
               className="wb-selection-action flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-ink-soft transition-colors hover:bg-line-soft active:bg-line-soft"
@@ -486,7 +536,10 @@ export function SelectionActionBar() {
               <div
                 role="menu"
                 aria-label={t("selection.moreAi")}
-                className="absolute right-0 top-9 z-50 w-36 rounded-[var(--radius-md)] border border-line bg-paper p-1 shadow-lg"
+                className={cn(
+                  "absolute right-0 z-50 max-h-[min(60vh,320px)] w-36 overflow-y-auto overscroll-contain rounded-[var(--radius-md)] border border-line bg-paper p-1 shadow-lg",
+                  moreMenuUp ? "bottom-9" : "top-9",
+                )}
               >
                 <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-ink-muted">
                   {t("selection.moreAi")}
@@ -498,6 +551,7 @@ export function SelectionActionBar() {
                     role="menuitem"
                     onClick={() => {
                       setMoreOpen(false);
+                      setPinnedSelection(null);
                       void a.run();
                     }}
                     className="wb-selection-action flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-left text-xs text-ink-soft transition hover:bg-line-soft"
@@ -517,8 +571,8 @@ export function SelectionActionBar() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed z-50 max-h-56 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 overflow-auto rounded-[var(--radius-md)] border border-line bg-paper p-3 shadow-lg"
-          style={{ left: x, top: top + 48 }}
+          className="fixed z-50 max-h-56 -translate-x-1/2 overflow-auto rounded-[var(--radius-md)] border border-line bg-paper p-3 shadow-lg"
+          style={{ left: panelLeft, top: panelTop, width: panelWidth }}
         >
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <span className="text-xs font-semibold text-ink-soft">
@@ -576,7 +630,7 @@ export function SelectionActionBar() {
           role="group"
           aria-label={t("highlights.pickColor")}
           className="fixed z-50 flex -translate-x-1/2 flex-col items-center gap-2 rounded-[var(--radius-md)] border border-line bg-paper px-3 py-2 shadow-lg"
-          style={{ left: x + 12, top: top + 48 }}
+          style={{ left: colorLeft, top: colorTop }}
         >
           <div className="flex items-center gap-2">
             {HIGHLIGHT_COLORS.map((c) => (
@@ -612,7 +666,7 @@ export function SelectionActionBar() {
       {/* 笔记面板（携带归一化位置，与高亮共用去重锚点） */}
       <NoteEditorSheet
         bookId={useReaderStore.getState().bookId}
-        selectedText={selection.text}
+        selectedText={activeSelection.text}
         cfiRange={selectionRange}
         open={noteOpen}
         onClose={() => setNoteOpen(false)}

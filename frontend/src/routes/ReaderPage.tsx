@@ -350,6 +350,10 @@ export function ReaderPage() {
   // ===== 沉浸模式：头/悬浮按钮整体隐藏；进度条独立常驻两档明灭 =====
   // 注意：所有 hooks 必须在早退（!bookId）之前声明，保证每次渲染调用顺序一致。
   const [headless, setHeadless] = useState(true);
+  /** PDF 重排状态来自 PdfView 局部 state，经事件广播；重排时禁止整页遮罩压暗正文。 */
+  const [pdfReflow, setPdfReflow] = useState(false);
+  /** 弹窗打开时暂停 5 秒自动隐藏，避免用户正在调设置就被收起。 */
+  const popoverOpenRef = useRef(false);
   /** 供事件订阅闭包读取最新态：显隐监听只在挂载时绑定一次，不能捕获 state 快照。 */
   const headlessRef = useRef(true);
   /** 呼出时刻：双击手势随后合成的 click 不能被当成「点击菜单外」立刻收起。 */
@@ -367,7 +371,29 @@ export function ReaderPage() {
     hideTimerRef.current = null;
     headlessRef.current = true;
     setHeadless(true);
+    // 工具栏收起时弹窗必须同步收起，否则会出现「工具栏没了、设置面板还盖在正文上」。
+    setVisionOpen(false);
+    setTypographyOpen(false);
   };
+
+  // 弹窗开合同步给事件闭包；打开期间不启动自动隐藏计时。
+  useEffect(() => {
+    popoverOpenRef.current = visionOpen || typographyOpen;
+    if (popoverOpenRef.current && hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, [visionOpen, typographyOpen]);
+
+  // PdfView 广播重排开关；重排页是全文 HTML，整页黑幕会把它压成不可读。
+  useEffect(() => {
+    const onReflow = (e: Event) => {
+      const detail = (e as CustomEvent<{ enabled?: boolean }>).detail;
+      setPdfReflow(detail?.enabled === true);
+    };
+    window.addEventListener("mjnexus:pdf-reflow-mode", onReflow);
+    return () => window.removeEventListener("mjnexus:pdf-reflow-mode", onReflow);
+  }, []);
 
   const showUI = () => {
     uiShownAtRef.current = Date.now();
@@ -400,6 +426,7 @@ export function ReaderPage() {
     }
     const reset = () => {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      if (popoverOpenRef.current) return;
       hideTimerRef.current = setTimeout(hideUI, HIDE_MS);
     };
     window.addEventListener("pointerdown", reset, { passive: true });
@@ -582,7 +609,7 @@ export function ReaderPage() {
       }}
     >
       {/* 软件色温夜间暖暗遮罩：整页统一，pointer-events:none 不拦截交互（非强制熄屏） */}
-      {vision.overlayColor && (
+      {vision.overlayColor && !pdfReflow && (
         <div
           className="pointer-events-none absolute inset-0 z-20"
           style={{ background: vision.overlayColor }}
@@ -909,15 +936,18 @@ export function ReaderPage() {
         </Sheet>
       )}
 
-      {/* 专注模式（F-9-001）：遮罩弱化周边 + 中央阅读带突出当前段落 */}
+      {/* 专注模式（F-9-001）：遮罩弱化周边 + 中央阅读带突出当前段落。
+          PDF 重排是全文 HTML，黑幕会压暗全部文字，故重排时不叠加遮罩。 */}
       {focusMode && (
         <>
-          {/* 周边遮罩：上下两段半透明压暗，中央留出明亮阅读带 */}
-          <div className="pointer-events-none absolute inset-0 z-[35] flex flex-col">
-            <div className="flex-1 bg-black/55" />
-            <div className="h-[30%] shrink-0" />
-            <div className="flex-1 bg-black/55" />
-          </div>
+          {/* 周边遮罩：上下两段半透明压暗，中央留出明亮阅读带；重排全文时不压暗 */}
+          {!pdfReflow && (
+            <div className="pointer-events-none absolute inset-0 z-[35] flex flex-col">
+              <div className="flex-1 bg-black/55" />
+              <div className="h-[30%] shrink-0" />
+              <div className="flex-1 bg-black/55" />
+            </div>
+          )}
           {/* 专注模式控制条：查看 WPM 曲线阅读报告入口 + 退出 */}
           <div className="absolute left-1/2 top-[3.75rem] z-[40] flex -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-overlay px-3 py-1.5 text-[11px] font-medium text-overlay shadow-lg">
             <ScanEye className="h-3.5 w-3.5" />

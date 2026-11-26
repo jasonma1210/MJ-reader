@@ -107,7 +107,7 @@ describe("VisionPopover：面板开关与三分区渲染", () => {
     expect(props.onRestMinutesChange).toHaveBeenCalledWith(30);
   });
 
-  it("色温滑块与免责声明渲染；手动模式下 warmth 滑块启用", () => {
+  it("色温滑块与预览卡渲染；手动模式下 warmth 滑块启用", () => {
     const { container } = render(<VisionPopover {...makeProps({ tempFollow: false })} />);
     const panel = dialog(container);
     const warmth = panel.querySelector(
@@ -118,7 +118,9 @@ describe("VisionPopover：面板开关与三分区渲染", () => {
     );
     expect(warmth).toBeTruthy();
     expect(intensity).toBeTruthy();
-    expect(panel.textContent).toContain("vision.temp.disclaimer");
+    // 重复文案已移除：预览卡只显示一次简短标题，不再重复 mode.hint / 免责声明。
+    expect(panel.textContent).toContain("vision.temp.preview");
+    expect(panel.textContent?.match(/vision\.mode\.hint/g)).toHaveLength(1);
     expect(warmth?.getAttribute("aria-disabled")).toBe("false");
   });
 

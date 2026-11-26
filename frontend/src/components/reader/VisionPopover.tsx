@@ -123,18 +123,15 @@ export function VisionPopover({
       ref={panelRef}
       role="dialog"
       aria-label={t("vision.panel.title")}
-      className="absolute right-2 top-[calc(env(safe-area-inset-top,0px)+48px)] z-40 w-[min(420px,calc(100vw-16px))] overflow-visible rounded-2xl border border-overlay bg-overlay text-overlay shadow-2xl"
+      className="absolute right-2 top-[calc(env(safe-area-inset-top,0px)+48px)] z-40 max-h-[min(72vh,620px)] w-[min(420px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-overlay bg-overlay text-overlay shadow-2xl"
     >
-      {/* 顶部小三角：指向 Eye 按钮 */}
-      <div
-        aria-hidden
-        className="absolute -top-2 right-12 h-4 w-4 rotate-45 border-l border-t border-overlay bg-overlay"
-      />
-
       {/* 拖把小条 */}
       <div className="flex items-center justify-center pt-1.5">
         <div className="h-1 w-10 rounded-full bg-overlay-fg/20" />
       </div>
+
+      {/* 内容区独立滚动：面板不再撑满全屏，小屏也能滚到底部控件 */}
+      <div className="max-h-[calc(min(72vh,620px)-16px)] overflow-y-auto overscroll-contain pb-2">
 
       {/* 视觉模式 */}
       <section className="px-5 pb-3 pt-2">
@@ -191,10 +188,11 @@ export function VisionPopover({
 
         {/* 预览卡：实时应用合成滤镜 */}
         <div
-          className="mt-2 flex h-24 items-center justify-center overflow-hidden rounded-lg border border-overlay-border bg-paper-pure px-3 text-center text-[13px] leading-relaxed text-overlay"
+          aria-label={t("vision.temp.preview")}
+          className="mt-2 flex h-16 items-center justify-center overflow-hidden rounded-lg border border-overlay-border bg-paper-pure px-3 text-center text-[12px] leading-relaxed text-overlay"
           style={{ filter: previewFilter }}
         >
-          {t("vision.mode.hint")}
+          {t("vision.temp.preview")}
         </div>
 
         <div className="mt-2">
@@ -221,9 +219,6 @@ export function VisionPopover({
           />
         </div>
 
-        <div className="mt-1.5 text-[11px] leading-relaxed text-overlay/60">
-          {t("vision.temp.disclaimer")}
-        </div>
       </section>
 
       {/* 阅读节奏 */}
@@ -305,6 +300,7 @@ export function VisionPopover({
           </div>
         )}
       </section>
+      </div>
     </div>
   );
 }

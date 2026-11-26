@@ -9,6 +9,7 @@ import { friendlyError } from "../../utils/friendlyError";
 import { toast } from "../../utils/toast";
 import { resolveReaderTypography, useReaderStore } from "../../stores/readerStore";
 import { useHighlightStore } from "../../stores/highlightStore";
+import { useReaderSelectionStore } from "../../stores/readerSelectionStore";
 import { registerReaderTextProvider } from "../../utils/readerTextSource";
 import { registerReaderTocProvider } from "../../utils/readerTocSource";
 import {
@@ -220,9 +221,58 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
   /** 当前页重排 HTML（仅 reflow 模式消费） */
   const [reflowHtml, setReflowHtml] = useState("");
 
+  // 重排容器同样是可选中文本：补上与 TextView/PdfPageCanvas 一致的选区上报。
+  // 旧实现只给原页 canvas 文本层挂监听，重排模式下 DOM 有选区但 store 为空 → 浮条不弹。
+  useEffect(() => {
+    const el = reflowContainerRef.current;
+    if (viewMode !== "reflow" || noTextLayer || !el) return;
+    const report = () => {
+      const sel = window.getSelection();
+      const text = sel?.toString().trim() ?? "";
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !text) {
+        useReaderSelectionStore.getState().clear();
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      if (!el.contains(range.commonAncestorContainer)) return;
+      const r = range.getBoundingClientRect();
+      useReaderSelectionStore.getState().set({
+        text,
+        cfi: `pdf:${currentPageRef?.current ?? 1}`,
+        source: "pdf",
+        start: 0,
+        end: 0,
+        x: r.left + (window.scrollX || 0),
+        y: r.top + (window.scrollY || 0),
+      });
+    };
+    let timer: number | null = null;
+    const schedule = () => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(report, 120);
+    };
+    const events = ["mouseup", "touchend", "pointerup", "keyup", "selectionchange"] as const;
+    for (const ev of events) document.addEventListener(ev, schedule);
+    // 原生选区手柄拖拽不派发 selectionchange 的 ROM，靠低频轮询补上。
+    const poll = window.setInterval(() => {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && (sel.toString().trim() ?? "").length > 0) schedule();
+    }, 300);
+    return () => {
+      for (const ev of events) document.removeEventListener(ev, schedule);
+      window.clearInterval(poll);
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [viewMode, noTextLayer, reflowHtml, currentPageRef]);
+
   const setProgress = useReaderStore((s) => s.setProgress);
   const setPageInfo = useReaderStore((s) => s.setPageInfo);
   const bgColorKey = useReaderStore((s) => s.bgColorKey);
+  const textColorKey = useReaderStore((s) => s.textColorKey);
+  const fontFamily = useReaderStore((s) => s.fontFamily);
+  const fontSize = useReaderStore((s) => s.fontSize);
+  const lineHeightKey = useReaderStore((s) => s.lineHeightKey);
+  const paraSpacingKey = useReaderStore((s) => s.paraSpacingKey);
 
   // 向 store 上报「当前页/总页码」，供底部进度栏展示（PDF 为分页格式）
   useEffect(() => {
@@ -880,6 +930,26 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
     return { background: bgColor } as const;
   }, [bgColorKey]);
 
+  /**
+   * 重排全文是注入的 HTML，文字色不会自动跟随 readerStore（应用主题的 --ink 在暗色
+   * 阅读背景下是黑字），会出现「黑底黑字」。显式把阅读前景/字号/行高写进容器，
+   * 让 <p> 继承；原页模式仍走白色 canvas，不受影响。
+   */
+  const reflowTypography = resolveReaderTypography({
+    fontFamily,
+    lineHeightKey,
+    paraSpacingKey,
+    textColorKey,
+    bgColorKey,
+  });
+  const reflowStyle = (): React.CSSProperties => ({
+    background: reflowTypography.bgColor,
+    color: reflowTypography.textColor,
+    fontFamily: reflowTypography.fontFamily,
+    fontSize,
+    lineHeight: reflowTypography.lineHeight,
+  });
+
   return (
     <div
       ref={containerRef}
@@ -972,7 +1042,10 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
         <div
           ref={reflowContainerRef}
           className="pdf-reflow-container relative h-full w-full overflow-auto px-6 py-12"
-          style={pdfSlotStyle({ display: "block", width: "100%", height: "100%" })}
+          style={{
+            ...pdfSlotStyle({ display: "block", width: "100%", height: "100%" }),
+            ...reflowStyle(),
+          }}
           dangerouslySetInnerHTML={{ __html: reflowHtml }}
         />
       )}

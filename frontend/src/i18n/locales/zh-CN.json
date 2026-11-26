@@ -2356,6 +2356,7 @@
       "night": "夜间暖暗（21:00–07:00）",
       "warmth": "冷暖",
       "intensity": "滤镜强度",
+      "preview": "滤镜预览",
       "disclaimer": "软件滤镜，非硬件前光；暗遮罩为叠加层，不强制熄屏"
     },
     "rhythm": {
@@ -2568,6 +2569,7 @@
     "noSourceAnchor": "缺少来源锚点，不能入库",
     "adoptSelected": "采纳已勾选",
     "costHint": "使用你的 {{provider}} Key，本次约 {{tokens}} tokens",
+    "localFallback": "AI 未配置或调用失败，已用原文生成可编辑草稿（不消耗 token）",
     "byokProvider": "BYOK 服务商",
     "tokens": "约 {{tokens}} tokens",
     "bylineHint": "由你自己的 API Key 计费，产品不抽成",
