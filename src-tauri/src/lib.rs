@@ -471,10 +471,12 @@ pub fn run() {
                         // [S4-4.7 下线] directory::rename_directory,
                         // [S4-4.7 下线] directory::delete_directory,
                         // [S4-4.7 下线] directory::move_book_to_directory,
-                        // [S4-4.7 下线] directory::list_library_dirs,
-                        // [S4-4.7 下线] directory::add_library_dir,
-                        // [S4-4.7 下线] directory::remove_library_dir,
-                        // [S4-4.7 下线] directory::scan_library_dir,
+            // 2026-11-26 解冻：绑定目录（原地读取，不复制书籍到 App）。
+            directory::list_library_dirs,
+            directory::add_library_dir,
+            directory::remove_library_dir,
+            directory::scan_library_dir,
+            directory::sync_library_dirs,
             // v1.3.0 实现：直接选择文件夹深度扫描导入
             // 2026-11-20 解冻：目录批量扫描导入（导入页选项）；scan_dirs_into_library 递归+
             // SHA256 去重+软删过滤均已对齐单文件口径，仅恢复注册即可用。
@@ -918,7 +920,7 @@ mod command_registration_tests {
         "purge_expired_tombstones",
         // 目录管理（冻结）
         "create_directory", "rename_directory", "delete_directory", "move_book_to_directory",
-        "list_library_dirs", "add_library_dir", "remove_library_dir", "scan_library_dir",
+        // 2026-11-26: list/add/remove/scan_library_dir 已解冻（绑定目录原地读取），从冻结清单移除。
         // 2026-11-20: import_folders 已解冻（目录批量扫描导入），从冻结清单移除。
         // Anki（冻结）
         "import_anki_apkg", "preview_anki_apkg",

@@ -203,7 +203,10 @@
       "title": "Your shelf is empty",
       "desc": "Import your first book to start the Read → Distill → Practice → Recall loop."
     },
-    "loadFailed": "Library failed to load"
+    "loadFailed": "Library failed to load",
+    "filterTypeAll": "All types",
+    "filterTypeTitle": "Filter by format",
+    "filterTypeSelected": "{{count}} selected"
   },
   "reader": {
     "title": "Reader",
@@ -944,7 +947,15 @@
     "scanSummary": "Scan done: {{imported}} added · {{skipped}} duplicates skipped · {{failed}} failed ({{total}} found)",
     "scanNoBook": "No importable books found in this folder",
     "folderUnavailable": "Folder selection is unavailable on this platform. Use \"Select Files\" or LAN upload instead.",
-    "scanFailed": "Folder scan failed: {{msg}}"
+    "scanFailed": "Folder scan failed: {{msg}}",
+    "bindFolder": "Bind Folder",
+    "bindFolderHint": "Binding only records the folder location — books are not copied into the app. Your library reads directly from it and auto-syncs additions/removals on next launch.",
+    "boundFolders": "Bound Folders",
+    "noBoundFolders": "No folders bound yet",
+    "unbind": "Unbind",
+    "bindSuccess": "Folder bound, reading books…",
+    "unbindSuccess": "Folder unbound",
+    "scanningBound": "Reading bound folders…"
   },
   "workspace": {
     "title": "Book workspace",

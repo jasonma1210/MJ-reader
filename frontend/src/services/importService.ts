@@ -21,6 +21,15 @@ export interface FolderScanResult {
   errors: string[];
 }
 
+/** 已绑定的书库目录（后端 library_dirs，camelCase） */
+export interface LibraryDir {
+  id: string;
+  path: string;
+  label: string | null;
+  autoScan: boolean;
+  createdAt: number;
+}
+
 /** 移动端不支持目录选择的确定信号（tauri-plugin-dialog 在 #[cfg(mobile)] 下抛此错误）。 */
 export class FolderPickerUnavailableError extends Error {
   constructor() {
@@ -261,6 +270,32 @@ export const importService = {
    */
   async importFolders(paths: string[]): Promise<FolderScanResult> {
     return invoke<FolderScanResult>(CMD.importFolders, { paths });
+  },
+
+  // ===== 目录绑定（2026-11-26）：只记录目录位置、原地读取，不复制书籍 =====
+
+  async listLibraryDirs(): Promise<LibraryDir[]> {
+    if (!isTauri()) return [];
+    return invoke<LibraryDir[]>(CMD.listLibraryDirs);
+  },
+
+  /** 绑定目录：只 INSERT library_dirs，不导入任何书；随后由 scanLibraryDir 原地读取。 */
+  async addLibraryDir(path: string, label?: string | null): Promise<LibraryDir> {
+    return invoke<LibraryDir>(CMD.addLibraryDir, { path, label: label ?? null });
+  },
+
+  async removeLibraryDir(id: string): Promise<void> {
+    return invoke<void>(CMD.removeLibraryDir, { id });
+  },
+
+  /** 扫描已绑定目录：递归原地引用图书（不复制），按 file_hash 去重。 */
+  async scanLibraryDir(id: string): Promise<FolderScanResult> {
+    return invoke<FolderScanResult>(CMD.scanLibraryDir, { id });
+  },
+
+  /** 启动同步所有绑定目录：原地读取新增书，且不复活用户已软删的书。 */
+  async syncLibraryDirs(): Promise<FolderScanResult> {
+    return invoke<FolderScanResult>(CMD.syncLibraryDirs);
   },
 
   /**

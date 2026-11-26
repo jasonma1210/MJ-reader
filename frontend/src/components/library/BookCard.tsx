@@ -9,6 +9,7 @@ import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { toast } from "../../utils/toast";
 import { cn } from "../../utils/cn";
 import { useBookCover } from "../../utils/useBookCover";
+import { formatBadge } from "../../utils/formatBadge";
 
 const COVER_TOKENS = [
   "cover-blue",
@@ -30,55 +31,74 @@ function coverToken(title: string): string {
 }
 
 /**
- * 书籍卡片：
- * - 右上角无功能区按钮（已按要求移除工作区入口）
- * - 长按 → 卡片中央出现红色删除图标 → 点击弹确认 → 删除
- * - 多选模式：点卡片勾选/取消，头部红色删除按钮批量删除
+ * 无封面书名：溢出时慢速跑马灯。
+ * 测量文本宽度与容器宽度，只有在溢出时设置动画位移与时长；否则静态居中。
  */
-export function BookCard({ book }: { book: Book }) {
+function TitleFallback({ title }: { title: string }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  const [distance, setDistance] = useState(-50);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    const text = textRef.current;
+    if (!box || !text) return;
+    const measure = () => {
+      const over = text.scrollWidth > box.clientWidth + 2;
+      setOverflow(over);
+      if (over) {
+        // 先移到文本末尾，再回到起点，留出首尾停顿（CSS keyframes 12% 停顿）。
+        setDistance(-(text.scrollWidth - box.clientWidth + 8));
+        // 慢速：按溢出长度决定时长，约 34px/s。
+        const seconds = Math.max(10, Math.min(40, (text.scrollWidth + box.clientWidth) / 34));
+        box.style.setProperty("--marquee-duration", `${seconds.toFixed(1)}s`);
+      }
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(box);
+    return () => ro?.disconnect();
+  }, [title]);
+
+  return (
+    <div
+      ref={boxRef}
+      className="flex h-full w-full items-center justify-center overflow-hidden px-2"
+    >
+      <span
+        ref={textRef}
+        className={cn(
+          "text-center text-sm font-bold leading-tight text-white/95 drop-shadow",
+          overflow ? "mj-title-marquee max-w-none" : "max-w-full break-words",
+        )}
+        style={overflow ? ({ "--marquee-distance": `${distance}px` } as React.CSSProperties) : undefined}
+      >
+        {title}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 书籍卡片（2026-11-26）：
+ * - 右上角常驻删除小图标 → 点击弹确认（弹窗仅取消/删除两按钮，Portal 到 body 防遮挡）
+ * - 封面左上偏下：格式书签标签，按格式着色
+ * - 无封面：书名居中，过长慢速跑马灯
+ * - 选择模式：点选勾选；按住拖过多本连续勾选（见 LibraryPage 网格容器统一处理）
+ */
+export function BookCard({ book, onPointerEnterCard }: { book: Book; onPointerEnterCard?: (id: string) => void }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const pct = Math.max(0, Math.min(100, book.progressPercentage ?? 0));
   const selectMode = useLibraryStore((s) => s.selectMode);
   const selected = useLibraryStore((s) => s.selectedIds.includes(book.id));
   const toggleSelected = useLibraryStore((s) => s.toggleSelected);
-  const [showDel, setShowDel] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
-  // 封面跨平台加载（convertFileSrc 失败自动降级为后端字节 data URI）
   const cover = useBookCover(book.coverPath);
-  // 为移除而设的失败标志已改由 useBookCover 管理，仅在封面路径变化时自然重置
-  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const movedRef = useRef(false);
-  const longPressedRef = useRef(false);
-
-  // 长按 500ms → 显示中央删除图标（仅非多选模式）
-  const onTouchStart = () => {
-    if (selectMode) return;
-    movedRef.current = false;
-    longPressedRef.current = false;
-    pressTimerRef.current = setTimeout(() => {
-      longPressedRef.current = true;
-      setShowDel(true);
-    }, 500);
-  };
-  const onTouchMove = () => {
-    movedRef.current = true;
-  };
-  const cancelPress = () => {
-    if (pressTimerRef.current) {
-      clearTimeout(pressTimerRef.current);
-      pressTimerRef.current = null;
-    }
-  };
-  const onTouchEnd = () => {
-    cancelPress();
-  };
-
-  useEffect(() => {
-    return () => {
-      if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
-    };
-  }, []);
+  const badge = formatBadge(book.format);
+  /** 本次按压是否被拖动划过：避免 pointerup 后的 click 把刚加选的卡片反选 */
+  const draggedRef = useRef(false);
 
   const doDelete = async () => {
     try {
@@ -86,7 +106,6 @@ export function BookCard({ book }: { book: Book }) {
       toast(t("library.deletedBook", { title: book.title }));
       await useLibraryStore.getState().load();
       setConfirmDel(false);
-      setShowDel(false);
     } catch (e) {
       const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
       toast(t("library.deleteFailed", { msg }));
@@ -96,30 +115,36 @@ export function BookCard({ book }: { book: Book }) {
 
   const handleCardClick = () => {
     if (selectMode) {
+      // 刚被拖动划过（onPointerEnter 已 addSelected）→ 忽略随后的 click，避免反选
+      if (draggedRef.current) {
+        draggedRef.current = false;
+        return;
+      }
       toggleSelected(book.id);
       return;
     }
-    // 刚长按过（弹出了删除图标）：本次抬起不跳转，等用户点删除或关闭
-    if (longPressedRef.current) {
-      longPressedRef.current = false;
-      return;
-    }
-    if (movedRef.current) return;
     navigate(`/reader/${book.id}`);
   };
 
   return (
     <div
+      data-book-id={book.id}
       className={cn(
         "cv-list-item relative flex flex-col gap-2 rounded-[var(--radius-lg)] border p-2 text-left shadow-sm transition",
         selected ? "border-accent bg-accent-bg/40" : "border-line bg-paper",
         selectMode ? "cursor-pointer" : "",
       )}
       onClick={handleCardClick}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={cancelPress}
+      onPointerEnter={(e) => {
+        if (selectMode && e.buttons > 0) {
+          draggedRef.current = true;
+          if (onPointerEnterCard) onPointerEnterCard(book.id);
+        }
+      }}
+      onPointerDown={() => {
+        // 每次新按压重置：单点模式不被上一次拖动影响
+        draggedRef.current = false;
+      }}
     >
       <div className="relative">
         {book.coverPath && cover.src && !cover.failed ? (
@@ -134,16 +159,36 @@ export function BookCard({ book }: { book: Book }) {
           </div>
         ) : (
           <div
-            className="flex aspect-[3/4] items-center justify-center rounded-[var(--radius-md)]"
+            className="aspect-[3/4] overflow-hidden rounded-[var(--radius-md)]"
             style={{ backgroundColor: `var(--${coverToken(book.title)})` }}
           >
-            <span className="px-3 text-center text-lg font-bold text-white/90 drop-shadow">
-              {book.title.slice(0, 8)}
-            </span>
+            <TitleFallback title={book.title} />
           </div>
         )}
 
-        {/* 学习进度角标（视觉锚点）：有进度时显示精确百分比，读完显示完成态 */}
+        {/* 格式书签标签（左上偏下） */}
+        <span
+          className="mj-format-bookmark"
+          style={{ backgroundColor: badge.background, color: badge.color }}
+        >
+          {badge.label}
+        </span>
+
+        {/* 右上角常驻删除图标（非选择模式） */}
+        {!selectMode && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmDel(true);
+            }}
+            aria-label={t("library.deleteAria")}
+            className="absolute right-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/45 text-white/90 backdrop-blur-sm transition active:scale-90"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
+
+        {/* 学习进度角标 */}
         {pct > 0 && (
           <span
             className={cn(
@@ -168,7 +213,7 @@ export function BookCard({ book }: { book: Book }) {
         </div>
       </div>
 
-      {/* 多选模式：右上角勾选指示 */}
+      {/* 选择模式：右上角勾选指示 */}
       {selectMode && (
         <div
           className={cn(
@@ -180,29 +225,8 @@ export function BookCard({ book }: { book: Book }) {
         </div>
       )}
 
-      {/* 长按后：中央红色删除图标（点背景关闭） */}
-      {showDel && !selectMode && (
-        <div
-          className="absolute inset-0 z-20 flex items-center justify-center rounded-[var(--radius-lg)] bg-black/45"
-          onClick={() => setShowDel(false)}
-        >
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirmDel(true);
-            }}
-            aria-label={t("library.deleteAria")}
-            className="flex h-14 w-14 items-center justify-center rounded-full bg-danger text-white shadow-xl transition active:scale-95"
-          >
-            <Trash2 className="h-7 w-7" />
-          </button>
-        </div>
-      )}
-
       <ConfirmDialog
         open={confirmDel}
-        title={t("library.deleteTitle")}
-        message={t("library.deleteConfirm", { title: book.title })}
         confirmText={t("common.delete")}
         onConfirm={() => void doDelete()}
         onCancel={() => setConfirmDel(false)}

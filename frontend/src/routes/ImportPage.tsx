@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Upload, Copy, Check, FileText, Clock, History, AlertTriangle, FolderOpen, Loader2 } from "lucide-react";
+import { Upload, Copy, Check, FileText, Clock, History, AlertTriangle, FolderOpen, Loader2, Link2, RefreshCw, Unlink } from "lucide-react";
 import {
   importService,
   mapImportStage,
   FolderPickerUnavailableError,
   type ImportStatusEvent,
   type FolderScanResult,
+  type LibraryDir,
 } from "../services/importService";
 import { useLibraryStore } from "../stores/libraryStore";
 import { getReadingRecords, type ReadingRecord } from "../services/searchService";
 import { toast } from "../utils/toast";
 import type { ImportTask } from "../types";
 import { logError } from "../utils/logError";
+import { cn } from "../utils/cn";
 import { SubBackHeader } from "../components/shell/SubBackHeader";
-import { isIOS } from "../utils/platform";
+import { isAndroid, isIOS } from "../utils/platform";
 
 
 export function ImportPage() {
@@ -29,14 +31,79 @@ export function ImportPage() {
   const [recent, setRecent] = useState<ReadingRecord[]>([]);
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<FolderScanResult | null>(null);
+  // 目录绑定（桌面）：绑定的目录只记录位置、原地读取，不复制书籍到 App
+  const [boundDirs, setBoundDirs] = useState<LibraryDir[]>([]);
+  const [bindBusy, setBindBusy] = useState<string | null>(null);
 
   const refreshRecent = () => {
     void getReadingRecords("1w").then(setRecent);
   };
 
+  const desktopBinding = !isIOS() && !isAndroid();
+
+  const refreshBoundDirs = () => {
+    if (!desktopBinding) return;
+    void importService.listLibraryDirs().then(setBoundDirs).catch((e) => {
+      logError("ImportPage.refreshBoundDirs", e);
+    });
+  };
+
+  // 绑定目录：选目录 → 记录绑定（不复制）→ 立即原地扫描导入书架
+  const onBindFolder = async () => {
+    setBindBusy("bind");
+    try {
+      const folder = await importService.pickFolder();
+      if (!folder) return;
+      await importService.addLibraryDir(folder);
+      const result = await importService.scanLibraryDir(
+        (await importService.listLibraryDirs()).find((d) => d.path === folder)?.id ?? "",
+      );
+      setScanResult(result);
+      toast(t("import.bindSuccess"));
+      refreshBoundDirs();
+      void useLibraryStore.getState().load();
+      refreshRecent();
+    } catch (e) {
+      logError("ImportPage.onBindFolder", e);
+      toast(t("import.scanFailed", { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBindBusy(null);
+    }
+  };
+
+  const onRescanDir = async (dir: LibraryDir) => {
+    setBindBusy(dir.id);
+    try {
+      const result = await importService.scanLibraryDir(dir.id);
+      setScanResult(result);
+      void useLibraryStore.getState().load();
+      refreshRecent();
+    } catch (e) {
+      logError("ImportPage.onRescanDir", e);
+      toast(t("import.scanFailed", { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBindBusy(null);
+    }
+  };
+
+  const onUnbindDir = async (dir: LibraryDir) => {
+    setBindBusy(dir.id);
+    try {
+      await importService.removeLibraryDir(dir.id);
+      toast(t("import.unbindSuccess"));
+      refreshBoundDirs();
+    } catch (e) {
+      logError("ImportPage.onUnbindDir", e);
+      toast(t("import.scanFailed", { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBindBusy(null);
+    }
+  };
+
   // 挂载时监听导入事件：进度 / 完成 / 失败 / 跳过
   useEffect(() => {
     refreshRecent();
+    refreshBoundDirs();
     let unlisten: (() => void) | null = null;
     void importService.listenImportEvents((e: ImportStatusEvent) => {
       const name = e.fileName || "";
@@ -215,40 +282,107 @@ export function ImportPage() {
         </button>
       </section>
 
-      {/* 从目录导入（2026-11-20）：用户选目录 → 自动递归扫描子目录图书。
-          iOS 无系统目录选择能力，隐藏入口（Android/桌面保持）。 */}
-      {folderImportAvailable && (
-      <section className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">
-        <div className="flex items-center gap-2">
-          <FolderOpen className="h-4 w-4 text-accent" />
-          <span className="text-sm font-semibold text-ink">{t("import.browseFolder")}</span>
-        </div>
-        <p className="mt-2 text-xs leading-relaxed text-ink-muted">{t("import.folderHint")}</p>
-        <button
-          onClick={() => void onPickFolder()}
-          disabled={scanning}
-          className="mt-3 flex items-center justify-center gap-2 rounded-full border border-accent px-5 py-2 text-sm font-semibold text-accent transition active:scale-[0.98] disabled:opacity-60"
-        >
-          {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderOpen className="h-4 w-4" />}
-          {scanning ? t("import.scanning") : t("import.browseFolder")}
-        </button>
-        {scanResult && (
-          <div className="mt-3 rounded-md bg-accent-bg/50 px-3 py-2 text-xs leading-relaxed text-ink">
-            {scanResult.totalFound === 0
-              ? t("import.scanNoBook")
-              : t("import.scanSummary", {
-                  imported: scanResult.imported,
-                  skipped: scanResult.skipped,
-                  failed: scanResult.failed,
-                  total: scanResult.totalFound,
-                })}
-            {scanResult.errors.length > 0 && (
-              <div className="mt-1 text-danger">{scanResult.errors[0]}</div>
+      {/* 目录来源（2026-11-26）：
+          · 桌面（Win/macOS/Linux）：绑定目录 —— 只记录位置、原地读取，不复制书籍；下次打开自动同步。
+          · Android：SAF 目录选择受限，保留一次性目录导入（content:// 逐条读取）。
+          · iOS：无系统目录能力，隐藏入口。 */}
+      {desktopBinding ? (
+        <section className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <Link2 className="h-4 w-4 text-accent" />
+            <span className="text-sm font-semibold text-ink">{t("import.bindFolder")}</span>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-ink-muted">{t("import.bindFolderHint")}</p>
+          <button
+            onClick={() => void onBindFolder()}
+            disabled={bindBusy === "bind"}
+            className="mt-3 flex items-center justify-center gap-2 rounded-full border border-accent px-5 py-2 text-sm font-semibold text-accent transition active:scale-[0.98] disabled:opacity-60"
+          >
+            {bindBusy === "bind" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+            {t("import.bindFolder")}
+          </button>
+
+          {/* 已绑定目录列表 */}
+          <div className="mt-4">
+            <div className="mb-1.5 text-xs font-semibold text-ink-soft">{t("import.boundFolders")}</div>
+            {boundDirs.length === 0 ? (
+              <div className="text-[11px] text-ink-muted">{t("import.noBoundFolders")}</div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {boundDirs.map((dir) => (
+                  <div key={dir.id} className="flex items-center gap-2 rounded-lg bg-paper-soft px-2.5 py-1.5">
+                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-accent" />
+                    <span className="min-w-0 flex-1 truncate text-[11px] text-ink" title={dir.path}>{dir.label || dir.path}</span>
+                    <button
+                      onClick={() => void onRescanDir(dir)}
+                      disabled={bindBusy === dir.id}
+                      aria-label={t("import.scanningBound")}
+                      className="rounded p-1 text-ink-soft transition hover:text-accent disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn("h-3.5 w-3.5", bindBusy === dir.id && "animate-spin")} />
+                    </button>
+                    <button
+                      onClick={() => void onUnbindDir(dir)}
+                      disabled={bindBusy === dir.id}
+                      aria-label={t("import.unbind")}
+                      className="rounded p-1 text-ink-soft transition hover:text-danger disabled:opacity-50"
+                    >
+                      <Unlink className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
-        )}
-      </section>
-      )}
+
+          {scanResult && (
+            <div className="mt-3 rounded-md bg-accent-bg/50 px-3 py-2 text-xs leading-relaxed text-ink">
+              {scanResult.totalFound === 0
+                ? t("import.scanNoBook")
+                : t("import.scanSummary", {
+                    imported: scanResult.imported,
+                    skipped: scanResult.skipped,
+                    failed: scanResult.failed,
+                    total: scanResult.totalFound,
+                  })}
+              {scanResult.errors.length > 0 && (
+                <div className="mt-1 text-danger">{scanResult.errors[0]}</div>
+              )}
+            </div>
+          )}
+        </section>
+      ) : folderImportAvailable ? (
+        <section className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <FolderOpen className="h-4 w-4 text-accent" />
+            <span className="text-sm font-semibold text-ink">{t("import.browseFolder")}</span>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-ink-muted">{t("import.folderHint")}</p>
+          <button
+            onClick={() => void onPickFolder()}
+            disabled={scanning}
+            className="mt-3 flex items-center justify-center gap-2 rounded-full border border-accent px-5 py-2 text-sm font-semibold text-accent transition active:scale-[0.98] disabled:opacity-60"
+          >
+            {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderOpen className="h-4 w-4" />}
+            {scanning ? t("import.scanning") : t("import.browseFolder")}
+          </button>
+          {scanResult && (
+            <div className="mt-3 rounded-md bg-accent-bg/50 px-3 py-2 text-xs leading-relaxed text-ink">
+              {scanResult.totalFound === 0
+                ? t("import.scanNoBook")
+                : t("import.scanSummary", {
+                    imported: scanResult.imported,
+                    skipped: scanResult.skipped,
+                    failed: scanResult.failed,
+                    total: scanResult.totalFound,
+                  })}
+              {scanResult.errors.length > 0 && (
+                <div className="mt-1 text-danger">{scanResult.errors[0]}</div>
+              )}
+            </div>
+          )}
+        </section>
+      ) : null}
 
       {/* 文件服务器（局域网） */}
       <section className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">

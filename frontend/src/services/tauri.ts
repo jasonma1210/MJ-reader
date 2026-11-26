@@ -24,6 +24,12 @@ export const CMD = {
   listDirectories: "list_directories",
   importFolders: "import_folders",
   pickAndroidFolder: "pick_android_folder",
+  // 目录绑定（2026-11-26）：只记录目录位置，原地读取，不复制书籍
+  listLibraryDirs: "list_library_dirs",
+  addLibraryDir: "add_library_dir",
+  removeLibraryDir: "remove_library_dir",
+  scanLibraryDir: "scan_library_dir",
+  syncLibraryDirs: "sync_library_dirs",
   // ai_chat
   aiChatStream: "ai_chat_stream",
   listConversations: "list_conversations",

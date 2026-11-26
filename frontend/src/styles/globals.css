@@ -368,3 +368,49 @@ body {
   }
 }
 
+/* 无封面书籍：书名慢速跑马灯（2026-11-26）。
+   只在文字溢出时滚动；悬停/聚焦暂停，尊重 reduced-motion。 */
+@keyframes mj-title-marquee {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  88%,
+  100% {
+    transform: translateX(var(--marquee-distance, -50%));
+  }
+}
+
+.mj-title-marquee {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+  animation: mj-title-marquee var(--marquee-duration, 14s) linear infinite;
+}
+
+.mj-title-marquee:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mj-title-marquee {
+    animation: none;
+  }
+}
+
+/* 格式书签：左上角偏下，底部尖角模拟书签形状。 */
+.mj-format-bookmark {
+  position: absolute;
+  left: 0;
+  top: 28%;
+  z-index: 5;
+  padding: 2px 8px 4px 6px;
+  border-radius: 0 6px 6px 0;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  box-shadow: 1px 1px 3px rgb(0 0 0 / 25%);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 82% 82%, 64% 100%, 0 100%);
+}
+

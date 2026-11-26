@@ -47,7 +47,7 @@ const DOWNGRADED_COMMANDS = new Set([
   "purge_expired_tombstones",
   // 目录管理（冻结）
   "create_directory", "rename_directory", "delete_directory", "move_book_to_directory",
-  "list_library_dirs", "add_library_dir", "remove_library_dir", "scan_library_dir",
+  // 2026-11-26: 目录绑定命令已解冻（原地读取），从冻结清单移除。
   // 2026-11-20: import_folders 已解冻（目录批量扫描导入），从冻结清单移除。
   // Anki（冻结）
   "import_anki_apkg", "preview_anki_apkg",

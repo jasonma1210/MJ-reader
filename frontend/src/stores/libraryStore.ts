@@ -18,13 +18,22 @@ interface LibraryState {
   /** 多选删除模式：选择按钮激活后进入，点卡片勾选，头部出现红色删除按钮 */
   selectMode: boolean;
   selectedIds: string[];
+  /** 拖动划选进行中（手指按住拖过多本书） */
+  dragSelecting: boolean;
+  /** 类型多选筛选：空数组 = 全部显示 */
+  formatFilter: string[];
   load: () => Promise<void>;
   setQuery: (q: string) => void;
   setFilter: (f: LibraryFilter) => void;
   setView: (v: LibraryView) => void;
   setSelectMode: (b: boolean) => void;
   toggleSelected: (id: string) => void;
+  /** 拖动划过：加入选中（幂等，不取消已选） */
+  addSelected: (id: string) => void;
+  setDragSelecting: (b: boolean) => void;
   clearSelection: () => void;
+  toggleFormat: (format: string) => void;
+  clearFormatFilter: () => void;
   /** 续读卡：最近读且未完成的一本 */
   continueBook: () => Book | null;
 }
@@ -81,6 +90,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   view: "grid",
   selectMode: false,
   selectedIds: [],
+  dragSelecting: false,
+  formatFilter: [],
 
   load: async () => {
     set({ loading: true, error: null });
@@ -101,14 +112,27 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   setFilter: (filter) => set({ filter }),
   setView: (view) => set({ view }),
 
-  setSelectMode: (selectMode) => set({ selectMode, selectedIds: selectMode ? get().selectedIds : [] }),
+  setSelectMode: (selectMode) =>
+    set({ selectMode, selectedIds: selectMode ? get().selectedIds : [], dragSelecting: false }),
   toggleSelected: (id) =>
     set((s) => ({
       selectedIds: s.selectedIds.includes(id)
         ? s.selectedIds.filter((x) => x !== id)
         : [...s.selectedIds, id],
     })),
-  clearSelection: () => set({ selectedIds: [], selectMode: false }),
+  addSelected: (id) =>
+    set((s) =>
+      s.selectedIds.includes(id) ? s : { selectedIds: [...s.selectedIds, id] },
+    ),
+  setDragSelecting: (dragSelecting) => set({ dragSelecting }),
+  clearSelection: () => set({ selectedIds: [], selectMode: false, dragSelecting: false }),
+  toggleFormat: (format) =>
+    set((s) => ({
+      formatFilter: s.formatFilter.includes(format)
+        ? s.formatFilter.filter((f) => f !== format)
+        : [...s.formatFilter, format],
+    })),
+  clearFormatFilter: () => set({ formatFilter: [] }),
 
   continueBook: () => {
     const { books } = get();

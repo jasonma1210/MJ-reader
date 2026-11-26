@@ -1,10 +1,12 @@
+import { useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BookOpen, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import type { Book } from "../../types";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { cn } from "../../utils/cn";
 import { useBookCover } from "../../utils/useBookCover";
+import { formatBadge } from "../../utils/formatBadge";
 
 const COVER_TOKENS = [
   "cover-blue",
@@ -39,21 +41,42 @@ export function ListRow({ book }: { book: Book }) {
   // 封面跨平台加载（convertFileSrc 失败自动降级为后端字节 data URI）
   const cover = useBookCover(book.coverPath);
   const coverBadgeKey = `${book.id}-${book.coverPath ?? ""}`;
+  /** 拖动划过后抑制随后的 click（避免 addSelected 又被 toggleSelected 反选） */
+  const draggedRef = useRef(false);
 
   const lastRead = book.lastReadAt ? new Date(book.lastReadAt).toLocaleDateString() : null;
   const sub = pct > 0 ? `${t("reader.progressPercent")} ${pct}%` : t("library.notStarted");
 
   return (
     <div
-      onClick={() => (selectMode ? toggleSelected(book.id) : navigate(`/reader/${book.id}`))}
+      data-book-id={book.id}
+      onClick={() => {
+        if (selectMode) {
+          if (draggedRef.current) {
+            draggedRef.current = false;
+            return;
+          }
+          toggleSelected(book.id);
+          return;
+        }
+        navigate(`/reader/${book.id}`);
+      }}
+      onPointerDown={() => { draggedRef.current = false; }}
+      onPointerEnter={(e) => {
+        if (selectMode && e.buttons > 0) {
+          draggedRef.current = true;
+          useLibraryStore.getState().addSelected(book.id);
+        }
+      }}
       className={cn(
         "cv-list-item flex h-11 cursor-pointer items-center gap-2.5 border-b border-line/60 px-2 transition active:bg-paper-soft",
         selected ? "bg-accent-bg/40" : "",
       )}
+      style={{ touchAction: selectMode ? "none" : "auto" }}
     >
-      {/* 封面缩略图 */}
+      {/* 封面缩略图 / 无封面显示书名首字 */}
       {book.coverPath && cover.src && !cover.failed ? (
-        <div className="h-9 w-7 shrink-0 overflow-hidden rounded border border-line bg-paper-soft">
+        <div className="relative h-9 w-7 shrink-0 overflow-hidden rounded border border-line bg-paper-soft">
           <img
             key={coverBadgeKey}
             src={cover.src}
@@ -62,13 +85,20 @@ export function ListRow({ book }: { book: Book }) {
             loading="lazy"
             onError={cover.onImageError}
           />
+          <span
+            className="absolute bottom-0 left-0 rounded-tr px-0.5 text-[7px] font-extrabold leading-tight"
+            style={{ backgroundColor: formatBadge(book.format).background, color: formatBadge(book.format).color }}
+          >
+            {formatBadge(book.format).label.slice(0, 3)}
+          </span>
         </div>
       ) : (
         <div
-          className="flex h-9 w-7 shrink-0 items-center justify-center rounded border border-line/60"
+          className="flex h-9 w-7 shrink-0 items-center justify-center rounded border border-line/60 px-0.5 text-center text-[9px] font-bold leading-tight text-white/90"
           style={{ backgroundColor: `var(--${coverToken(book.title)})` }}
+          title={book.title}
         >
-          <BookOpen className="h-4 w-4 text-white/90" />
+          {book.title.slice(0, 4)}
         </div>
       )}
       {/* 书名 + 进度信息 */}

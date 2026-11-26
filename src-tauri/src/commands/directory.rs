@@ -187,7 +187,6 @@ pub struct ScanResult {
 }
 
 #[tauri::command]
-#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn list_library_dirs(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<LibraryDir>> {
@@ -212,7 +211,6 @@ pub async fn list_library_dirs(
 }
 
 #[tauri::command]
-#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn add_library_dir(
     state: State<'_, AppState>,
     path: String,
@@ -255,7 +253,6 @@ pub async fn add_library_dir(
 }
 
 #[tauri::command]
-#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn remove_library_dir(
     state: State<'_, AppState>,
     id: String,
@@ -273,7 +270,6 @@ pub async fn remove_library_dir(
 /// 支持 epub/pdf/txt/md/mobi/azw/azw3/docx 格式
 /// 基于 file_hash 去重
 #[tauri::command]
-#[allow(dead_code)] // [S4-4.7] 冻结命令保留（恢复接线时移除本行）
 pub async fn scan_library_dir(
     state: State<'_, AppState>,
     app: AppHandle,
@@ -289,7 +285,28 @@ pub async fn scan_library_dir(
         .ok_or_else(|| AppError::General("目录不存在".to_string()))?;
     let dir_path: String = row.try_get("path").map_err(|e| AppError::General(e.to_string()))?;
 
-    scan_dirs_into_library(pool, &app, &[dir_path]).await
+    scan_dirs_into_library(pool, &app, &[dir_path], false).await
+}
+
+/// 启动同步所有 auto_scan 绑定目录（需求3：下次打开直接从绑定目录读取）。
+/// 与用户显式扫描的区别：去重集合包含软删书，避免把用户删掉的书重新加回书架。
+#[tauri::command]
+pub async fn sync_library_dirs(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> AppResult<ScanResult> {
+    let pool = &*state.db;
+    let rows = sqlx::query("SELECT path FROM library_dirs WHERE auto_scan = 1")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::General(format!("查询绑定目录失败: {}", e)))?;
+    let mut dirs = Vec::new();
+    for r in rows {
+        if let Ok(p) = r.try_get::<String, _>("path") {
+            dirs.push(p);
+        }
+    }
+    scan_dirs_into_library(pool, &app, &dirs, true).await
 }
 
 /// v1.3.0：深度扫描多个目录并原地导入到书库（供 scan_library_dir 与 import_folders 复用）。
@@ -303,6 +320,9 @@ async fn scan_dirs_into_library(
     pool: &SqlitePool,
     app: &AppHandle,
     dirs: &[String],
+    // true：去重集合包含软删书 → 启动同步时不会把用户删掉的书复活；
+    // false：去重只算活书 → 用户显式重新导入时可复活（A4 既有行为）。
+    include_deleted_in_dedup: bool,
 ) -> AppResult<ScanResult> {
     // 收集支持的图书文件（去重路径）
     let mut found_files = Vec::new();
@@ -324,11 +344,12 @@ async fn scan_dirs_into_library(
     // A4 修复（2026-08-08 审查）：必须过滤 deleted_at IS NULL——
     // 软删（deleted_at 非空）的书不应占用去重集合，否则「删除后无法重新导入同一文件」。
     // book.rs 的单文件导入（1867/2068 行）已正确过滤，此处补上与之一致的行为。
-    let existing_rows = sqlx::query(
-        "SELECT file_hash FROM books WHERE file_hash IS NOT NULL AND deleted_at IS NULL",
-    )
-    .fetch_all(pool)
-    .await?;
+    let dedup_sql = if include_deleted_in_dedup {
+        "SELECT file_hash FROM books WHERE file_hash IS NOT NULL"
+    } else {
+        "SELECT file_hash FROM books WHERE file_hash IS NOT NULL AND deleted_at IS NULL"
+    };
+    let existing_rows = sqlx::query(dedup_sql).fetch_all(pool).await?;
     let mut existing_hashes: std::collections::HashSet<String> = std::collections::HashSet::new();
     for r in &existing_rows {
         if let Ok(h) = r.try_get::<String, _>("file_hash") {
@@ -394,7 +415,7 @@ pub async fn import_folders(
         });
     }
     let pool = state.db.clone();
-    scan_dirs_into_library(&pool, &app, &paths).await
+    scan_dirs_into_library(&pool, &app, &paths, false).await
 }
 
 // 2026-11-20: 解冻后由扫描导入链真实使用。

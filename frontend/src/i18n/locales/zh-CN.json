@@ -203,7 +203,10 @@
       "title": "书架还是空的",
       "desc": "导入第一本书，开始「读 → 炼 → 练 → 忆」学习闭环。"
     },
-    "loadFailed": "书架加载失败"
+    "loadFailed": "书架加载失败",
+    "filterTypeAll": "全部类型",
+    "filterTypeTitle": "按格式筛选",
+    "filterTypeSelected": "已选 {{count}} 种"
   },
   "reader": {
     "title": "阅读器",
@@ -944,7 +947,15 @@
     "scanSummary": "扫描完成：新增 {{imported}} 本 · 跳过重复 {{skipped}} 本 · 失败 {{failed}} 本（共发现 {{total}} 本）",
     "scanNoBook": "该目录下未发现可导入的图书",
     "folderUnavailable": "当前平台暂不支持目录选择，请改用「选择文件」或局域网上传。",
-    "scanFailed": "目录扫描失败：{{msg}}"
+    "scanFailed": "目录扫描失败：{{msg}}",
+    "bindFolder": "绑定目录",
+    "bindFolderHint": "绑定后只记录目录位置，不复制书籍到 App；书架直接读取该目录，下次打开自动同步新增/删除的书籍。",
+    "boundFolders": "已绑定目录",
+    "noBoundFolders": "尚未绑定任何目录",
+    "unbind": "解除绑定",
+    "bindSuccess": "已绑定目录，正在读取书籍…",
+    "unbindSuccess": "已解除绑定",
+    "scanningBound": "正在读取已绑定目录…"
   },
   "workspace": {
     "title": "书籍工作区",

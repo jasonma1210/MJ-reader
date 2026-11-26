@@ -6,15 +6,31 @@ import {
 } from "../deviceTier";
 
 describe("resolveDeviceTier", () => {
-  it("按真实内存分档", () => {
+  it("按真实内存分档（桌面口径不变）", () => {
     expect(resolveDeviceTier({ deviceMemoryGb: 2 })).toBe("low");
     expect(resolveDeviceTier({ deviceMemoryGb: 4 })).toBe("mid");
     expect(resolveDeviceTier({ deviceMemoryGb: 8 })).toBe("high");
     expect(resolveDeviceTier({ deviceMemoryGb: 12 })).toBe("high");
   });
 
-  it("内存不可得时按核心数分档", () => {
-    const base: DeviceSignals = { deviceMemoryGb: null, isIOS: true };
+  it("移动端封顶：8GB Android 降为 mid，不做 high（WebView 堆仅 256MB）", () => {
+    const android: DeviceSignals = { isAndroid: true, isMobile: true };
+    expect(resolveDeviceTier({ ...android, deviceMemoryGb: 4 })).toBe("low");
+    expect(resolveDeviceTier({ ...android, deviceMemoryGb: 8 })).toBe("mid");
+    expect(resolveDeviceTier({ ...android, deviceMemoryGb: 12 })).toBe("high");
+    const ios: DeviceSignals = { isIOS: true, isMobile: true };
+    expect(resolveDeviceTier({ ...ios, deviceMemoryGb: 8 })).toBe("mid");
+  });
+
+  it("移动端内存不可得时按核心数也降一档", () => {
+    const android: DeviceSignals = { isAndroid: true, deviceMemoryGb: null };
+    expect(resolveDeviceTier({ ...android, hardwareConcurrency: 4 })).toBe("low");
+    expect(resolveDeviceTier({ ...android, hardwareConcurrency: 6 })).toBe("mid");
+    expect(resolveDeviceTier({ ...android, hardwareConcurrency: 8 })).toBe("high");
+  });
+
+  it("内存不可得时按核心数分档（桌面口径）", () => {
+    const base: DeviceSignals = { deviceMemoryGb: null };
     expect(resolveDeviceTier({ ...base, hardwareConcurrency: 2 })).toBe("low");
     expect(resolveDeviceTier({ ...base, hardwareConcurrency: 4 })).toBe("mid");
     expect(resolveDeviceTier({ ...base, hardwareConcurrency: 6 })).toBe("high");
