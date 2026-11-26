@@ -127,6 +127,34 @@ function toBytes(input: unknown): Uint8Array {
 }
 
 /**
+ * 分块读取整本为 JS Uint8Array（PDF 等必须一次性拿到 bytes 的消费者）。
+ *
+ * 关键：每块 IPC ≤8 MB，Android WebView 的 Java 堆峰值与文件大小解耦；
+ * 拼接结果留在 JS 堆（V8 堆上限远高于 Java heap growth limit 256 MB），
+ * 再由 pdfjs 转移到 worker。漫画 PDF（图片型大文件）走此路径避免 OOM。
+ */
+export async function readAllBytesChunked(filePath: string, size: number): Promise<Uint8Array> {
+  if (!Number.isFinite(size) || size <= 0) return new Uint8Array(0);
+  const out = new Uint8Array(size);
+  let filled = 0;
+  while (filled < size) {
+    const want = Math.min(CHUNK_SIZE, size - filled);
+    const part = await invoke<unknown>(CMD.readFileChunk, {
+      filePath,
+      offset: filled,
+      length: want,
+    });
+    const bytes = toBytes(part);
+    if (bytes.length === 0) break;
+    const n = Math.min(bytes.length, want);
+    out.set(bytes.subarray(0, n), filled);
+    filled += n;
+    if (bytes.length < want) break; // Rust 返回不足 = 文件尾
+  }
+  return filled === size ? out : out.subarray(0, filled);
+}
+
+/**
  * 判断某文件是否应走分块流式：体积已知且 ≥ STREAM_THRESHOLD。
  * 体积未知时返回 false（保守走整块），避免误判。
  */

@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { LayoutGrid, List, CheckSquare, Square, Trash2, Filter, Check, X } from "lucide-react";
 import { useLibraryStore, type LibraryFilter as FilterKey } from "../../stores/libraryStore";
 import { bookService } from "../../services/bookService";
@@ -33,6 +34,7 @@ export function LibraryFilter() {
   const [deleting, setDeleting] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const typeRef = useRef<HTMLDivElement>(null);
+  const [typeRect, setTypeRect] = useState<{ left: number; top: number } | null>(null);
   const selectedBooks = books.filter((b) => selectedIds.includes(b.id));
 
   // 当前书库里出现过的所有格式，供类型下拉展示（按出现次数降序）
@@ -45,15 +47,25 @@ export function LibraryFilter() {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([f]) => f);
   }, [books]);
 
-  // 点击外部关闭类型菜单
+  // 点击外部关闭类型菜单。菜单 Portal 到 body，需把按钮也排除在「外部」之外。
   useEffect(() => {
     if (!typeOpen) return;
     const onDown = (e: PointerEvent) => {
-      if (typeRef.current && !typeRef.current.contains(e.target as Node)) setTypeOpen(false);
+      const target = e.target as Node;
+      if (typeRef.current?.contains(target)) return;
+      if ((target as HTMLElement).closest?.("[data-library-type-menu]")) return;
+      setTypeOpen(false);
     };
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
   }, [typeOpen]);
+
+  // 菜单 Portal 到 body：按钮位置随滚动/旋转实时计算，避免被祖先 overflow 裁剪。
+  const openTypeMenu = () => {
+    const rect = typeRef.current?.getBoundingClientRect();
+    if (rect) setTypeRect({ left: rect.left, top: rect.bottom + 8 });
+    setTypeOpen((v) => !v);
+  };
 
   const doDeleteSelected = async () => {
     setDeleting(true);
@@ -102,7 +114,7 @@ export function LibraryFilter() {
           2026-11-26：移出 overflow-x-auto 容器，否则下拉菜单被裁剪无法弹出。 */}
       <div className="relative shrink-0" ref={typeRef}>
           <button
-            onClick={() => setTypeOpen((v) => !v)}
+            onClick={openTypeMenu}
             className={cn(
               "flex items-center gap-1 rounded-full px-3 py-1.5 text-[13px] font-medium transition",
               formatFilter.length > 0
@@ -121,15 +133,15 @@ export function LibraryFilter() {
             )}
           </button>
 
-          {/* 弹出/收回：opacity+scale+translate 过渡，pointer-events 同步开关 */}
-          <div
-            className={cn(
-              "absolute left-0 top-[calc(100%+8px)] z-[70] w-52 origin-top rounded-xl border border-line bg-paper p-2 shadow-2xl transition-all duration-200",
-              typeOpen
-                ? "visible translate-y-0 scale-100 opacity-100"
-                : "invisible -translate-y-1 scale-95 opacity-0 pointer-events-none",
-            )}
-          >
+          {/* 菜单 Portal 到 body：脱离祖先 overflow/content-visibility 裁剪，
+              真机上「类型」下拉才能真正弹出并点选（2026-11-26 用户反馈未实现）。 */}
+          {typeOpen && typeRect && typeof document !== "undefined" &&
+            createPortal(
+              <div
+                data-library-type-menu
+                className="fixed z-[95] w-52 origin-top rounded-xl border border-line bg-paper-pure p-2 shadow-2xl"
+                style={{ left: Math.min(typeRect.left, window.innerWidth - 216), top: typeRect.top }}
+              >
             <div className="mb-1 flex items-center justify-between px-1.5 py-1">
               <span className="text-xs font-semibold text-ink">{t("library.filterTypeTitle")}</span>
               {formatFilter.length > 0 && (
@@ -184,7 +196,9 @@ export function LibraryFilter() {
                 );
               })}
             </div>
-          </div>
+              </div>,
+              document.body,
+            )}
       </div>
 
       {/* 选择（多选删除）按钮 */}

@@ -17,7 +17,7 @@ vi.mock("../../services/tauri", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { ChunkedBlob, shouldStream, STREAM_THRESHOLD } from "../chunkedFile";
+import { ChunkedBlob, readAllBytesChunked, shouldStream, STREAM_THRESHOLD } from "../chunkedFile";
 
 const CHUNK = 8 * 1024 * 1024;
 
@@ -116,5 +116,38 @@ describe("ChunkedBlob.slice", () => {
     expect(b).toBeInstanceOf(Blob);
     expect(b.name).toBe("a.cbz");
     expect(b.type).toBe("application/octet-stream");
+  });
+});
+
+describe("readAllBytesChunked（大 PDF 漫画走分块，避免 Java 堆 OOM）", () => {
+  it("按 8MB 分块拼装，结果与整块一致", async () => {
+    const size = CHUNK + 123;
+    invokeMock.mockImplementation(async (_cmd, args: { offset: number; length: number }) => {
+      const n = Math.min(args.length, size - args.offset);
+      return new Uint8Array(n).fill(args.offset % 251);
+    });
+    const out = await readAllBytesChunked("/books/comic.pdf", size);
+    expect(out.byteLength).toBe(size);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "read_file_chunk", {
+      filePath: "/books/comic.pdf", offset: 0, length: CHUNK,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "read_file_chunk", {
+      filePath: "/books/comic.pdf", offset: CHUNK, length: 123,
+    });
+  });
+
+  it("文件尾提前结束时返回实际长度", async () => {
+    invokeMock.mockImplementation(async (_cmd, args: { length: number }) => {
+      return new Uint8Array(Math.min(args.length, 40)).fill(7);
+    });
+    const out = await readAllBytesChunked("/books/short.pdf", CHUNK * 2);
+    expect(out.byteLength).toBe(40);
+  });
+
+  it("非法或零体积直接返回空，不触发 IPC", async () => {
+    expect((await readAllBytesChunked("/books/x.pdf", 0)).byteLength).toBe(0);
+    expect((await readAllBytesChunked("/books/x.pdf", -1)).byteLength).toBe(0);
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

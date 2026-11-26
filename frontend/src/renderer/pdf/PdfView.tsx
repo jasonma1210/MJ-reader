@@ -4,6 +4,8 @@ import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy, OnProgressParameters } from "pdfjs-dist";
 import { Loader2, AlertCircle } from "lucide-react";
 import { loadBookFile } from "../../utils/bookFileLoader";
+import { readAllBytesChunked, shouldStream } from "../../utils/chunkedFile";
+import { useLibraryStore } from "../../stores/libraryStore";
 import { logError } from "../../utils/logError";
 import { friendlyError } from "../../utils/friendlyError";
 import { toast } from "../../utils/toast";
@@ -617,7 +619,13 @@ export function PdfView({ bookId, bookPath }: { bookId: string; bookPath: string
         setLoadProgress(null);
         pageCache.clearAll();
 
-        const { bytes } = await loadBookFile(bookPath, "pdf");
+        // 漫画型大 PDF（图片扫描页，体积远超阈值）走分块 IPC，
+        // 避免 Android WebView Java 堆一次性分配整本 byte[] 导致闪退。
+        // book.fileSize 未加载/未知时保守走原整块路径。
+        const fileSize = useLibraryStore.getState().books.find((b) => b.id === bookId)?.fileSize;
+        const bytes = shouldStream(fileSize)
+          ? await readAllBytesChunked(bookPath, fileSize as number)
+          : (await loadBookFile(bookPath, "pdf")).bytes;
         if (cancelled) return;
         if (bytes.byteLength > LARGE_PDF_THRESHOLD) setLoadProgress(0);
 

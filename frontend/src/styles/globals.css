@@ -398,11 +398,12 @@ body {
   }
 }
 
-/* 格式书签：左上角偏下，底部尖角模拟书签形状。 */
+/* 格式书签：左上角偏下，底部尖角模拟书签形状。
+   2026-11-26：用户反馈原 28% 视觉偏低，上移约两个标签身位（≈40px）。 */
 .mj-format-bookmark {
   position: absolute;
   left: 0;
-  top: 28%;
+  top: 10px;
   z-index: 5;
   padding: 2px 8px 4px 6px;
   border-radius: 0 6px 6px 0;
