@@ -12,6 +12,18 @@ import i18n from "../../i18n";
 /** 已解析的 foliate book 对象（结构由各解析器决定，这里只做透传） */
 export type FoliateBook = Record<string, unknown>;
 
+/**
+ * 文档数据源：真 File（小文件整块）或 ChunkedBlob（大文件分块流式）。
+ * 两者都是 Blob 子类；name 用于格式嗅探（ChunkedBlob 从路径补出 name）。
+ * 共用同一条解析链路，避免为流式另起一套分支。
+ */
+export type BookSource = Blob & { name?: string };
+
+/** BookSource 的文件名（真 File/ChunkedBlob 都有；兜底空串避免 undefined.endsWith） */
+function sourceName(file: BookSource): string {
+  return typeof file.name === "string" ? file.name : "";
+}
+
 export interface LoadedFoliateBook {
   /** 交给 view.open() 的已解析 book 对象 */
   book: FoliateBook;
@@ -51,13 +63,13 @@ function basename(filePath: string, fallbackExt: string): string {
   return decoded;
 }
 
-async function hasZipMagic(file: File): Promise<boolean> {
+async function hasZipMagic(file: BookSource): Promise<boolean> {
   if (file.size < 4) return false;
   const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
   return head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03;
 }
 
-async function hasEOCD(file: File): Promise<boolean> {
+async function hasEOCD(file: BookSource): Promise<boolean> {
   const MAX_COMMENT = 64 * 1024;
   const EOCD_SIZE = 22;
   const sliceSize = Math.min(MAX_COMMENT + EOCD_SIZE, file.size);
@@ -78,25 +90,25 @@ async function hasEOCD(file: File): Promise<boolean> {
   return false;
 }
 
-async function isZipFile(file: File): Promise<boolean> {
+async function isZipFile(file: BookSource): Promise<boolean> {
   if (await hasZipMagic(file)) return true;
   return hasEOCD(file);
 }
 
-const isCBZ = (file: File): boolean =>
+const isCBZ = (file: BookSource): boolean =>
   file.type === "application/vnd.comicbook+zip" ||
-  file.name.toLowerCase().endsWith(".cbz");
+  sourceName(file).toLowerCase().endsWith(".cbz");
 
-const isFB2 = (file: File): boolean =>
+const isFB2 = (file: BookSource): boolean =>
   file.type === "application/x-fictionbook+xml" ||
-  file.name.toLowerCase().endsWith(".fb2");
+  sourceName(file).toLowerCase().endsWith(".fb2");
 
-const isFBZ = (file: File): boolean =>
+const isFBZ = (file: BookSource): boolean =>
   file.type === "application/x-zip-compressed-fb2" ||
-  file.name.toLowerCase().endsWith(".fb2.zip") ||
-  file.name.toLowerCase().endsWith(".fbz");
+  sourceName(file).toLowerCase().endsWith(".fb2.zip") ||
+  sourceName(file).toLowerCase().endsWith(".fbz");
 
-async function makeZipLoader(file: File) {
+async function makeZipLoader(file: BookSource) {
   const { configure, ZipReader, BlobReader, TextWriter, BlobWriter } =
     await import("foliate-js/vendor/zip.js");
   // Android WebView 里 Web Worker 加载 blob: 脚本受限，关掉更稳
@@ -139,21 +151,23 @@ export function bytesToFile(
 
 /**
  * 解析电子书为 foliate book 对象。
- * @param bytes  后端 read_file_bytes 读到的原始字节
+ * @param bytes  后端 read_file_bytes 读到的原始字节（小文件）
  * @param filePath 原始路径（仅用于取文件名与诊断）
  * @param format 书库里记录的格式（epub/mobi/azw3/...）
+ * @param source 可选的大文件流式源（ChunkedBlob）；传入时忽略 bytes
  */
 export async function openFoliateBook(
   bytes: Uint8Array,
   filePath: string,
   format: string,
+  source?: BookSource,
 ): Promise<LoadedFoliateBook> {
-  const file = bytesToFile(bytes, filePath, format);
+  const file: BookSource = source ?? bytesToFile(bytes, filePath, format);
   if (!file.size) {
     throw new Error(i18n.t("reader.loadEmptyFile"));
   }
 
-  const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+  const ext = (sourceName(file).split(".").pop() ?? "").toLowerCase();
   let book: unknown = null;
   let detectedFormat = "";
 
@@ -163,7 +177,7 @@ export async function openFoliateBook(
       loader = await makeZipLoader(file);
     } catch (e) {
       logError("renderer/foliate/documentLoader.makeZipLoader", e);
-      throw new Error(i18n.t("reader.loadZipExtract", { name: file.name }));
+      throw new Error(i18n.t("reader.loadZipExtract", { name: sourceName(file) }));
     }
 
     if (isCBZ(file)) {
@@ -199,7 +213,7 @@ export async function openFoliateBook(
         book = await new MOBI({ unzlib: unzlibSync }).open(file);
       } catch (e) {
         logError("renderer/foliate/documentLoader.mobi", e);
-        throw new Error(i18n.t("reader.loadZipExtract", { name: file.name }));
+        throw new Error(i18n.t("reader.loadZipExtract", { name: sourceName(file) }));
       }
       detectedFormat =
         ext === "azw3" ? "AZW3" : ext === "azw" ? "AZW" : "MOBI";
@@ -217,7 +231,7 @@ export async function openFoliateBook(
   }
 
   if (!book) {
-    throw new Error(i18n.t("reader.loadUnrecognized", { name: file.name }));
+    throw new Error(i18n.t("reader.loadUnrecognized", { name: sourceName(file) }));
   }
 
   return { book: book as FoliateBook, detectedFormat };

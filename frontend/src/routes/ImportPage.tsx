@@ -15,6 +15,7 @@ import { toast } from "../utils/toast";
 import type { ImportTask } from "../types";
 import { logError } from "../utils/logError";
 import { SubBackHeader } from "../components/shell/SubBackHeader";
+import { isIOS } from "../utils/platform";
 
 
 export function ImportPage() {
@@ -162,6 +163,9 @@ export function ImportPage() {
 
   // 支持的格式
   const formats = ["EPUB", "PDF", "MOBI", "AZW3", "TXT", "FB2", "CBR", "CBZ", "DOCX", "MD"];
+  // iOS 沙盒不支持目录树选择（无 SAF、plugin-dialog directory 在 mobile 下抛错），
+  // 隐藏整个入口，避免用户点了必然失败。Android/Windows/macOS/Linux 均可用。
+  const folderImportAvailable = !isIOS();
 
   return (
     <div className="flex h-full flex-col bg-paper">
@@ -211,7 +215,9 @@ export function ImportPage() {
         </button>
       </section>
 
-      {/* 从目录导入（2026-11-20）：用户选目录 → 自动递归扫描子目录图书 */}
+      {/* 从目录导入（2026-11-20）：用户选目录 → 自动递归扫描子目录图书。
+          iOS 无系统目录选择能力，隐藏入口（Android/桌面保持）。 */}
+      {folderImportAvailable && (
       <section className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">
         <div className="flex items-center gap-2">
           <FolderOpen className="h-4 w-4 text-accent" />
@@ -242,6 +248,7 @@ export function ImportPage() {
           </div>
         )}
       </section>
+      )}
 
       {/* 文件服务器（局域网） */}
       <section className="rounded-[var(--radius-lg)] border border-line bg-paper p-4 shadow-sm">

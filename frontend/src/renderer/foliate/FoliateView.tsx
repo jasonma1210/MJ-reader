@@ -31,7 +31,11 @@ import { findTextRange, findTextRangeWithin } from "../../utils/textRangeFinder"
 import type { TocNode } from "../../services/aiService";
 import { openFoliateBook } from "./documentLoader";
 import { loadBookFile } from "../../utils/bookFileLoader";
+import { ChunkedBlob, shouldStream } from "../../utils/chunkedFile";
 import { maybeSaveFirstPageCover } from "../../utils/textCover";
+
+/** 纯文本格式不走 foliate 分块（由 TextView 渲染，此处仅防御性排除） */
+const TEXT_FORMATS_LOCAL = new Set(["txt", "md", "markdown", "html", "htm"]);
 
 /** 注入正文样式所需的视觉字段（primitive 子集，便于 effect deps 逐项列出，不传整个 profile 对象） */
 type VisionStyle = Pick<
@@ -572,11 +576,32 @@ export function FoliateView({ bookId }: { bookId: string }) {
       }
       const bookPath = book.filePath;
       fmt = (book.format || bookPath.split(".").pop() || "").toLowerCase();
-      const data = await loadBookFile(bookPath, fmt);
-      if (!data.bytes || data.bytes.length === 0) {
-        throw new Error(i18n.t("reader.fileBytesEmpty"));
+
+      // 大文件流式打开（漫画 OOM 根治）：≥32 MB 的二进制书籍走分块 Blob，
+      // 不再一次性把整本塞进 Java/JS 堆。小文件保持原路径，避免往返开销。
+      const extMime: Record<string, string> = {
+        epub: "application/epub+zip",
+        cbz: "application/vnd.comicbook+zip",
+        fbz: "application/x-zip-compressed-fb2",
+        mobi: "application/x-mobipocket-ebook",
+        azw: "application/x-mobipocket-ebook",
+        azw3: "application/x-mobipocket-ebook",
+      };
+      const streamed =
+        shouldStream(book.fileSize) && !TEXT_FORMATS_LOCAL.has(fmt)
+          ? new ChunkedBlob(bookPath, book.fileSize ?? 0, extMime[fmt] ?? "application/octet-stream")
+          : null;
+      let fbookBook: Awaited<ReturnType<typeof openFoliateBook>>["book"];
+      if (streamed) {
+        ({ book: fbookBook } = await openFoliateBook(new Uint8Array(0), bookPath, fmt, streamed));
+      } else {
+        const data = await loadBookFile(bookPath, fmt);
+        if (!data.bytes || data.bytes.length === 0) {
+          throw new Error(i18n.t("reader.fileBytesEmpty"));
+        }
+        ({ book: fbookBook } = await openFoliateBook(data.bytes, bookPath, fmt));
       }
-      const { book: fbook } = await openFoliateBook(data.bytes, bookPath, fmt);
+      const { book: fbook } = { book: fbookBook };
       await viewRef.current.open(fbook);
       applyColumnCount();
 

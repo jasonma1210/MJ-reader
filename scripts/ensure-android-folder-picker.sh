@@ -10,6 +10,8 @@
 #     经 DocumentsContract 递归枚举子文档 URI，通过 WebView.evaluateJavascript 回传前端。
 #
 # 本脚本幂等：Kotlin 桥文件存在且 MainActivity 已注入则不动。
+# 2026-11-26：桥增加「可阅读文档」后缀白名单，只回传图书文件（跳过图片/视频等），
+# 并以版本标记 MJN_BRIDGE_V2 支持旧桥自动升级。
 # 用法：tauri android init 之后、构建之前运行：
 #   bash scripts/ensure-android-folder-picker.sh
 set -euo pipefail
@@ -22,7 +24,8 @@ BRIDGE="$GEN/FolderPickerBridge.kt"
 mkdir -p "$GEN"
 
 # ── 1. 写 Kotlin 桥（object 单例，JNI 可静态调用）──────────────────────────
-if [ ! -f "$BRIDGE" ]; then
+# 升级条件：文件不存在，或缺少 V2 标记（旧桥不过滤格式）→ 重写。
+if [ ! -f "$BRIDGE" ] || ! grep -q "MJN_BRIDGE_V2" "$BRIDGE"; then
 cat > "$BRIDGE" << 'KT'
 package com.mjnexusreader.app
 
@@ -47,12 +50,26 @@ import org.json.JSONArray
  * 注意 registerForActivityResult 必须在 Activity STARTED 之前注册，
  * 故在 MainActivity.onCreate 中调用 register(activity)，launcher 存在本单例。
  */
+// MJN_BRIDGE_V2 — 可阅读文档后缀白名单（对齐 Rust directory.rs::SCAN_SUPPORTED_EXTS）
 object FolderPickerBridge {
     private const val TAG = "MjnFolderBridge"
+    private val ALLOWED_EXTS = setOf(
+        "epub", "pdf", "txt", "md", "markdown", "html", "htm", "xhtml", "xht",
+        "mhtml", "mht", "mhtm", "xml", "mobi", "azw", "azw3", "fb2",
+        "cbz", "zip", "docx", "doc", "pptx", "ppt", "xlsx", "xls",
+        "rtf", "odt", "ods", "odp"
+    )
     private var launcher: ActivityResultLauncher<Uri?>? = null
     private var appContext: Context? = null
     private var webView: WebView? = null
     @Volatile private var pending = false
+
+    /** 只回传可阅读文档：按 documentId 后缀判定（SAF mime 常为 application/octet-stream）。 */
+    private fun isReadableDocument(docId: String): Boolean {
+        val name = docId.substringAfterLast('/', docId)
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return ext in ALLOWED_EXTS
+    }
 
     /** 在 MainActivity.onCreate（super.onCreate 之后）调用，注册目录选择器。 */
     @JvmStatic
@@ -162,7 +179,8 @@ object FolderPickerBridge {
                 if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
                     // 子目录：以该 documentId 为根继续递归。
                     enumerateTree(treeUri, docId, depth + 1, out)
-                } else {
+                } else if (isReadableDocument(docId)) {
+                    // 只回传可阅读文档，跳过图片/视频/压缩包等非图书文件。
                     out.put(DocumentsContract.buildDocumentUriUsingTree(treeUri, docId).toString())
                 }
             }
@@ -192,7 +210,8 @@ object FolderPickerBridge {
                 val mime = if (mimeIdx >= 0) c.getString(mimeIdx) else null
                 if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
                     enumerateTree(treeUri, docId, depth + 1, out)
-                } else {
+                } else if (isReadableDocument(docId)) {
+                    // 只回传可阅读文档，跳过图片/视频/压缩包等非图书文件。
                     out.put(DocumentsContract.buildDocumentUriUsingTree(treeUri, docId).toString())
                 }
             }

@@ -147,6 +147,67 @@ pub fn read_file_bytes(app: AppHandle, file_path: String) -> AppResult<Response>
     Ok(Response::new(bytes))
 }
 
+/// 分块读取上限（8 MB）：Android WebView Java 堆 growth limit 通常仅 256 MB，
+/// 单次 IPC 响应体超过该值会在 wry JNI 的 byte_array_from_slice 处 OOM。
+/// 大漫画（实测 241–324 MB）必须走分块，禁止一次整本传输。
+pub const READ_CHUNK_MAX: usize = 8 * 1024 * 1024;
+
+/// 分块区间计算的纯函数（便于单测，不依赖 AppHandle/文件系统）。
+/// 返回实际读取长度；offset 越界返回 0；length 非法返回 Err。
+pub(crate) fn chunk_read_len(size: u64, offset: u64, length: usize) -> AppResult<usize> {
+    if length == 0 || length > READ_CHUNK_MAX {
+        return Err(AppError::General(format!(
+            "read_file_chunk: length 必须在 1..={} 之间，实际 {}",
+            READ_CHUNK_MAX, length
+        )));
+    }
+    if offset >= size {
+        return Ok(0);
+    }
+    Ok((length as u64).min(size - offset) as usize)
+}
+
+/// 分块读取文件字节（大文件流式打开专用）。
+///
+/// 与 `read_file_bytes` 的区别：只读取 `[offset, offset+length)` 区间，
+/// 单次 IPC 响应体受 `READ_CHUNK_MAX` 约束，避免 Java/JS 堆一次性分配整本书。
+/// 前端 `ChunkedBlob.slice().arrayBuffer()` 按此命令逐块取，zip.js/foliate 无感知。
+#[tauri::command]
+pub fn read_file_chunk(
+    app: AppHandle,
+    file_path: String,
+    offset: u64,
+    length: usize,
+) -> AppResult<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let canonical = validate_path_safety(&file_path)?;
+    let resolved = if canonical.exists() {
+        canonical
+    } else {
+        resolve_file_path_fallback(&file_path, &app)
+            .ok_or_else(|| AppError::General(format!("文件不存在：{}", file_path)))?
+    };
+
+    let mut file = std::fs::File::open(&resolved)
+        .map_err(|e| AppError::General(format!("打开文件失败：{}", e)))?;
+    let size = file
+        .metadata()
+        .map_err(|e| AppError::General(format!("读取文件大小失败：{}", e)))?
+        .len();
+    let want = chunk_read_len(size, offset, length)?;
+    if want == 0 {
+        return Ok(Vec::new());
+    }
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| AppError::General(format!("定位文件失败：{}", e)))?;
+    let mut buf = Vec::with_capacity(want);
+    file.take(want as u64)
+        .read_to_end(&mut buf)
+        .map_err(|e| AppError::General(format!("读取文件块失败：{}", e)))?;
+    Ok(buf)
+}
+
 /// 查询 Android content:// URI 的元数据（display name / size / mime type）。
 /// v0.7.0 实现：SAF 选择的文件 URI 不含路径，前端需通过此命令拿到原始文件名。
 ///

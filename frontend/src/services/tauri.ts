@@ -13,6 +13,8 @@ export const CMD = {
   // book / directory / import
   getBooks: "get_books",
   getBookById: "get_book_by_id",
+  // 大文件分块读取（漫画 OOM 根治）：单次 IPC ≤ 8 MB
+  readFileChunk: "read_file_chunk",
   deleteBook: "delete_book",
   processBookMetadata: "process_book_metadata",
   extractBookText: "extract_book_text",

@@ -258,6 +258,8 @@ pub fn run() {
             book::import::import_book_from_uri,
             book::cancel_import,
             file::read_file_bytes,
+            // 大文件分块读取（漫画 OOM 根治）：单次 IPC ≤ 8 MB，避免 Java 堆一次性分配整本
+            file::read_file_chunk,
             file::read_txt,
             file::read_markdown,
             file::read_archive_images,
