@@ -182,7 +182,9 @@ export async function openFoliateBook(
 
     if (isCBZ(file)) {
       const { makeComicBook } = await import("foliate-js/comic-book.js");
-      book = makeComicBook(loader, file);
+      // makeComicBook 是 async：必须 await，否则 view.open 收到 Promise，
+      // view.js 里 book.sections.some(...) 会因 sections 不存在而崩溃。
+      book = await makeComicBook(loader, file);
       detectedFormat = "CBZ";
     } else if (isFBZ(file)) {
       const { makeFB2 } = await import("foliate-js/fb2.js");
